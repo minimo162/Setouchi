@@ -67,13 +67,17 @@ def extract_available_companies(path: str | Path, max_rows: int = 10) -> pd.Data
     """
     header_row = detect_header_row(path, max_rows=max_rows)
     df = pd.read_excel(path, header=header_row)
-    # Normalize column names for lookup while preserving original DataFrame
+    # Normalize column names and rows
     cols = _normalize_columns(df.columns)
     df.columns = cols
     if "disclosure status" not in df.columns:
         raise ValueError("'Disclosure Status' column not found after normalization")
-    mask = df["disclosure status"].astype(str).str.strip().str.lower() == "available"
-    return df[mask].reset_index(drop=True)
+    rows: List[List[str]] = []
+    for row in getattr(df, "_data", []):
+        status = str(row.get("disclosure status", "")).strip().lower()
+        if status == "available":
+            rows.append([row.get(col, "") for col in df.columns])
+    return pd.DataFrame(rows, columns=df.columns)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI utility
