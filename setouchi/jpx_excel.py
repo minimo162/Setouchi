@@ -67,16 +67,25 @@ def extract_available_companies(path: str | Path, max_rows: int = 10) -> pd.Data
     """
     header_row = detect_header_row(path, max_rows=max_rows)
     df = pd.read_excel(path, header=header_row)
-    # Normalize column names and rows
+    # Normalise column names for easier matching.  ``_normalize_columns`` mirrors
+    # the approach described in the design document (section 16.1) where
+    # whitespace and casing differences are ignored.
     cols = _normalize_columns(df.columns)
     df.columns = cols
     if "disclosure status" not in df.columns:
         raise ValueError("'Disclosure Status' column not found after normalization")
+
+    # Iterate over rows using ``iloc`` so the function works both with the real
+    # pandas library and with the light‑weight stub shipped for the kata.  This
+    # avoids relying on internal attributes such as ``_data`` which are not part
+    # of the public pandas API.
     rows: List[List[str]] = []
-    for row in getattr(df, "_data", []):
+    for i in range(len(df)):
+        row = df.iloc[i]
         status = str(row.get("disclosure status", "")).strip().lower()
         if status == "available":
             rows.append([row.get(col, "") for col in df.columns])
+
     return pd.DataFrame(rows, columns=df.columns)
 
 
