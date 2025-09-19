@@ -326,9 +326,12 @@ def check_translation_quality(
                 "JSON 配列の各要素には必ず 'id', 'status', 'notes', 'highlighted_text', 'before_text', 'after_text' を含めてください。"
                 "翻訳に問題がなければ status は 'OK' とし、notes は空文字または簡潔な補足にしてください。"
                 "修正が必要な場合は status を 'REVISE' とし、notes には日本語で『Issue: ... / Suggestion: ...』の形式で問題点と修正案を記述してください。"
-                "'highlighted_text' には translated_text を基に、修正すべき部分を <<< と >>> で囲んだ文字列を返してください。"
+                "'highlighted_text' には translated_text を基に、修正すべき部分を 《《 と 》》 で囲んだ文字列を返してください。"
                 "AI は JSON のみを返し、余計な文章やマークアップを含めないでください。"
-                f"\n\n{payload}\n"
+                f"
+
+{payload}
+"
             )
 
             response = browser_manager.ask(analysis_prompt)
@@ -380,9 +383,9 @@ def check_translation_quality(
                     if not highlighted or not highlighted.strip():
                         if isinstance(before_text, str) and before_text and isinstance(after_text, str) and after_text:
                             if isinstance(base_translation, str) and before_text in base_translation:
-                                highlighted = base_translation.replace(before_text, f"<<<{after_text}>>>", 1)
+                                highlighted = base_translation.replace(before_text, f"《《{after_text}》》", 1)
                             else:
-                                highlighted = f"<<<{after_text}>>>"
+                                highlighted = f"《《{after_text}》》"
                         else:
                             highlighted = base_text
                     highlight_matrix[row_idx][col_idx] = highlighted
