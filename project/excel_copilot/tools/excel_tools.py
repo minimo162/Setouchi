@@ -161,10 +161,21 @@ def check_translation_quality(
     translated_range: str,
     status_output_range: str,
     issue_output_range: str,
+    highlight_output_range: Optional[str] = None,
     sheet_name: Optional[str] = None,
     batch_size: int = 3,
 ) -> str:
-    """Compare source and translated ranges, then record review results."""
+    """Compare source and translated ranges, then record review results.
+
+    Args:
+        source_range: Range containing original Japanese text.
+        translated_range: Range containing the English translation.
+        status_output_range: Range to store review status (e.g., OK / 要修正).
+        issue_output_range: Range to store review notes.
+        highlight_output_range: Optional range to store a highlighted translation string with diff markers.
+        sheet_name: Target sheet name. Uses active sheet if None.
+        batch_size: Number of items reviewed together per AI request.
+    """
     try:
         cell_ref_re = re.compile(r"([A-Za-z]+)(\d+)")
 
@@ -229,17 +240,36 @@ def check_translation_quality(
         trans_rows, trans_cols = _parse_range_dimensions(translated_range)
         status_rows, status_cols = _parse_range_dimensions(status_output_range)
         issue_rows, issue_cols = _parse_range_dimensions(issue_output_range)
+        highlight_rows = highlight_cols = None
+        if highlight_output_range:
+            highlight_rows, highlight_cols = _parse_range_dimensions(highlight_output_range)
 
         if (src_rows, src_cols) != (trans_rows, trans_cols):
             raise ToolExecutionError("Source range and translated range sizes do not match.")
         if (src_rows, src_cols) != (status_rows, status_cols) or (src_rows, src_cols) != (issue_rows, issue_cols):
             raise ToolExecutionError("Output ranges must match the source range size.")
+        if highlight_output_range and (src_rows, src_cols) != (highlight_rows, highlight_cols):
+            raise ToolExecutionError("Highlight output range must match the source range size.")
 
         source_data = _reshape_to_dimensions(actions.read_range(source_range, sheet_name), src_rows, src_cols)
         translated_data = _reshape_to_dimensions(actions.read_range(translated_range, sheet_name), src_rows, src_cols)
 
         status_matrix = [["" for _ in range(src_cols)] for _ in range(src_rows)]
         issue_matrix = [["" for _ in range(src_cols)] for _ in range(src_rows)]
+        highlight_matrix = None
+        if highlight_output_range:
+            highlight_matrix = []
+            for r in range(src_rows):
+                row_values = []
+                for c in range(src_cols):
+                    cell_value = translated_data[r][c]
+                    if isinstance(cell_value, str):
+                        row_values.append(cell_value)
+                    elif cell_value is None:
+                        row_values.append("")
+                    else:
+                        row_values.append(str(cell_value))
+                highlight_matrix.append(row_values)
 
         review_entries: List[Dict[str, Any]] = []
         id_to_position: Dict[str, Tuple[int, int]] = {}
@@ -264,13 +294,25 @@ def check_translation_quality(
                         status_matrix[r][c] = "要修正"
                         issue_matrix[r][c] = "英訳セルが空、または無効です。"
                         needs_revision_count += 1
+                        if highlight_matrix is not None:
+                            if isinstance(translated_text, str):
+                                highlight_matrix[r][c] = translated_text
+                            elif translated_text is None:
+                                highlight_matrix[r][c] = ""
+                            else:
+                                highlight_matrix[r][c] = str(translated_text)
                 else:
                     status_matrix[r][c] = ""
                     issue_matrix[r][c] = ""
+                    if highlight_matrix is not None:
+                        value = translated_text if isinstance(translated_text, str) else ("" if translated_text is None else str(translated_text))
+                        highlight_matrix[r][c] = value
 
         if not review_entries:
             actions.write_range(status_output_range, status_matrix, sheet_name)
             actions.write_range(issue_output_range, issue_matrix, sheet_name)
+            if highlight_matrix is not None and highlight_output_range:
+                actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
             return "翻訳チェックの対象となる文字列が存在しなかったため、結果列を初期化しました。"
 
         normalized_batch_size = max(1, min(batch_size or 1, 5))
@@ -280,10 +322,12 @@ def check_translation_quality(
             payload = json.dumps(batch, ensure_ascii=False)
             analysis_prompt = (
                 "あなたは英訳の品質を評価するレビュアーです。各項目について、英訳が原文の意味・ニュアンス・文法・スペル・主語述語の対応として適切かを確認してください。"
-                "各項目には 'original_text'（日本語原文）と 'translated_text'（英訳）が含まれています。"
+                "各要素には 'id', 'original_text', 'translated_text' が含まれています。"
+                "JSON 配列の各要素には必ず 'id', 'status', 'notes', 'highlighted_text', 'before_text', 'after_text' を含めてください。"
                 "翻訳に問題がなければ status は 'OK' とし、notes は空文字または簡潔な補足にしてください。"
                 "修正が必要な場合は status を 'REVISE' とし、notes には日本語で『Issue: ... / Suggestion: ...』の形式で問題点と修正案を記述してください。"
-                "AIは JSON のみを返し、余計な文章やマークアップを付けないでください。"
+                "'highlighted_text' には translated_text を基に、修正すべき部分を <<< と >>> で囲んだ文字列を返してください。"
+                "AI は JSON のみを返し、余計な文章やマークアップを含めないでください。"
                 f"\n\n{payload}\n"
             )
 
@@ -319,8 +363,30 @@ def check_translation_quality(
                     raise ToolExecutionError("翻訳チェックの応答に未知のIDが含まれています。")
                 status_value = str(item.get("status", "")).strip().upper()
                 notes_value = str(item.get("notes", "")).strip()
+                before_text = item.get("before_text")
+                after_text = item.get("after_text")
+
 
                 row_idx, col_idx = id_to_position[item_id]
+                if highlight_matrix is not None:
+                    base_translation = translated_data[row_idx][col_idx]
+                    if isinstance(base_translation, str):
+                        base_text = base_translation
+                    elif base_translation is None:
+                        base_text = ""
+                    else:
+                        base_text = str(base_translation)
+                    highlighted = item.get("highlighted_text") if isinstance(item.get("highlighted_text"), str) else None
+                    if not highlighted or not highlighted.strip():
+                        if isinstance(before_text, str) and before_text and isinstance(after_text, str) and after_text:
+                            if isinstance(base_translation, str) and before_text in base_translation:
+                                highlighted = base_translation.replace(before_text, f"<<<{after_text}>>>", 1)
+                            else:
+                                highlighted = f"<<<{after_text}>>>"
+                        else:
+                            highlighted = base_text
+                    highlight_matrix[row_idx][col_idx] = highlighted
+
                 if status_value in {"OK", "PASS", "GOOD"}:
                     status_matrix[row_idx][col_idx] = "OK"
                     issue_matrix[row_idx][col_idx] = notes_value or ""
@@ -337,10 +403,14 @@ def check_translation_quality(
         actions.write_range(issue_output_range, issue_matrix, sheet_name)
 
         processed_items = len(review_entries)
-        return (
+        message = (
             f"翻訳チェックを完了しました。対象 {processed_items} 件中、要修正 {needs_revision_count} 件の結果を"
             f" '{status_output_range}' と '{issue_output_range}' に書き込みました。"
         )
+        if highlight_matrix is not None and highlight_output_range:
+            actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
+            message += f" 比較表示用の文字列は '{highlight_output_range}' に出力しました。"
+        return message
 
     except ToolExecutionError:
         raise
@@ -369,4 +439,9 @@ def format_shape(actions: ExcelActions, fill_color_hex: Optional[str] = None, li
     [非推奨] この関数は使わないでください。代わりに insert_shape 関数の引数で色を指定してください。
     """
     return actions.format_last_shape(fill_color_hex, line_color_hex, sheet_name)
+
+
+
+
+
 
