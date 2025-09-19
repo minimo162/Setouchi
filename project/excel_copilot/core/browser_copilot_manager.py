@@ -11,7 +11,8 @@ from playwright.sync_api import (
 import time
 import pyperclip
 import sys
-from typing import Optional, Callable, List
+import re
+from typing import Optional, Callable, List, Tuple, Union
 
 from ..config import COPILOT_USER_DATA_DIR
 
@@ -59,22 +60,90 @@ class BrowserCopilotManager:
             self.close()
             raise
 
-    def _wait_for_first_visible(self, description: str, locator_factories: List[Callable[[], Locator]], timeout: float) -> Locator:
-        """与えられたロケーター群の中から、最初に可視化された要素を返す"""
+    def _wait_for_first_visible(self, description: str, locator_factories: List[Union[Callable[[], Locator], Tuple[str, Callable[[], Locator]]]], timeout: float) -> Locator:
+        """指定されたロケーター群の中から最初に可視状態になった要素を取得する"""
         last_exception: Optional[Exception] = None
-        for factory in locator_factories:
+
+        for index, factory_entry in enumerate(locator_factories, start=1):
+            if isinstance(factory_entry, tuple):
+                label, factory = factory_entry
+            else:
+                label, factory = None, factory_entry
+
+            label_text = label or f"候補 #{index}"
+            print(f"{description}: {label_text} を探索しています...")
+
             try:
                 locator = factory()
-                # first() は常に存在する前提のため、先にcountで存在確認
-                if locator.count() == 0:
+            except Exception as factory_error:
+                last_exception = factory_error
+                print(f"{description}: {label_text} のロケーター作成でエラーが発生しました: {factory_error}")
+                continue
+
+            timeout_ms = int(timeout) if timeout is not None else 0
+            if timeout_ms <= 0:
+                timeout_ms = 5000
+
+            deadline = time.monotonic() + timeout_ms / 1000.0
+            zero_logged = False
+            zero_attempts = 0
+
+            while True:
+                remaining_sec = deadline - time.monotonic()
+                if remaining_sec <= 0:
+                    break
+
+                try:
+                    candidate_count = locator.count()
+                except Exception as count_error:
+                    last_exception = count_error
+                    print(f"{description}: {label_text} の要素数取得に失敗しました: {count_error}")
+                    break
+
+                if candidate_count == 0:
+                    if not zero_logged:
+                        print(f"{description}: {label_text} はまだ見つかりません (0 件)。")
+                        zero_logged = True
+                    zero_attempts += 1
+                    limit = max(3, min(10, int(timeout_ms / 2000)))
+                    if zero_attempts >= limit:
+                        print(f"{description}: {label_text} は引き続き 0 件のため次の候補へ移ります。")
+                        break
+                    time.sleep(min(0.2, max(0.05, remaining_sec)))
                     continue
-                first_visible = locator.first
-                first_visible.wait_for(state="visible", timeout=timeout)
-                return first_visible
-            except PlaywrightTimeoutError as e:
-                last_exception = e
-            except Exception as e:  # 予期せぬエラーも記録し、次の候補を試す
-                last_exception = e
+
+                print(f"{description}: {label_text} で {candidate_count} 件の候補を検出しました。")
+
+                for position in range(candidate_count):
+                    now_remaining_sec = deadline - time.monotonic()
+                    if now_remaining_sec <= 0:
+                        break
+
+                    per_attempt_timeout = int(max(1000, min(5000, now_remaining_sec * 1000)))
+                    candidate = locator.nth(position)
+
+                    try:
+                        if candidate.is_visible():
+                            print(f"{description}: {label_text} の候補 #{position + 1} が即座に可視化されました。")
+                            return candidate
+                    except Exception:
+                        pass
+
+                    try:
+                        candidate.wait_for(state="visible", timeout=per_attempt_timeout)
+                        print(f"{description}: {label_text} の候補 #{position + 1} が可視状態になりました。")
+                        return candidate
+                    except PlaywrightTimeoutError as wait_error:
+                        last_exception = wait_error
+                        print(f"{description}: {label_text} の候補 #{position + 1} 可視化待機でタイムアウトしました。")
+                        continue
+                    except Exception as candidate_error:
+                        last_exception = candidate_error
+                        print(f"{description}: {label_text} の候補 #{position + 1} でエラー: {candidate_error}")
+                        continue
+
+                time.sleep(min(0.2, max(0.05, deadline - time.monotonic())))
+
         raise RuntimeError(f"{description}が見つかりません。UI が変更された可能性があります。") from last_exception
 
     def _fill_chat_input(self, chat_input: Locator, prompt: str):
@@ -159,45 +228,150 @@ class BrowserCopilotManager:
         if not current_text:
             raise RuntimeError("チャット入力欄へのテキスト入力に失敗しました。")
 
+
+    def _chat_input_locator_factories(self) -> List[Tuple[str, Callable[[], Locator]]]:
+        if not self.page:
+            raise RuntimeError("ページが初期化されていません。")
+        return [
+            ("id=m365-chat-editor-target-element", lambda: self.page.locator('#m365-chat-editor-target-element')),
+            ("role=combobox aria-label=チャット入力", lambda: self.page.get_by_role('combobox', name='チャット入力')),
+            ("aria-describedby^=chat-input-placeholder", lambda: self.page.locator('[aria-describedby^="chat-input-placeholder" i]')),
+            ("class=fai-EditorInput__input", lambda: self.page.locator('.fai-EditorInput__input')),
+            ("contenteditable role textbox", lambda: self.page.locator('[contenteditable="true"][role="textbox"]')),
+            ("role=textbox & contenteditable", lambda: self.page.locator('[role="textbox"][contenteditable="true"]')),
+            ("id=prompt-textarea", lambda: self.page.locator('#prompt-textarea')),
+            ("class=ProseMirror", lambda: self.page.locator('.ProseMirror')),
+            ("ProseMirror contenteditable", lambda: self.page.locator('.ProseMirror[contenteditable="true"]')),
+            ("ProseMirror paragraph", lambda: self.page.locator('.ProseMirror').get_by_role('paragraph')),
+            ("contenteditable only", lambda: self.page.locator('[contenteditable="true"]')),
+            ("role=textbox", lambda: self.page.locator('[role="textbox"]')),
+            ("data-testid=chatInput", lambda: self.page.locator('[data-testid="chatInput"]')),
+            ("data-testid=chat-input", lambda: self.page.locator('[data-testid="chat-input"]')),
+            ("data-testid=threadComposerRichText", lambda: self.page.locator('[data-testid="threadComposerRichText"]')),
+            ("threadComposerRichText > contenteditable", lambda: self.page.locator('[data-testid="threadComposerRichText"] [contenteditable="true"]')),
+            ("threadComposerRichText paragraph", lambda: self.page.locator('[data-testid="threadComposerRichText"]').get_by_role('paragraph')),
+            ("chatInput paragraph", lambda: self.page.locator('[data-testid="chatInput"]').get_by_role('paragraph')),
+            ("aria-label contains チャット", lambda: self.page.locator('[aria-label*="チャット"]')),
+            ("aria-label contains メッセージ", lambda: self.page.locator('[aria-label*="メッセージ"]')),
+            ("aria-label contains message", lambda: self.page.locator('[aria-label*="message"]')),
+            ("aria-label contains Copilot", lambda: self.page.locator('[aria-label*="Copilot"]')),
+            ("placeholder=質問してみましょう", lambda: self.page.get_by_placeholder('質問してみましょう')),
+            ("textbox name=チャット入力欄", lambda: self.page.get_by_role('textbox', name='チャット入力欄')),
+            ("textbox name contains チャット", lambda: self.page.get_by_role('textbox', name=re.compile('チャット', re.IGNORECASE))),
+            ("textbox name contains message", lambda: self.page.get_by_role('textbox', name=re.compile('message', re.IGNORECASE))),
+            ("textbox name contains Copilot", lambda: self.page.get_by_role('textbox', name=re.compile('Copilot', re.IGNORECASE))),
+            ("placeholder contains Copilot", lambda: self.page.get_by_placeholder(re.compile('Copilot', re.IGNORECASE))),
+            ("placeholder contains メッセージ", lambda: self.page.get_by_placeholder(re.compile('メッセージ', re.IGNORECASE))),
+            ("paragraph last", lambda: self.page.get_by_role('paragraph').last),
+            ("paragraph first", lambda: self.page.get_by_role('paragraph').first),
+            ("paragraph role", lambda: self.page.get_by_role('paragraph')),
+        ]
+
+    def _resolve_chat_input_target(self, locator: Locator) -> Locator:
+        """チャット欄を操作できる contenteditable コンテナを指すロケーターに正規化する"""
+        try:
+            enriched = locator.locator("xpath=ancestor-or-self::*[@contenteditable='true'][1]")
+            if enriched.count() > 0:
+                print("チャット入力欄: contenteditable な親要素にフォーカスを切り替えます。")
+                return enriched.first
+        except Exception as resolve_error:
+            print(f"チャット入力欄: contenteditable 親要素の特定に失敗しました: {resolve_error}")
+        return locator
+
     def _initialize_copilot_mode(self):
         """GPT-5 チャットモードを有効化し、入力欄を準備する"""
         try:
-            gpt5_locator = self.page.get_by_role("button", name="GPT-5 を試す")
-            if gpt5_locator.count() > 0:
-                try:
-                    print("「GPT-5 を試す」ボタンを待機中...")
-                    gpt5_locator.first.wait_for(state="visible", timeout=15000)
-                    print("「GPT-5 を試す」ボタンをクリックします...")
-                    gpt5_locator.first.click()
-                except PlaywrightTimeoutError:
-                    print("「GPT-5 を試す」ボタンの表示待機がタイムアウトしました。既に GPT-5 が有効か UI が変更されています。")
-                except Exception as click_error:
-                    print(f"「GPT-5 を試す」ボタンのクリック中に問題が発生しました: {click_error}。既に GPT-5 が選択済みの可能性があります。")
+            print("Copilot ページが表示されるのを待機しています...")
+            try:
+                self.page.wait_for_function(
+                    "() => location.href.startsWith('https://m365.cloud.microsoft/chat') && location.search.includes('auth=2')",
+                    timeout=180000,
+                )
+                print("Copilot ページのロードを確認しました。")
+            except PlaywrightTimeoutError as wait_error:
+                current_url = self.page.url if self.page else ""
+                print(f"警告: Copilot ページのURLが期待値に到達していません (現在: {current_url})。引き続き初期化を試みます。詳細: {wait_error}")
+            self.page.wait_for_load_state('domcontentloaded')
+            self.page.wait_for_timeout(500)
+
+            gpt5_button_factories = [
+                ("button.fui-ToggleButton:has-text('GPT-5 を試す')", lambda: self.page.locator("button.fui-ToggleButton:has-text('GPT-5 を試す')")),
+                ("button#GPT-5 を試す", lambda: self.page.get_by_role("button", name="GPT-5 を試す")),
+                ("button#GPT-5 で質問", lambda: self.page.get_by_role("button", name="GPT-5 で質問")),
+                ("button#GPT-5 を使用", lambda: self.page.get_by_role("button", name="GPT-5 を使用")),
+                ("button#GPT-5", lambda: self.page.get_by_role("button", name="GPT-5")),
+                ("button#Copilot GPT-5", lambda: self.page.get_by_role("button", name="Copilot GPT-5")),
+                ("button role regex GPT-5", lambda: self.page.get_by_role("button", name=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
+                ("menuitem regex GPT-5", lambda: self.page.get_by_role("menuitem", name=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
+                ("button:has-text GPT-5", lambda: self.page.locator("button", has_text=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
+                ("aria-label=GPT-5 を試す", lambda: self.page.locator('[aria-label="GPT-5 を試す" i]')),
+                ("aria-label contains GPT-5", lambda: self.page.locator('[aria-label*="GPT-5"]')),
+                ("data-testid=gpt5Button", lambda: self.page.locator('[data-testid="gpt5Button"]')),
+                ("data-testid=GPT5Button", lambda: self.page.locator('[data-testid="GPT5Button"]')),
+            ]
+            try:
+                gpt5_button = self._wait_for_first_visible(
+                    "GPT-5 モード切り替えボタン",
+                    gpt5_button_factories,
+                    timeout=20000,
+                )
+            except RuntimeError as gpt5_error:
+                print("GPT-5 モードボタンが見つからなかったため、既定のモードで続行します。")
+                print(gpt5_error)
             else:
-                print("「GPT-5 を試す」ボタンが見つかりませんでした。既に GPT-5 が選択されている可能性があります。")
+                print("GPT-5 モードボタンをクリックします...")
+                try:
+                    gpt5_button.click()
+                    self.page.wait_for_timeout(800)
+                except Exception as click_error:
+                    print(f"GPT-5 モードボタンのクリックに失敗しました: {click_error}")
 
-            # チャット入力欄が表示され、編集可能になるのを待つ
-            chat_input = self._wait_for_first_visible(
-                "チャット入力欄",
-                [
-                    lambda: self.page.locator('[contenteditable="true"][role="textbox"]'),
-                    lambda: self.page.get_by_role("paragraph"),
-                    lambda: self.page.get_by_role("textbox", name="チャット入力"),
-                ],
-                timeout=45000,
-            )
+            print("チャット入力欄の読み込みを待機しています。サインインが求められる場合はブラウザで完了してください。")
+            try:
+                chat_input = self._wait_for_first_visible(
+                    "チャット入力欄",
+                    self._chat_input_locator_factories(),
+                    timeout=180000,
+                )
+            except RuntimeError as chat_error:
+                print("チャット入力欄が既定のパターンで見つからなかったため、フォールバックとして paragraph ロールを探索します。")
+                print(chat_error)
+                try:
+                    chat_input = self._wait_for_first_visible(
+                        "チャット入力欄 (フォールバック)",
+                        [("paragraph role", lambda: self.page.get_by_role("paragraph"))],
+                        timeout=10000,
+                    )
+                except RuntimeError as fallback_error:
+                    raise RuntimeError("チャット入力欄のフォールバックにも失敗しました。") from fallback_error
 
-            print("チャット入力欄をフォーカスします...")
-            chat_input.click()
+            chat_input = self._resolve_chat_input_target(chat_input)
 
-            print("準備完了。GPT-5 での自動操作を開始できます。")
+            try:
+                chat_input.scroll_into_view_if_needed()
+            except Exception:
+                pass
+
+            print("チャット入力欄にフォーカスします...")
+            try:
+                chat_input.click(timeout=5000)
+            except TypeError:
+                chat_input.click()
+            except Exception as click_error:
+                print(f"チャット入力欄のクリックに失敗しましたが、続行します: {click_error}")
+
+
+
+            self.page.wait_for_timeout(300)
+            print("準備完了です。GPT-5 での対話を開始できます。")
 
         except PlaywrightTimeoutError as e:
-            print(f"エラー: チャット入力欄の初期化がタイムアウトしました。UIの構造が変更された可能性があります。: {e}")
+            print(f"エラー: チャット入力欄の検出待機でタイムアウトしました。UIの表示が変更された可能性があります: {e}")
             raise
         except Exception as e:
-            print(f"エラー: GPT-5 への切り替え中に予期せぬエラーが発生しました: {e}")
+            print(f"エラー: GPT-5 への切り替え処理中に予期せぬエラーが発生しました: {e}")
             raise
+
 
     def ask(self, prompt: str) -> str:
         """プロンプトを送信し、Copilotからの応答をクリップボード経由で取得する"""
@@ -212,26 +386,36 @@ class BrowserCopilotManager:
             # チャット入力欄にプロンプトを入力して送信
             chat_input = self._wait_for_first_visible(
                 "チャット入力欄",
-                [
-                    lambda: self.page.locator('[contenteditable="true"][role="textbox"]'),
-                    lambda: self.page.get_by_role("paragraph"),
-                    lambda: self.page.get_by_role("textbox", name="チャット入力"),
-                ],
+                self._chat_input_locator_factories(),
                 timeout=45000,
             )
 
-            chat_input.click()  # フォーカスを当てる
+            chat_input = self._resolve_chat_input_target(chat_input)
+
+            try:
+                chat_input.scroll_into_view_if_needed()
+            except Exception:
+                pass
+
+            try:
+                chat_input.click(timeout=5000)
+            except TypeError:
+                chat_input.click()
+            except Exception as click_error:
+                print(f"チャット入力欄へのフォーカス時に警告: {click_error}")
+
+
             self._fill_chat_input(chat_input, prompt)
             send_button = self._wait_for_first_visible(
                 "送信ボタン",
                 [
-                    lambda: self.page.get_by_label("送信"),
-                    lambda: self.page.get_by_label("送信 (Ctrl+Enter)"),
-                    lambda: self.page.get_by_role("button", name="送信"),
-                    lambda: self.page.get_by_role("button", name="送信 (Ctrl+Enter)"),
-                    lambda: self.page.get_by_role("button", name="Send"),
-                    lambda: self.page.get_by_label("Send"),
-                    lambda: self.page.get_by_test_id("SendButtonTestId"),
+                    ("label=送信", lambda: self.page.get_by_label("送信")),
+                    ("label=送信 (Ctrl+Enter)", lambda: self.page.get_by_label("送信 (Ctrl+Enter)")),
+                    ("button name=送信", lambda: self.page.get_by_role("button", name="送信")),
+                    ("button name=送信 (Ctrl+Enter)", lambda: self.page.get_by_role("button", name="送信 (Ctrl+Enter)")),
+                    ("button name=Send", lambda: self.page.get_by_role("button", name="Send")),
+                    ("label=Send", lambda: self.page.get_by_label("Send")),
+                    ("test-id=SendButtonTestId", lambda: self.page.get_by_test_id("SendButtonTestId")),
                 ],
                 timeout=15000,
             )
