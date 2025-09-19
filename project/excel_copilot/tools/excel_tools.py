@@ -289,14 +289,24 @@ def check_translation_quality(
 
             response = browser_manager.ask(analysis_prompt)
             match = re.search(r"\[[\s\S]*\]|\{[\s\S]*\}", response)
-            json_str = match.group(0) if match else response
+            json_candidates = []
+            if match:
+                json_candidates.append(match.group(0))
+            json_candidates.extend(re.findall(r"\{[\s\S]*?\}", response))
+            if not json_candidates:
+                json_candidates.append(response)
 
-            try:
-                batch_results = json.loads(json_str)
-            except json.JSONDecodeError as exc:
-                raise ToolExecutionError(
-                    f"翻訳チェックの結果をJSONとして解析できませんでした。応答: {response}"
-                ) from exc
+            batch_results = None
+            for candidate in json_candidates:
+                candidate = candidate.strip()
+                try:
+                    batch_results = json.loads(candidate)
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+            if batch_results is None:
+                raise ToolExecutionError(f"翻訳チェックの結果をJSONとして解析できませんでした。応答: {response}")
 
             if not isinstance(batch_results, list):
                 raise ToolExecutionError("翻訳チェックの応答形式が不正です。JSON配列を返してください。")
