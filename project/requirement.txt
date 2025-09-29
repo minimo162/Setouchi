@@ -1,7 +1,0 @@
-flet
-playwright
-pyperclip
-xlwings
-pydantic
-docstring-parser
-Pillow

@@ -1,1 +1,0 @@
-from pathlib import Path\npath = Path('excel_copilot/tools/actions.py')\nlines = path.read_text(encoding='utf-8').splitlines()\nfor idx in range(len(lines)-1, -1, -1):\n    if lines[idx].strip() == ')' and idx > 230:\n        lines.pop(idx)\n        break\npath.write_text('\\n'.join(lines) + '\\n', encoding='utf-8')
