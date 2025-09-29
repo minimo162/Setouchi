@@ -7,6 +7,7 @@ import inspect
 import time
 import sys
 import traceback
+import os
 from typing import List, Callable, Dict, Optional, Any
 from enum import Enum, auto
 
@@ -250,6 +251,8 @@ def main(page: ft.Page):
     app_state: Optional[AppState] = None
     worker_thread: Optional[threading.Thread] = None
     ui_loop_running = True
+    shutdown_requested = False
+    window_closed_event = threading.Event()
 
     page.title = "Excel Co-pilot"
     page.window.width = 1280
@@ -376,16 +379,85 @@ def main(page: ft.Page):
                 print(f"レスポンスキューの処理中にエラー: {e}")
                 traceback.print_exc()
             
-    def _on_window_event(e):
-        nonlocal ui_loop_running
-        if e.data == "close":
-            ui_loop_running = False
-            request_queue.put({"type": Req.QUIT})
-            if worker_thread:
-                worker_thread.join(timeout=3.0)
-            page.window.destroy()
+    def _force_exit(reason: str = ''):
+        nonlocal ui_loop_running, shutdown_requested
+        print(f'Force exit triggered. reason={reason}')
+        if shutdown_requested:
+            print('Force exit: shutdown already in progress.')
+        else:
+            shutdown_requested = True
+            if not ui_loop_running:
+                print('Force exit: UI loop already stopped.')
+            else:
+                ui_loop_running = False
+                try:
+                    request_queue.put_nowait({"type": Req.QUIT})
+                    print('Force exit: QUIT request posted.')
+                except Exception as queue_err:
+                    print(f'Force exit: failed to enqueue QUIT: {queue_err}')
+                if worker_thread:
+                    try:
+                        worker_thread.join(timeout=3.0)
+                        print('Force exit: worker thread joined or timeout.')
+                    except Exception as join_err:
+                        print(f'Force exit: worker join error: {join_err}')
+            try:
+                page.window.prevent_close = False
+            except Exception as prevent_err:
+                print(f'Force exit: unable to clear prevent_close: {prevent_err}')
+            close_requested = False
+            try:
+                page.window.close()
+                close_requested = True
+                print('Force exit: window.close() called.')
+            except AttributeError:
+                try:
+                    page.window.destroy()
+                    close_requested = True
+                    window_closed_event.set()
+                    print('Force exit: window.destroy() called.')
+                except Exception as destroy_err:
+                    print(f'Force exit: window destroy failed: {destroy_err}')
+            except Exception as close_err:
+                print(f'Force exit: window close failed: {close_err}')
+            if close_requested:
+                try:
+                    page.update()
+                except Exception as update_err:
+                    print(f'Force exit: page update after close failed: {update_err}')
+        if not window_closed_event.is_set():
+            try:
+                if window_closed_event.wait(timeout=3.0):
+                    print('Force exit: window close confirmed.')
+                else:
+                    print('Force exit: window close wait timed out.')
+            except Exception as wait_err:
+                print(f'Force exit: waiting for window close failed: {wait_err}')
+        os._exit(0)
 
-    page.on_window_event = _on_window_event
+    def _on_window_event(e):
+        event_name = getattr(e, 'event', None)
+        data = getattr(e, 'data', None)
+        payload_raw = event_name or data or ''
+        payload = payload_raw.lower()
+        normalized_payload = payload.replace('_', '-')
+        print(f'Window event received: event={event_name}, data={data}')
+        window_gone_events = {'closed', 'close-completed', 'destroyed'}
+        close_request_events = {'close', 'closing', 'close-requested'}
+        if normalized_payload in window_gone_events:
+            window_closed_event.set()
+        if normalized_payload in close_request_events or (normalized_payload in window_gone_events and not shutdown_requested):
+            _force_exit(reason=f'window-event:{normalized_payload}')
+
+    def _on_page_disconnect(e):
+        print('Page disconnect detected.')
+        window_closed_event.set()
+        _force_exit(reason='page-disconnect')
+
+    print('Debug: registering window event handlers')
+    page.window.prevent_close = True
+    page.window.on_event = _on_window_event
+    page.on_disconnect = _on_page_disconnect
 
     # --- UIコンポーネント定義 ---
     title_label = ft.Text("Excel\nCo-pilot", size=26, weight=ft.FontWeight.BOLD, color="#FFFFFF")

@@ -256,6 +256,16 @@ class BrowserCopilotManager:
             ("aria-label contains message", lambda: self.page.locator('[aria-label*="message"]')),
             ("aria-label contains Copilot", lambda: self.page.locator('[aria-label*="Copilot"]')),
             ("placeholder=質問してみましょう", lambda: self.page.get_by_placeholder('質問してみましょう')),
+            ("placeholder=Type a message", lambda: self.page.get_by_placeholder('Type a message')),
+            ("placeholder=Ask Copilot", lambda: self.page.get_by_placeholder('Ask Copilot')),
+            ("placeholder=Ask your question", lambda: self.page.get_by_placeholder('Ask your question')),
+            ("placeholder=Ask me anything", lambda: self.page.get_by_placeholder('Ask me anything')),
+            ("placeholder contains prompt", lambda: self.page.get_by_placeholder(re.compile('prompt', re.IGNORECASE))),
+            ("aria-label contains prompt", lambda: self.page.locator('[aria-label*="prompt" i]')),
+            ("textbox name contains prompt", lambda: self.page.get_by_role('textbox', name=re.compile('prompt', re.IGNORECASE))),
+            ("data-testid=promptTextArea", lambda: self.page.locator('[data-testid="promptTextArea"]')),
+            ("data-testid=prompt-text-area", lambda: self.page.locator('[data-testid="prompt-text-area"]')),
+            ("data-testid=promptInput", lambda: self.page.locator('[data-testid="promptInput"]')),
             ("textbox name=チャット入力欄", lambda: self.page.get_by_role('textbox', name='チャット入力欄')),
             ("textbox name contains チャット", lambda: self.page.get_by_role('textbox', name=re.compile('チャット', re.IGNORECASE))),
             ("textbox name contains message", lambda: self.page.get_by_role('textbox', name=re.compile('message', re.IGNORECASE))),
@@ -266,6 +276,98 @@ class BrowserCopilotManager:
             ("paragraph first", lambda: self.page.get_by_role('paragraph').first),
             ("paragraph role", lambda: self.page.get_by_role('paragraph')),
         ]
+
+    def _chat_input_additional_locator_factories(self) -> List[Tuple[str, Callable[[], Locator]]]:
+        factories: List[Tuple[str, Callable[[], Locator]]] = []
+        if not self.page:
+            return factories
+
+        factories.extend([
+            ("textarea element", lambda: self.page.locator("textarea")),
+            ("role=combobox (any)", lambda: self.page.locator("[role=\"combobox\"]")),
+            ("aria-label contains message (ci)", lambda: self.page.locator("[aria-label*=\"message\" i]")),
+            ("aria-label contains compose", lambda: self.page.locator("[aria-label*=\"compose\" i]")),
+            ("aria-label contains prompt (ci)", lambda: self.page.locator("[aria-label*=\"prompt\" i]")),
+            ("role=textbox generic", lambda: self.page.locator("[role=\"textbox\"]")),
+            ("contenteditable div", lambda: self.page.locator("div[contenteditable='true']")),
+            ("contenteditable section", lambda: self.page.locator("section[contenteditable='true']")),
+            ("contenteditable span", lambda: self.page.locator("span[contenteditable='true']")),
+            ("data-testid contains composer", lambda: self.page.locator("[data-testid*=\"composer\" i]")),
+            ("data-testid contains prompt", lambda: self.page.locator("[data-testid*=\"prompt\" i]")),
+            ("data-automationid prompt-text-area", lambda: self.page.locator("[data-automationid=\"prompt-text-area\"]")),
+            ("data-automationid promptTextArea", lambda: self.page.locator("[data-automationid=\"promptTextArea\"]")),
+        ])
+
+        placeholders = [
+            "Type a message",
+            "Ask Copilot",
+            "Ask your question",
+            "Ask me anything",
+            "Send a message",
+            "How can Copilot help you?",
+        ]
+        for placeholder in placeholders:
+            factories.append((f"placeholder={placeholder}", lambda placeholder=placeholder: self.page.get_by_placeholder(placeholder)))
+
+        textbox_names = [
+            "Chat input",
+            "Copilot prompt",
+            "Prompt",
+            "Message compose box",
+            "Write your message",
+            "Write a prompt",
+        ]
+        for name in textbox_names:
+            factories.append((f"textbox name={name}", lambda name=name: self.page.get_by_role('textbox', name=name)))
+            factories.append((f"textbox name contains {name}", lambda name=name: self.page.get_by_role('textbox', name=re.compile(re.escape(name), re.IGNORECASE))))
+
+        return factories
+
+    def _iframe_chat_input_locator_factories(self) -> List[Tuple[str, Callable[[], Locator]]]:
+        factories: List[Tuple[str, Callable[[], Locator]]] = []
+        if not self.page:
+            return factories
+
+        try:
+            iframe_locator = self.page.locator("iframe")
+            iframe_count = iframe_locator.count()
+        except Exception as iframe_error:
+            print(f"チャット入力欄: iframe探索で警告: {iframe_error}")
+            return factories
+
+        placeholders = [
+            "Type a message",
+            "Ask Copilot",
+            "Ask your question",
+            "Ask me anything",
+            "Send a message",
+            "How can Copilot help you?",
+        ]
+
+        for idx in range(iframe_count):
+            try:
+                frame_locator = iframe_locator.nth(idx)
+                frame = frame_locator.content_frame()
+            except Exception as frame_error:
+                print(f"チャット入力欄: iframe #{idx + 1} の content_frame 取得に失敗しました: {frame_error}")
+                continue
+
+            if not frame:
+                continue
+
+            factories.extend([
+                (f"iframe#{idx + 1} contenteditable role textbox", lambda frame=frame: frame.locator('[contenteditable=\"true\"][role=\"textbox\"]')),
+                (f"iframe#{idx + 1} contenteditable", lambda frame=frame: frame.locator('[contenteditable=\"true\"]')),
+                (f"iframe#{idx + 1} textbox", lambda frame=frame: frame.locator('[role=\"textbox\"]')),
+                (f"iframe#{idx + 1} textarea", lambda frame=frame: frame.locator('textarea')),
+                (f"iframe#{idx + 1} paragraph", lambda frame=frame: frame.get_by_role('paragraph')),
+                (f"iframe#{idx + 1} data-testid prompt", lambda frame=frame: frame.locator('[data-testid*=\"prompt\" i]')),
+            ])
+
+            for placeholder in placeholders:
+                factories.append((f"iframe#{idx + 1} placeholder={placeholder}", lambda frame=frame, placeholder=placeholder: frame.get_by_placeholder(placeholder)))
+
+        return factories
 
     def _resolve_chat_input_target(self, locator: Locator) -> Locator:
         """チャット欄を操作できる contenteditable コンテナを指すロケーターに正規化する"""
@@ -334,13 +436,20 @@ class BrowserCopilotManager:
                     timeout=180000,
                 )
             except RuntimeError as chat_error:
-                print("チャット入力欄が既定のパターンで見つからなかったため、フォールバックとして paragraph ロールを探索します。")
+                print("チャット入力欄が既定のパターンで見つからなかったため、追加のフォールバック探索を実行します。")
                 print(chat_error)
+                fallback_factories: List[Tuple[str, Callable[[], Locator]]] = [("paragraph role", lambda: self.page.get_by_role("paragraph"))]
+                fallback_factories.extend(self._chat_input_additional_locator_factories())
+                fallback_factories.extend(self._iframe_chat_input_locator_factories())
+
+                if not fallback_factories:
+                    raise RuntimeError("チャット入力欄に利用可能なフォールバックがありません。")
+
                 try:
                     chat_input = self._wait_for_first_visible(
                         "チャット入力欄 (フォールバック)",
-                        [("paragraph role", lambda: self.page.get_by_role("paragraph"))],
-                        timeout=10000,
+                        fallback_factories,
+                        timeout=20000,
                     )
                 except RuntimeError as fallback_error:
                     raise RuntimeError("チャット入力欄のフォールバックにも失敗しました。") from fallback_error

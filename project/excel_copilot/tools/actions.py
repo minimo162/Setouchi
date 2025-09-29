@@ -1,9 +1,30 @@
 import xlwings as xw
 import sys
 import subprocess
-from typing import Any, List, Optional, Dict
+import logging
+import os
+from typing import Any, List, Optional, Dict, Tuple
 from ..core.exceptions import ToolExecutionError
 from ..core.excel_manager import ExcelManager
+
+_ACTIONS_LOGGER = logging.getLogger(__name__)
+_DIFF_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_DIFF', '').lower() in {'1', 'true', 'yes'}
+
+if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.DEBUG)
+
+
+def _diff_debug(message: str) -> None:
+    if _DIFF_DEBUG_ENABLED:
+        _ACTIONS_LOGGER.debug(message)
+
+
+def _shorten_debug(value: Any, limit: int = 120) -> str:
+    if value is None:
+        return ''
+    text_value = str(value).replace('\r', '\r').replace('\n', '\n')
+    return text_value if len(text_value) <= limit else text_value[:limit] + '…'
+
 
 class ExcelActions:
     """
@@ -95,157 +116,234 @@ class ExcelActions:
                 raise e
             raise ToolExecutionError(f"範囲 '{cell_range}' への書き込み中に予期せぬエラーが発生しました: {e}")
 
-    def get_active_workbook_and_sheet(self) -> Dict[str, str]:
-        """現在アクティブなExcelブックとシート名を取得し、辞書として返す。"""
+    def apply_diff_highlight_colors(self,
+                                    cell_range: str,
+                                    style_matrix: List[List[List[Dict[str, Any]]]],
+                                    sheet_name: Optional[str] = None,
+                                    addition_color_hex: str = "#1565C0",
+                                    deletion_color_hex: str = "#C62828") -> None:
+        """Apply highlight colors to rich diff spans within the target range."""
         try:
-            book_name = self.book.name
-            sheet_name = self.book.sheets.active.name
-            return {"workbook_name": book_name, "sheet_name": sheet_name}
-        except Exception as e:
-            raise ToolExecutionError(f"ブックとシートの取得中にエラーが発生しました: {e}")
-
-    def format_range(self,
-                     cell_range: str,
-                     sheet_name: Optional[str] = None,
-                     font_name: Optional[str] = None,
-                     font_size: Optional[float] = None,
-                     font_color_hex: Optional[str] = None,
-                     bold: Optional[bool] = None,
-                     italic: Optional[bool] = None,
-                     fill_color_hex: Optional[str] = None,
-                     column_width: Optional[float] = None,
-                     row_height: Optional[float] = None,
-                     horizontal_alignment: Optional[str] = None,
-                     border_style: Optional[Dict[str, Any]] = None) -> str:
-        try:
-            sheet = self._get_sheet(sheet_name)
-            rng = sheet.range(cell_range)
-
-            if font_name: rng.font.name = font_name
-            if font_size: rng.font.size = font_size
-            if font_color_hex: rng.font.color = font_color_hex
-            if bold is not None: rng.font.bold = bold
-            if italic is not None: rng.font.italic = italic
-            if fill_color_hex: rng.color = fill_color_hex
-            if column_width: rng.column_width = column_width
-            if row_height: rng.row_height = row_height
-            if horizontal_alignment:
-                h_align_map = {
-                    "general": xw.constants.HAlign.xlHAlignGeneral,
-                    "left": xw.constants.HAlign.xlHAlignLeft,
-                    "center": xw.constants.HAlign.xlHAlignCenter,
-                    "right": xw.constants.HAlign.xlHAlignRight,
-                    "justify": xw.constants.HAlign.xlHAlignJustify,
-                }
-                align_const = h_align_map.get(horizontal_alignment.lower())
-                if align_const: rng.api.HorizontalAlignment = align_const
-
-            if border_style:
-                edges = border_style.get("edges", [])
-                style = border_style.get("style", "continuous")
-                weight = border_style.get("weight", "thin")
-                color_hex = border_style.get("color_hex", "#000000")
-
-                style_map = {
-                    "continuous": xw.constants.LineStyle.xlContinuous,
-                    "dot": xw.constants.LineStyle.xlDot,
-                    "dash": xw.constants.LineStyle.xlDash,
-                    "none": xw.constants.LineStyle.xlLineStyleNone
-                }
-                weight_map = {
-                    "thin": xw.constants.BorderWeight.xlThin,
-                    "medium": xw.constants.BorderWeight.xlMedium,
-                    "thick": xw.constants.BorderWeight.xlThick
-                }
-                edge_map = {
-                    "top": xw.constants.BordersIndex.xlEdgeTop,
-                    "bottom": xw.constants.BordersIndex.xlEdgeBottom,
-                    "left": xw.constants.BordersIndex.xlEdgeLeft,
-                    "right": xw.constants.BordersIndex.xlEdgeRight,
-                    "inside_vertical": xw.constants.BordersIndex.xlInsideVertical,
-                    "inside_horizontal": xw.constants.BordersIndex.xlInsideHorizontal
-                }
-
-                for edge_name in edges:
-                    edge_const = edge_map.get(edge_name.lower())
-                    if edge_const:
-                        border = rng.api.Borders(edge_const)
-                        border.LineStyle = style_map.get(style, xw.constants.LineStyle.xlContinuous)
-                        border.Weight = weight_map.get(weight, xw.constants.BorderWeight.xlThin)
-                        border.Color = int(color_hex.replace("#", ""), 16)
-
-            return f"範囲 '{cell_range}' の書式を正常に設定しました。"
-        except Exception as e:
-            raise ToolExecutionError(f"範囲 '{cell_range}' の書式設定中にエラー: {e}")
-
-    def insert_shape_in_range(self,
-                              cell_range: str,
-                              shape_type: str,
-                              sheet_name: Optional[str] = None,
-                              fill_color_hex: Optional[str] = None,
-                              line_color_hex: Optional[str] = None) -> str:
-        """指定されたセル範囲に、指定された書式でオートシェイプを挿入します。"""
-        try:
+            if not style_matrix:
+                _diff_debug("apply_diff_highlight_colors empty style matrix")
+                return
+            _diff_debug(
+                f"apply_diff_highlight_colors start range={cell_range} sheet={sheet_name} rows={len(style_matrix)}"
+            )
             sheet = self._get_sheet(sheet_name)
             target_range = sheet.range(cell_range)
+            rows = target_range.rows.count
+            cols = target_range.columns.count
 
-            if sys.platform == 'darwin':
-                # Note: This is a workaround. xlwings does not have a direct way to add shapes on mac.
-                # This will add a picture of a rectangle, which is not ideal.
-                if shape_type == "四角形":
-                    import io
-                    import os
-                    import tempfile
-                    from PIL import Image, ImageDraw
-                    
-                    img = Image.new('RGB', (int(target_range.width), int(target_range.height)), color = 'white')
-                    draw = ImageDraw.Draw(img)
-                    if fill_color_hex:
-                        draw.rectangle([(0,0), img.size], fill=fill_color_hex)
-                    if line_color_hex:
-                        draw.rectangle([(0,0), (img.size[0]-1, img.size[1]-1)], outline=line_color_hex)
+            def _hex_to_color_tuple(hex_code: str) -> Tuple[int, int, int]:
+                hex_code = hex_code.lstrip("#")
+                if len(hex_code) != 6:
+                    raise ValueError(f"Invalid hex color: {hex_code}")
+                r = int(hex_code[0:2], 16)
+                g = int(hex_code[2:4], 16)
+                b = int(hex_code[4:6], 16)
+                return (r, g, b)
 
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_image:
-                        img.save(temp_image, format='PNG')
-                        temp_image_path = temp_image.name
-                    
-                    sheet.pictures.add(
-                        temp_image_path,
-                        left=target_range.left,
-                        top=target_range.top,
-                        width=target_range.width,
-                        height=target_range.height
+            def _color_tuple_to_bgr_int(color_tuple: Tuple[int, int, int]) -> int:
+                r, g, b = color_tuple
+                return (b << 16) | (g << 8) | r
+
+            addition_color_tuple = _hex_to_color_tuple(addition_color_hex)
+            deletion_color_tuple = _hex_to_color_tuple(deletion_color_hex)
+            addition_color_value = _color_tuple_to_bgr_int(addition_color_tuple)
+            deletion_color_value = _color_tuple_to_bgr_int(deletion_color_tuple)
+            type_aliases = {
+                "addition": "addition",
+                "add": "addition",
+                "added": "addition",
+                "insert": "addition",
+                "inserted": "addition",
+                "追加": "addition",
+                "deletion": "deletion",
+                "delete": "deletion",
+                "deleted": "deletion",
+                "remove": "deletion",
+                "removed": "deletion",
+                "削除": "deletion",
+            }
+            _diff_debug(
+                f"apply_diff_highlight_colors target_range rows={rows} cols={cols} addition={addition_color_hex} deletion={deletion_color_hex}"
+            )
+
+            api_char_supported = True
+            characters_char_supported = True
+
+            max_rows = min(rows, len(style_matrix))
+            for r_idx in range(max_rows):
+                row_styles = style_matrix[r_idx]
+                if not isinstance(row_styles, list):
+                    _diff_debug(f"apply_diff_highlight_colors row {r_idx} invalid styles entry")
+                    continue
+                max_cols = min(cols, len(row_styles))
+                for c_idx in range(max_cols):
+                    spans = row_styles[c_idx] if isinstance(row_styles[c_idx], list) else []
+                    if not spans:
+                        _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) no spans")
+                        continue
+                    cell = target_range[r_idx, c_idx]
+                    try:
+                        cell_value = cell.value or ""
+                    except Exception as value_error:
+                        _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value error {value_error}")
+                        continue
+                    if not isinstance(cell_value, str):
+                        _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) skipped non-str value")
+                        continue
+                    value_len = len(cell_value)
+                    _diff_debug(
+                        f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value_len={value_len} spans={spans}"
                     )
-                    os.remove(temp_image_path)
-                else:
-                    raise ToolExecutionError(f"Unsupported shape type on macOS: {shape_type}")
+                    for span in spans:
+                        if not isinstance(span, dict):
+                            _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) span invalid {span}")
+                            continue
+                        start = span.get("start")
+                        length = span.get("length")
+                        span_type = span.get("type")
+                        if start is None or length is None:
+                            _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) missing bounds {span}")
+                            continue
+                        start_idx = max(int(start), 0)
+                        length_val = int(length)
+                        if length_val <= 0:
+                            _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) non-positive length {span}")
+                            continue
+                        if start_idx >= value_len:
+                            _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) start out of range {span}")
+                            continue
+                        max_available = value_len - start_idx
+                        if length_val > max_available:
+                            _diff_debug(
+                                f"apply_diff_highlight_colors cell({r_idx},{c_idx}) length clamped from {length_val} to {max_available}"
+                            )
+                            length_val = max_available
+                        if not isinstance(span_type, str):
+                            _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) span type not str {span_type}")
+                            continue
+                        span_type_key = span_type.strip().lower()
+                        normalized_type = type_aliases.get(span_type_key, span_type_key)
+                        if normalized_type == "addition":
+                            color_tuple = addition_color_tuple
+                            color_value = addition_color_value
+                            color_kind = "addition"
+                        elif normalized_type == "deletion":
+                            color_tuple = deletion_color_tuple
+                            color_value = deletion_color_value
+                            color_kind = "deletion"
+                        else:
+                            _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) unknown type {span_type}")
+                            continue
 
+                        start_position = start_idx + 1
+                        length_val = min(length_val, value_len - start_idx)
+                        if length_val <= 0:
+                            _diff_debug(
+                                f"apply_diff_highlight_colors cell({r_idx},{c_idx}) computed non-positive length after clamp start={start_idx} value_len={value_len}"
+                            )
+                            continue
 
-            elif sys.platform == 'win32':
-                shape_map = {"四角形": 1, "楕円": 9}
-                mso_shape_type = shape_map.get(shape_type, 1)
-                new_shape = sheet.api.Shapes.AddShape(
-                    mso_shape_type, target_range.left, target_range.top,
-                    target_range.width, target_range.height
-                )
-                if fill_color_hex:
-                    rgb = tuple(int(fill_color_hex.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-                    new_shape.Fill.ForeColor.RGB = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16)
-                    new_shape.Fill.Visible = True
-                    new_shape.Fill.Solid()
-                if line_color_hex:
-                    rgb = tuple(int(line_color_hex.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-                    new_shape.Line.ForeColor.RGB = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16)
-                    new_shape.Line.Visible = True
-            else:
-                raise ToolExecutionError(f"サポートされていないOSです: {sys.platform}")
+                        span_applied = False
+                        try:
+                            cell.api.Characters(start_position, length_val).Font.Color = color_value
+                            span_applied = True
+                        except Exception as primary_error:
+                            _diff_debug(
+                                f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api span color error {primary_error}"
+                            )
 
-            return f"範囲 '{cell_range}' に '{shape_type}' を正常に挿入しました。"
+                        if not span_applied:
+                            try:
+                                cell.characters[start_position - 1, length_val].font.color = color_tuple
+                                span_applied = True
+                            except Exception as span_fallback_error:
+                                _diff_debug(
+                                    f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters span color error {span_fallback_error}"
+                                )
+
+                        applied = True
+                        for char_offset in range(length_val):
+                            char_position = start_position + char_offset
+                            colored = False
+                            if api_char_supported:
+                                try:
+                                    cell.api.Characters(char_position, 1).Font.Color = color_value
+                                    colored = True
+                                except Exception as per_char_error:
+                                    api_char_supported = False
+                                    _diff_debug(
+                                        f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api single char error {per_char_error}"
+                                    )
+                            if not colored and characters_char_supported:
+                                try:
+                                    cell.characters[char_position - 1].font.color = color_tuple
+                                    colored = True
+                                except Exception as per_char_fallback_error:
+                                    characters_char_supported = False
+                                    _diff_debug(
+                                        f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters single char error {per_char_fallback_error}"
+                                    )
+                            if not colored:
+                                applied = False
+                                _diff_debug(
+                                    f"apply_diff_highlight_colors cell({r_idx},{c_idx}) unable to color char at {char_position}"
+                                )
+                                break
+
+                        if not span_applied and not applied:
+                            continue
+
+                        if not applied:
+                            try:
+                                cell.characters[start_position - 1, length_val].font.color = color_tuple
+                                applied = True
+                            except Exception as span_fallback_error:
+                                _diff_debug(
+                                    f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters span color error {span_fallback_error}"
+                                )
+
+                        if not applied:
+                            applied = True
+                            for char_offset in range(length_val):
+                                char_position = start_position + char_offset
+                                colored = False
+                                if api_char_supported:
+                                    try:
+                                        cell.api.Characters(char_position, 1).Font.Color = color_value
+                                        colored = True
+                                    except Exception as per_char_error:
+                                        api_char_supported = False
+                                        _diff_debug(
+                                            f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api single char error {per_char_error}"
+                                        )
+                                if not colored and characters_char_supported:
+                                    try:
+                                        cell.characters[char_position - 1].font.color = color_tuple
+                                        colored = True
+                                    except Exception as per_char_fallback_error:
+                                        characters_char_supported = False
+                                        _diff_debug(
+                                            f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters single char error {per_char_fallback_error}"
+                                        )
+                                if not colored:
+                                    applied = False
+                                    _diff_debug(
+                                        f"apply_diff_highlight_colors cell({r_idx},{c_idx}) unable to color char at {char_position}"
+                                    )
+                                    break
+
+                        if not applied:
+                            continue
+
+                        color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
+                        _diff_debug(
+                            f"apply_diff_highlight_colors applied type={span_type} kind={color_kind} start={start_idx} length={length_val} color={color_hex}"
+                        )
+
         except Exception as e:
-            raise ToolExecutionError(f"範囲 '{cell_range}' への図形挿入中にエラーが発生しました: {e}")
-
-    def format_last_shape(self, fill_color_hex: Optional[str] = None, line_color_hex: Optional[str] = None, sheet_name: Optional[str] = None) -> str:
-        """この関数は非推奨になりました。insert_shapeを使用してください。"""
-        raise ToolExecutionError("format_last_shapeは非推奨です。insert_shapeに色を指定してください。")
-
-
+            _diff_debug(f"apply_diff_highlight_colors exception={e}")
+            raise ToolExecutionError(f"差分ハイライトの色適用中にエラーが発生しました: {e}") from e

@@ -68,14 +68,16 @@ Final Answer: 「B4からCD」について、どのような操作をご希望�
 - このツールは、範囲内の日本語テキストだけを賢く見つけ出し、翻訳して書き戻すまでを自動で行います。
 - ただし、一度に処理できる範囲には限界があります。**対象範囲が広い場合（目安として30行を超える場合）は、必ず範囲を30行ごとのチャンクに分割して、複数回に分けてツールを実行してください。**
 - 翻訳結果の品質チェックには、必ず `check_translation_quality` ツールを使用してください。原文範囲・翻訳範囲・結果列（判定列と指摘列）は同じサイズで指定します。
-- セル内の文章量が多い場合があるため、チャンクは3件程度の小さな単位で処理してください。必要に応じて `batch_size` 引数を調整します。
-- セル内で差分を強調するため、AI の `highlighted_text` は修正した箇所を必ず `《《` と `》》` で囲んだ文字列にしてください。
-- 例: `tool_name: "check_translation_quality"` を使い、`source_range` に日本語、`translated_range` に英訳、`status_output_range` と `issue_output_range` に判定列・指摘列を指定し、必要に応じて `highlight_output_range` に比較表示用の列を指定します (この列で `《《...》》` で囲まれた修正案を扱います)。
+- セルの差分が多い場合でも確実に対応するため、チャンクは必ず1行ずつ処理し、必要に応じて `batch_size` を 1 に設定してください。
+- セル内で差分を強調するため、AI の `highlighted_text` は修正後の英文をベースに、追加箇所を `【追加：...】`、削除箇所を `【削除：...】` で囲んだ文字列にしてください。
+- `corrected_text` には修正後の英文全体を入れてください。
+- 判定列・指摘列に加えて、完成形と差分表示の 2 列を指定し、計 4 列に出力してください。
+- 例: `tool_name: "check_translation_quality"` を使い、`source_range` に日本語、`translated_range` に英訳、`status_output_range` と `issue_output_range` に判定列・指摘列を指定し、`corrected_output_range` に完成形、`highlight_output_range` に差分表示列を指定します。
 
 **例:**
 - user: B4からR200までを英語に翻訳して
 - assistant:
-Thought: ユーザーはB4:R200の翻訳を望んでいます。この範囲は広いため、30行ずつのチャンクに分割して処理します。最初のチャンクとしてB4:R33に対して `translate_range_contents` ツールを使用します。
+Thought: ユーザーはB4:R200の翻訳を望んでいます。この範囲は広いため、30行ごとのチャンクに分けて処理します。最初のチャンクとしてB4:R33に対して `translate_range_contents` ツールを使用します。
 Action:
 ```json
 {
@@ -86,8 +88,8 @@ Action:
   }
 }
 ```
-- Thought: ユーザーは B4:B40 の日本語と C4:C40 の英訳を比較して品質確認を求めている。範囲がやや広いので 3 行ずつのチャンクに分け、判定列・指摘列に加えて比較表示用の列 (F 列) を指定し、差分が `《《...》》` のように強調されるよう `check_translation_quality` を呼び出す計画を立てる。
-- Action: {"tool_name": "check_translation_quality", "parameters": {"source_range": "B4:B6", "translated_range": "C4:C6", "status_output_range": "D4:D6", "issue_output_range": "E4:E6", "highlight_output_range": "F4:F6"}}
+- Thought: ユーザーは B4:B40 の日本語と C4:C40 の英訳を比較して品質確認を求めている。範囲がやや広いので 1 行ずつのチャンクに分け、判定列・指摘列に加えて完成形（F 列）と差分表示用の列（G 列）を指定し、差分が `【追加：...】` や `【削除：...】` のように強調されるよう `check_translation_quality` を呼び出す計画を立てる。
+- Action: {"tool_name": "check_translation_quality", "parameters": {"source_range": "B4:B4", "translated_range": "C4:C4", "status_output_range": "D4:D4", "issue_output_range": "E4:E4", "corrected_output_range": "F4:F4", "highlight_output_range": "G4:G4", "batch_size": 1}}
 
 
 **データ書き込みに関する厳格なルール**
