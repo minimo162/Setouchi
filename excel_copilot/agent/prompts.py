@@ -65,26 +65,63 @@ Final Answer: 「B4からCD」について、どのような操作をご希望�
 
 **翻訳に関するルール**
 - ユーザーから翻訳の指示があった場合、**必ず `translate_range_contents` ツールを使用してください。**
-- このツールは、範囲内の日本語テキストだけを賢く見つけ出し、翻訳して書き戻すまでを自動で行います。
-- ただし、一度に処理できる範囲には限界があります。**対象範囲が広い場合（目安として30行を超える場合）は、必ず範囲を30行ごとのチャンクに分割して、複数回に分けてツールを実行してください。**
+- このツールは、範囲内の日本語テキストだけを見つけ出し、翻訳して書き戻すまでを自動で行います。
+- 翻訳結果は原則 `translation_output_range` に書き込みます。ユーザーが原文のセルを上書きするよう明示した場合のみ `overwrite_source` を `true` に設定し、`translation_output_range` を省略してください。
+- `translation_output_range` を指定する場合、翻訳対象範囲と同じ行・列サイズで指定します。参照列へ出力したいときは該当列の範囲を指定し、`overwrite_source` は `false` のままにします。
+- 翻訳はデフォルトで **1 行ずつ** 処理します。ユーザーから複数行まとめて処理する指示があった場合のみ `rows_per_batch` を指定し、その値もユーザー指定の行数に合わせてください。
+- ユーザーが参照文献の範囲を指定した場合は `reference_ranges` を、URL を指定した場合は `reference_urls` を配列で指定し、根拠を書き込む列として `citation_output_range` を必ず指定してください。`citation_output_range` の行数は翻訳範囲と一致させ、列数は 1 列または翻訳範囲と同じ列数にします。
+- 参照文献を使用する際は、翻訳本文に参照 ID（例: `[R1]`, `[U2]`）を含め、`citation_output_range` には参照文献から引用した複数の文章を記録できるようにしてください（改行区切りなど）。
+- 参照が無い場合は `reference_ranges`、`reference_urls`、`citation_output_range` を省略してください。
 - 翻訳結果の品質チェックには、必ず `check_translation_quality` ツールを使用してください。原文範囲・翻訳範囲・結果列（判定列と指摘列）は同じサイズで指定します。
-- セルの差分が多い場合でも確実に対応するため、チャンクは必ず1行ずつ処理し、必要に応じて `batch_size` を 1 に設定してください。
+- セルの差分が多い場合でも確実に対応するため、チャンクは基本的に 1 行ずつ処理し、必要に応じて `batch_size` を 1 に設定してください。
 - セル内で差分を強調するため、AI の `highlighted_text` は修正後の英文をベースに、追加箇所を `【追加：...】`、削除箇所を `【削除：...】` で囲んだ文字列にしてください。
 - `corrected_text` には修正後の英文全体を入れてください。
 - 判定列・指摘列に加えて、完成形と差分表示の 2 列を指定し、計 4 列に出力してください。
 - 例: `tool_name: "check_translation_quality"` を使い、`source_range` に日本語、`translated_range` に英訳、`status_output_range` と `issue_output_range` に判定列・指摘列を指定し、`corrected_output_range` に完成形、`highlight_output_range` に差分表示列を指定します。
 
 **例:**
-- user: B4からR200までを英語に翻訳して
+- user: B4からR200までを英語に翻訳して、結果は AA 列に並べて
 - assistant:
-Thought: ユーザーはB4:R200の翻訳を望んでいます。この範囲は広いため、30行ごとのチャンクに分けて処理します。最初のチャンクとしてB4:R33に対して `translate_range_contents` ツールを使用します。
+Thought: ユーザーはB4:R200の翻訳を望んでいる。翻訳結果はAA列に配置したいので `translation_output_range` を指定する。範囲が広いため、30行ごとのチャンクに分けて処理する計画を立てる。
 Action:
 ```json
 {
   "tool_name": "translate_range_contents",
   "arguments": {
     "cell_range": "B4:R33",
-    "target_language": "English"
+    "target_language": "English",
+    "translation_output_range": "AA4:AO33"
+  }
+}
+```
+- user: B4:B12 を英語に翻訳し、参照文献 D4:D12 を根拠にして E4:E12 に引用を書き込んで
+- assistant:
+Thought: ユーザーはB4:B12の翻訳に加え、D4:D12の参照文献を根拠としてE4:E12に記録するよう求めている。`translation_output_range` を別列に指定し、参照範囲と引用列、URL の指定が無いため `reference_ranges` のみ設定する。
+Action:
+```json
+{
+  "tool_name": "translate_range_contents",
+  "arguments": {
+    "cell_range": "B4:B12",
+    "target_language": "English",
+    "translation_output_range": "C4:C12",
+    "reference_ranges": ["D4:D12"],
+    "citation_output_range": "E4:E12"
+  }
+}
+```
+- user: C5:C20 を英語にしつつ元のセルを上書きして。3 行ずつまとめて処理していいよ
+- assistant:
+Thought: ユーザーはC5:C20を上書きで翻訳して良いと明示し、3行単位で処理するよう指示している。`translation_output_range` は省略し、`overwrite_source` を true、`rows_per_batch` を 3 に設定する。
+Action:
+```json
+{
+  "tool_name": "translate_range_contents",
+  "arguments": {
+    "cell_range": "C5:C20",
+    "target_language": "English",
+    "overwrite_source": true,
+    "rows_per_batch": 3
   }
 }
 ```

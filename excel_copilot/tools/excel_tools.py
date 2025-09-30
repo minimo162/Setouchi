@@ -30,6 +30,25 @@ def _shorten_debug(value: str, limit: int = 120) -> str:
     return text if len(text) <= limit else text[:limit] + '…'
 
 
+
+def _split_sheet_and_range(range_ref: str, default_sheet: Optional[str]) -> Tuple[Optional[str], str]:
+    cleaned = (range_ref or "").strip()
+    if not cleaned:
+        raise ToolExecutionError("Range string is empty.")
+    if "!" not in cleaned:
+        return default_sheet, cleaned
+    sheet_part, cell_part = cleaned.split("!", 1)
+    sheet_part = sheet_part.strip()
+    if sheet_part.startswith("'") and sheet_part.endswith("'"):
+        sheet_part = sheet_part[1:-1].replace("''", "'")
+    elif sheet_part.startswith('"') and sheet_part.endswith('"'):
+        sheet_part = sheet_part[1:-1]
+    cell_part = cell_part.strip()
+    if not cell_part:
+        raise ToolExecutionError("Range string is empty.")
+    return sheet_part or default_sheet, cell_part
+
+
 CELL_REFERENCE_PATTERN = re.compile(r"([A-Za-z]+)(\d+)")
 
 LEGACY_DIFF_MARKER_PATTERN = re.compile(r"【(追加|削除)：(.*?)】")
@@ -353,70 +372,263 @@ def formatrange(actions: ExcelActions,
     )
 
 import json
+
 def translate_range_contents(
     actions: ExcelActions,
     browser_manager: BrowserCopilotManager,
     cell_range: str,
     target_language: str = "English",
-    sheet_name: Optional[str] = None
+    sheet_name: Optional[str] = None,
+    reference_ranges: Optional[List[str]] = None,
+    citation_output_range: Optional[str] = None,
+    reference_urls: Optional[List[str]] = None,
+    translation_output_range: Optional[str] = None,
+    overwrite_source: bool = False,
+    rows_per_batch: Optional[int] = None,
 ) -> str:
-    """
-    指定された範囲のセルを読み込み、テキスト部分のみをAIで翻訳し、同じ範囲に書き戻します。
-    数値や空白セルは変更されません。
-    """
+    """Translate text ranges with optional references and controlled output."""
     try:
-        # 1. データの読み取り
-        original_data = actions.read_range(cell_range, sheet_name)
-        if not isinstance(original_data, list):
-            original_data = [[original_data]]
-        elif original_data and not isinstance(original_data[0], list):
-            original_data = [original_data]
+        target_sheet, normalized_range = _split_sheet_and_range(cell_range, sheet_name)
+        source_rows, source_cols = _parse_range_dimensions(normalized_range)
 
-        texts_to_translate = []
-        text_positions = []
-        for r, row in enumerate(original_data):
-            for c, cell in enumerate(row):
-                if isinstance(cell, str) and re.search(r'[ぁ-んァ-ン一-龯]', cell):
-                    texts_to_translate.append(cell)
-                    text_positions.append((r, c))
+        raw_original = actions.read_range(normalized_range, target_sheet)
+        original_data = _reshape_to_dimensions(raw_original, source_rows, source_cols)
 
-        if not texts_to_translate:
-            return f"範囲 '{cell_range}' 内に翻訳対象のテキストが見つかりませんでした。"
+        if source_rows == 0 or source_cols == 0:
+            return f"範囲 '{cell_range}' に翻訳対象のテキストが見つかりませんでした。"
 
-        # 2. 翻訳の実行（JSON形式を要求）
-        translation_prompt = (
-            f"以下のJSONリストに格納された日本語の各テキストを、それぞれ{target_language}に翻訳し、"
-            f"翻訳後のテキストを格納したJSONリスト形式で返してください。リストの順序と要素数は変えないでください。"
-            f"応答はJSONのみとし、前後に説明やコードブロックのマークアップを含めないでください。\n\n"
-            f"{json.dumps(texts_to_translate, ensure_ascii=False)}"
-        )
-        response = browser_manager.ask(translation_prompt)
+        writing_to_source_directly = translation_output_range is None
+        if writing_to_source_directly:
+            if not overwrite_source:
+                raise ToolExecutionError(
+                    "翻訳結果の出力先が指定されていません。translation_output_range を指定するか"
+                    " overwrite_source を True にしてください。"
+                )
+            output_sheet = target_sheet
+            output_range = normalized_range
+            output_matrix = [row[:] for row in original_data]
+        else:
+            output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
+            out_rows, out_cols = _parse_range_dimensions(output_range)
+            if (out_rows, out_cols) != (source_rows, source_cols):
+                raise ToolExecutionError(
+                    "translation_output_range のサイズは翻訳対象範囲と一致させてください。"
+                )
+            raw_output = actions.read_range(output_range, output_sheet)
+            try:
+                output_matrix = _reshape_to_dimensions(raw_output, out_rows, out_cols)
+            except ToolExecutionError:
+                output_matrix = [["" for _ in range(out_cols)] for _ in range(out_rows)]
 
-        try:
-            # 応答がコードブロックで囲まれている場合を考慮してJSONを抽出
-            match = re.search(r'\{.*\}|\[.*\]', response, re.DOTALL)
-            if match:
-                json_str = match.group(0)
-                translated_texts = json.loads(json_str)
+        reference_entries: List[Dict[str, Any]] = []
+        if reference_ranges:
+            range_list = [reference_ranges] if isinstance(reference_ranges, str) else list(reference_ranges)
+            for raw_range in range_list:
+                ref_sheet, ref_range = _split_sheet_and_range(raw_range, target_sheet)
+                try:
+                    ref_data = actions.read_range(ref_range, ref_sheet)
+                except ToolExecutionError as exc:
+                    raise ToolExecutionError(f"参照文献範囲 '{raw_range}' の読み取りに失敗しました: {exc}") from exc
+
+                reference_lines: List[str] = []
+                if isinstance(ref_data, list):
+                    for ref_row in ref_data:
+                        if isinstance(ref_row, list):
+                            row_text = []
+                            for value in ref_row:
+                                text_value = _normalize_cell_value(value).strip()
+                                if text_value:
+                                    row_text.append(text_value)
+                            if row_text:
+                                reference_lines.append(" ".join(row_text))
+                        else:
+                            text_value = _normalize_cell_value(ref_row).strip()
+                            if text_value:
+                                reference_lines.append(text_value)
+                else:
+                    text_value = _normalize_cell_value(ref_data).strip()
+                    if text_value:
+                        reference_lines.append(text_value)
+
+                if reference_lines:
+                    entry: Dict[str, Any] = {
+                        "id": f"R{len(reference_entries) + 1}",
+                        "source_range": raw_range,
+                        "content": reference_lines,
+                    }
+                    if ref_sheet:
+                        entry["sheet"] = ref_sheet
+                    reference_entries.append(entry)
+
+            if reference_ranges and not reference_entries:
+                raise ToolExecutionError("指定された参照文献範囲から利用可能なテキストを取得できませんでした。")
+
+        reference_url_entries: List[Dict[str, str]] = []
+        if reference_urls:
+            url_list = [reference_urls] if isinstance(reference_urls, str) else list(reference_urls)
+            for raw_url in url_list:
+                if not isinstance(raw_url, str):
+                    raise ToolExecutionError("reference_urls の各要素は文字列で指定してください。")
+                url = raw_url.strip()
+                if not url:
+                    continue
+                reference_url_entries.append({
+                    "id": f"U{len(reference_url_entries) + 1}",
+                    "url": url,
+                })
+
+        use_references = bool(reference_entries or reference_url_entries)
+
+        prompt_parts: List[str]
+        if use_references:
+            prompt_parts = [
+                f"以下のJSONリストに格納された日本語テキストを、それぞれ{target_language}に翻訳してください。\n",
+                "翻訳では必ず提供された参照文献やURLの文章を根拠として使用し、引用した表現を活かした自然な訳文を作成してください。\n",
+                "各翻訳文には対応する参照ID（例: [R1], [U2]）を本文内に含めてください。\n",
+                "入力テキストの順序は維持してください。\n",
+            ]
+            if reference_entries:
+                prompt_parts.append(f"参照文献リスト:\n{json.dumps(reference_entries, ensure_ascii=False)}\n")
+            if reference_url_entries:
+                prompt_parts.append(f"参照可能なURLリスト:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n")
+            prompt_parts.append(
+                "応答はJSON配列のみとし、各要素は必ず次のキーを含めてください:\n"
+                "- \"translated_text\": 翻訳結果の文字列（必要な参照IDを含む）\n"
+                "- \"evidence\": 翻訳に使用した参照文やURLの文章を複数含む文字列配列\n"
+                "前後に説明文やコードブロックを含めないでください。\n"
+            )
+            prompt_preamble = "".join(prompt_parts)
+        else:
+            prompt_preamble = (
+                f"以下のJSONリストに格納された日本語テキストを、それぞれ{target_language}に翻訳し、"
+                "翻訳後のテキストを格納したJSONリスト形式で返してください。\n"
+                "入力テキストの順序は維持してください。\n"
+                "応答はJSONのみとし、前後に説明やコードブロックのマークアップを含めないでください。\n"
+            )
+
+        batch_size = rows_per_batch if rows_per_batch is not None else 1
+        if batch_size < 1:
+            raise ToolExecutionError("rows_per_batch は 1 以上で指定してください。")
+
+        translations: Dict[Tuple[int, int], str] = {}
+        evidences: Dict[Tuple[int, int], str] = {}
+
+        for row_start in range(0, source_rows, batch_size):
+            row_end = min(row_start + batch_size, source_rows)
+            chunk_texts: List[str] = []
+            chunk_positions: List[Tuple[int, int]] = []
+
+            for row_idx in range(row_start, row_end):
+                for col_idx in range(source_cols):
+                    cell_value = original_data[row_idx][col_idx]
+                    if isinstance(cell_value, str) and re.search(r"[ぁ-んァ-ン一-龯]", cell_value):
+                        chunk_texts.append(cell_value)
+                        chunk_positions.append((row_idx, col_idx))
+
+            if not chunk_texts:
+                continue
+
+            texts_json = json.dumps(chunk_texts, ensure_ascii=False)
+            prompt = f"{prompt_preamble}{texts_json}"
+            response = browser_manager.ask(prompt)
+
+            try:
+                match = re.search(r"{.*}|\[.*\]", response, re.DOTALL)
+                json_payload = match.group(0) if match else response
+                parsed_payload = json.loads(json_payload)
+            except json.JSONDecodeError as exc:
+                raise ToolExecutionError(
+                    f"AIからの翻訳結果をJSONとして解析できませんでした。応答: {response}"
+                ) from exc
+
+            if use_references:
+                if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
+                    raise ToolExecutionError("翻訳前と翻訳後でテキストの件数が一致しません。")
+                for item, position in zip(parsed_payload, chunk_positions):
+                    if not isinstance(item, dict):
+                        raise ToolExecutionError(
+                            "参照文献やURLを利用する場合、翻訳結果はオブジェクトのリストで返してください。"
+                        )
+                    translation_value = item.get("translated_text") or item.get("translation") or item.get("output")
+                    if not isinstance(translation_value, str):
+                        raise ToolExecutionError("翻訳結果のJSONに 'translated_text' が含まれていません。")
+                    translations[position] = translation_value
+
+                    evidence_value = item.get("evidence") or item.get("justification") or item.get("support")
+                    if isinstance(evidence_value, list):
+                        collected = [str(v).strip() for v in evidence_value if isinstance(v, (str, int, float))]
+                        evidences[position] = "\n\n".join(filter(None, collected))
+                    elif isinstance(evidence_value, str):
+                        evidences[position] = evidence_value.strip()
+                    elif evidence_value is None:
+                        evidences[position] = ""
+                    else:
+                        evidences[position] = str(evidence_value)
             else:
-                # コードブロックがない場合は、そのまま解析を試みる
-                translated_texts = json.loads(response)
-        except json.JSONDecodeError:
-            raise ToolExecutionError(f"AIからの翻訳結果をJSONとして解析できませんでした。応答: {response}")
+                if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
+                    raise ToolExecutionError("翻訳前と翻訳後でテキストの件数が一致しません。")
+                if not all(isinstance(item, str) for item in parsed_payload):
+                    raise ToolExecutionError("翻訳結果は文字列のリストで返してください。")
+                for translation_value, position in zip(parsed_payload, chunk_positions):
+                    translations[position] = translation_value
 
-        if not isinstance(translated_texts, list) or len(translated_texts) != len(texts_to_translate):
-            raise ToolExecutionError("翻訳前と翻訳後でテキストの数や形式が一致しません。")
+        if not translations:
+            return f"範囲 '{cell_range}' に翻訳対象のテキストが見つかりませんでした。"
 
-        # 3. 元のデータ構造に翻訳結果を反映
-        new_data = [row[:] for row in original_data]
-        for i, (r, c) in enumerate(text_positions):
-            new_data[r][c] = translated_texts[i]
+        for (row_idx, col_idx), translated_text in translations.items():
+            output_matrix[row_idx][col_idx] = translated_text
 
-        # 4. Excelへの書き込み
-        return actions.write_range(cell_range, new_data, sheet_name)
+        messages: List[str] = []
+        messages.append(actions.write_range(output_range, output_matrix, output_sheet))
 
+        if not writing_to_source_directly and overwrite_source:
+            source_matrix = [row[:] for row in original_data]
+            for (row_idx, col_idx), translated_text in translations.items():
+                source_matrix[row_idx][col_idx] = translated_text
+            messages.append(actions.write_range(normalized_range, source_matrix, target_sheet))
+
+        if use_references:
+            if not citation_output_range:
+                raise ToolExecutionError(
+                    "参照文献が指定された場合は、根拠を書き込む範囲 (citation_output_range) を指定してください。"
+                )
+
+            citation_sheet, citation_range = _split_sheet_and_range(citation_output_range, target_sheet)
+            cite_rows, cite_cols = _parse_range_dimensions(citation_range)
+
+            if cite_rows != source_rows:
+                raise ToolExecutionError("citation_output_range の行数は翻訳対象範囲と一致させてください。")
+            if cite_cols not in {1, source_cols}:
+                raise ToolExecutionError(
+                    "citation_output_range の列数は1列または翻訳対象範囲と同じ列数にしてください。"
+                )
+
+            existing_citation = actions.read_range(citation_range, citation_sheet)
+            try:
+                citation_matrix = _reshape_to_dimensions(existing_citation, cite_rows, cite_cols)
+            except ToolExecutionError:
+                citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
+
+            if cite_cols == source_cols:
+                for row_idx in range(cite_rows):
+                    for col_idx in range(cite_cols):
+                        citation_matrix[row_idx][col_idx] = ""
+                for (row_idx, col_idx), evidence_text in evidences.items():
+                    if row_idx < cite_rows and col_idx < cite_cols:
+                        citation_matrix[row_idx][col_idx] = evidence_text
+            else:
+                for row_idx in range(cite_rows):
+                    entries = [evidences[pos] for pos in evidences if pos[0] == row_idx and evidences[pos]]
+                    citation_matrix[row_idx][0] = "\n\n".join(entries)
+
+            messages.append(actions.write_range(citation_range, citation_matrix, citation_sheet))
+
+        return "\n".join(messages)
+
+    except ToolExecutionError:
+        raise
     except Exception as e:
-        raise ToolExecutionError(f"範囲 '{cell_range}' の翻訳中にエラーが発生しました: {e}")
+        raise ToolExecutionError(f"範囲 '{cell_range}' の翻訳中にエラーが発生しました: {e}") from e
 
 def check_translation_quality(
     actions: ExcelActions,
