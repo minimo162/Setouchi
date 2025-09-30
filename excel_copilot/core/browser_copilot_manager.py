@@ -515,6 +515,11 @@ class BrowserCopilotManager:
 
 
             self._fill_chat_input(chat_input, prompt)
+            # Allow the pasted content to settle before sending
+            try:
+                self.page.wait_for_timeout(350)
+            except Exception:
+                time.sleep(0.35)
             send_button = self._wait_for_first_visible(
                 "送信ボタン",
                 [

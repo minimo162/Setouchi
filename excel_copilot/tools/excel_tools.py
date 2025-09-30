@@ -2,6 +2,7 @@ import re
 import difflib
 import logging
 import os
+import string
 from typing import List, Any, Optional, Dict, Tuple
 
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
@@ -28,6 +29,35 @@ def _shorten_debug(value: str, limit: int = 120) -> str:
         return ''
     text = str(value).replace('\r', '\r').replace('\n', '\n')
     return text if len(text) <= limit else text[:limit] + '…'
+
+
+
+_MIN_QUOTE_TOKEN_COVERAGE = 0.5
+_PUNCT_TRANSLATION_TABLE = {ord(ch): ' ' for ch in string.punctuation}
+_PUNCT_TRANSLATION_TABLE.update({
+    0x2010: ' ',
+    0x2011: ' ',
+    0x2012: ' ',
+    0x2013: ' ',
+    0x2014: ' ',
+    0x2212: ' ',
+})
+
+def _normalize_for_match(text: str) -> str:
+    if not isinstance(text, str):
+        return ''
+    replacements = {
+        chr(0x201c): '"',
+        chr(0x201d): '"',
+        chr(0x2019): "'",
+        chr(0x2018): "'",
+    }
+    normalized = text
+    for src, dst in replacements.items():
+        normalized = normalized.replace(src, dst)
+    normalized = normalized.translate(_PUNCT_TRANSLATION_TABLE)
+    normalized = re.sub(r'\s+', ' ', normalized)
+    return normalized.strip().lower()
 
 
 
@@ -524,6 +554,11 @@ def translate_range_contents(
 
         use_references = bool(reference_entries or reference_url_entries)
         reference_text_pool = [text for text in reference_text_pool if text]
+        normalized_reference_text_pool: List[str] = []
+        for _ref_text in reference_text_pool:
+            normalized = _normalize_for_match(_ref_text)
+            if normalized:
+                normalized_reference_text_pool.append(normalized)
 
         def _sanitize_evidence_value(value: str) -> str:
             cleaned = value.strip()
@@ -536,6 +571,7 @@ def translate_range_contents(
             prompt_parts = [
                 f"Translate each Japanese text in the following JSON array into {target_language}.\n",
                 "Use the provided reference passages and URLs as evidence, weaving quoted English wording naturally into the translation.\n",
+                "Follow this three-step workflow for each item:\n1. From the Japanese text, create concise English search key phrases that capture the core meaning.\n2. Use those key phrases to locate the most relevant English sentences or fragments within the provided references and URLs.\n3. When writing the translation, prioritize the expressions gathered in step 2 and reuse them verbatim where appropriate.\n",
                 "Do not include bracketed reference markers (for example, [R1] or [U2]) in the translated sentences.\n",
                 "Provide a brief (1-2 sentence) justification in Japanese that quotes one or two key English sentences exactly as they appear in the references.\n",
                 "Keep the input order unchanged.\n",
@@ -607,9 +643,120 @@ def translate_range_contents(
             if not chunk_texts:
                 continue
 
+
+
             texts_json = json.dumps(chunk_texts, ensure_ascii=False)
-            prompt = f"{prompt_preamble}{texts_json}"
-            response = browser_manager.ask(prompt)
+
+            keyword_prompt = (
+                "For each Japanese text in the following JSON array, create 2-4 concise English search key phrases that capture its core meaning.\n"
+                "Return a JSON array of the same length. Each element must be an object with the key \"keywords\" (array of short phrases).\n"
+                "Do not include explanations or code fences.\n"
+                f"{texts_json}"
+            )
+            keyword_response = browser_manager.ask(keyword_prompt)
+            try:
+                match = re.search(r'{.*}|\[.*\]', keyword_response, re.DOTALL)
+                keyword_payload = match.group(0) if match else keyword_response
+                keyword_items = json.loads(keyword_payload)
+            except json.JSONDecodeError as exc:
+                raise ToolExecutionError(
+                    f"AIからの検索キーフレーズ抽出結果をJSONとして解析できませんでした。応答: {keyword_response}"
+                ) from exc
+            if not isinstance(keyword_items, list) or len(keyword_items) != len(chunk_texts):
+                raise ToolExecutionError("検索キーフレーズの件数が入力テキストと一致しません。")
+
+            normalized_keywords: List[List[str]] = []
+            for item in keyword_items:
+                if isinstance(item, dict):
+                    raw_keywords = item.get("keywords")
+                elif isinstance(item, list):
+                    raw_keywords = item
+                else:
+                    raw_keywords = None
+                if not raw_keywords or not isinstance(raw_keywords, list):
+                    raise ToolExecutionError("検索キーフレーズのJSONに 'keywords' 配列が含まれていません。")
+                keyword_list = []
+                for keyword in raw_keywords:
+                    if isinstance(keyword, str):
+                        cleaned = keyword.strip()
+                        if cleaned:
+                            keyword_list.append(cleaned)
+                if not keyword_list:
+                    raise ToolExecutionError("検索キーフレーズが空です。")
+                normalized_keywords.append(keyword_list)
+
+            search_plan = [
+                {"source_text": text, "keywords": keywords}
+                for text, keywords in zip(chunk_texts, normalized_keywords)
+            ]
+            search_plan_json = json.dumps(search_plan, ensure_ascii=False)
+
+            if use_references:
+                evidence_prompt_parts = [
+                    "Using the Japanese texts and their search keywords, locate the most relevant English sentences or fragments within the provided references and URLs.\n",
+                    "Return a JSON array matching the input order. Each element must be an object with the key \"quotes\" containing an array of exact English sentences from the references.\n",
+                    "Only include sentences that appear verbatim in the references or URLs.\n",
+                    f"Japanese texts and keywords (JSON): {search_plan_json}\n",
+                ]
+                if reference_entries:
+                    evidence_prompt_parts.append(
+                        f"Reference passages (JSON): {json.dumps(reference_entries, ensure_ascii=False)}\n"
+                    )
+                if reference_url_entries:
+                    evidence_prompt_parts.append(
+                        f"Reference URLs (JSON): {json.dumps(reference_url_entries, ensure_ascii=False)}\n"
+                    )
+            else:
+                evidence_prompt_parts = [
+                    "Using the Japanese texts and their search keywords, craft up to three concise English candidate sentences per item that could serve as high-quality reference expressions.\n",
+                    "Return a JSON array matching the input order. Each element must be an object with the key \"quotes\" containing an array of English sentences.\n",
+                    "If no suitable expression exists, provide an empty string in the array.\n",
+                    f"Japanese texts and keywords (JSON): {search_plan_json}\n",
+                ]
+
+            evidence_prompt = "".join(evidence_prompt_parts)
+            evidence_response = browser_manager.ask(evidence_prompt)
+            try:
+                match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
+                evidence_payload = match.group(0) if match else evidence_response
+                evidence_items = json.loads(evidence_payload)
+            except json.JSONDecodeError as exc:
+                raise ToolExecutionError(
+                    f"AIからの参考表現抽出結果をJSONとして解析できませんでした。応答: {evidence_response}"
+                ) from exc
+            if not isinstance(evidence_items, list) or len(evidence_items) != len(chunk_texts):
+                raise ToolExecutionError("参考表現の件数が入力テキストと一致しません。")
+
+            normalized_quotes_per_item: List[List[str]] = []
+            for quotes_entry in evidence_items:
+                if isinstance(quotes_entry, dict):
+                    raw_quotes = quotes_entry.get("quotes")
+                elif isinstance(quotes_entry, list):
+                    raw_quotes = quotes_entry
+                else:
+                    raw_quotes = None
+                quotes_list: List[str] = []
+                if isinstance(raw_quotes, list):
+                    for quote in raw_quotes:
+                        if isinstance(quote, str):
+                            cleaned_quote = quote.strip()
+                            if cleaned_quote:
+                                quotes_list.append(cleaned_quote)
+                normalized_quotes_per_item.append(quotes_list)
+
+            translation_context = [
+                {"source_text": text, "keywords": keywords, "quotes": quotes}
+                for text, keywords, quotes in zip(chunk_texts, normalized_keywords, normalized_quotes_per_item)
+            ]
+            translation_context_json = json.dumps(translation_context, ensure_ascii=False)
+
+            final_prompt = (
+                f"{prompt_preamble}{texts_json}"
+                "Use the expressions listed for each item under the 'quotes' key when crafting the translation.\n"
+                "Ensure the evidence output reuses those quotes verbatim.\n"
+                f"Supporting expressions (JSON): {translation_context_json}\n"
+            )
+            response = browser_manager.ask(final_prompt)
 
             try:
                 match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
@@ -675,13 +822,39 @@ def translate_range_contents(
                         for quote in quotes:
                             if not quote:
                                 continue
-                            if reference_text_pool and not any(quote in ref_text for ref_text in reference_text_pool):
+                            normalized_quote = _normalize_for_match(quote)
+                            if not normalized_quote:
+                                continue
+                            if normalized_reference_text_pool and not any(
+                                normalized_quote in ref_text for ref_text in normalized_reference_text_pool
+                            ):
                                 raise ToolExecutionError(
                                     f"引用文 '{quote}' が参照範囲のテキストに見つかりません。引用は参照文献に存在する文章のみを使用してください。"
                                 )
                             validated_quotes.append(quote)
                     if reference_text_pool and not validated_quotes:
                         raise ToolExecutionError("参照文献から引用した英文を少なくとも1文含めてください。")
+
+                    if validated_quotes:
+                        normalized_translation = _normalize_for_match(translation_value)
+                        if not normalized_translation:
+                            raise ToolExecutionError("翻訳結果に引用表現を含めてください。")
+                        translation_tokens = set(normalized_translation.split())
+                        for quote in validated_quotes:
+                            normalized_quote = _normalize_for_match(quote)
+                            if not normalized_quote:
+                                continue
+                            if normalized_quote in normalized_translation:
+                                continue
+                            quote_tokens = [token for token in normalized_quote.split() if token]
+                            if not quote_tokens:
+                                continue
+                            overlap = sum(1 for token in quote_tokens if token in translation_tokens)
+                            coverage = overlap / len(quote_tokens)
+                            if coverage < _MIN_QUOTE_TOKEN_COVERAGE:
+                                raise ToolExecutionError(
+                                    f"引用文 '{quote}' の主要表現を翻訳結果にも含めてください。"
+                                )
 
                     evidence_lines: List[str] = []
                     if explanation_jp:
@@ -725,7 +898,7 @@ def translate_range_contents(
                 )
                 messages.append(actions.write_range(chunk_source_range, chunk_source_data, target_sheet))
 
-            if use_references and citation_matrix is not None and citation_sheet is not None:
+            if use_references and citation_matrix is not None:
                 if cite_cols == source_cols:
                     for local_row in range(row_start, row_end):
                         for col_idx in range(cite_cols):
