@@ -122,6 +122,9 @@ REFUSAL_PATTERNS = (
     "応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。",
 )
 
+JAPANESE_CHAR_PATTERN = re.compile(r'[぀-ヿ一-鿿]')
+
+
 
 def _parse_range_dimensions(range_ref: str) -> Tuple[int, int]:
     ref = range_ref.split('!')[-1].replace('$', '').strip()
@@ -428,7 +431,7 @@ def translate_range_contents(
     overwrite_source: bool = False,
     rows_per_batch: Optional[int] = None,
 ) -> str:
-    """Translate Japanese text for a range with optional references and controlled output."""
+    '''Translate Japanese text for a range with optional references and controlled output.'''
     try:
         target_sheet, normalized_range = _split_sheet_and_range(cell_range, sheet_name)
         source_rows, source_cols = _parse_range_dimensions(normalized_range)
@@ -442,7 +445,9 @@ def translate_range_contents(
         source_matrix = [row[:] for row in original_data]
         writing_to_source_directly = translation_output_range is None
         if writing_to_source_directly and not overwrite_source:
-            raise ToolExecutionError("翻訳結果の出力先が指定されていません。translation_output_range を指定するか overwrite_source を True にしてください。")
+            raise ToolExecutionError(
+                "翻訳結果の出力先が指定されていません。translation_output_range を指定するか overwrite_source を True にしてください。"
+            )
         if writing_to_source_directly:
             output_sheet = target_sheet
             output_range = normalized_range
@@ -459,6 +464,7 @@ def translate_range_contents(
                 output_matrix = [["" for _ in range(out_cols)] for _ in range(out_rows)]
 
         reference_entries: List[Dict[str, Any]] = []
+        reference_text_pool: List[str] = []
         if reference_ranges:
             range_list = [reference_ranges] if isinstance(reference_ranges, str) else list(reference_ranges)
             for raw_range in range_list:
@@ -497,6 +503,7 @@ def translate_range_contents(
                     if ref_sheet:
                         entry["sheet"] = ref_sheet
                     reference_entries.append(entry)
+                    reference_text_pool.extend(reference_lines)
 
             if reference_ranges and not reference_entries:
                 raise ToolExecutionError("指定された参照文献範囲から利用可能なテキストを取得できませんでした。")
@@ -516,6 +523,7 @@ def translate_range_contents(
                 })
 
         use_references = bool(reference_entries or reference_url_entries)
+        reference_text_pool = [text for text in reference_text_pool if text]
 
         def _sanitize_evidence_value(value: str) -> str:
             cleaned = value.strip()
@@ -529,7 +537,7 @@ def translate_range_contents(
                 f"Translate each Japanese text in the following JSON array into {target_language}.\n",
                 "Use the provided reference passages and URLs as evidence, weaving quoted English wording naturally into the translation.\n",
                 "Do not include bracketed reference markers (for example, [R1] or [U2]) in the translated sentences.\n",
-                "Provide a brief (1-2 sentence) justification that quotes one or two key English sentences and explains the translation clearly.\n",
+                "Provide a brief (1-2 sentence) justification in Japanese that quotes one or two key English sentences exactly as they appear in the references.\n",
                 "Keep the input order unchanged.\n",
             ]
             if reference_entries:
@@ -539,8 +547,8 @@ def translate_range_contents(
             prompt_parts.append(
                 "Return only a JSON array. Each element must contain:\n"
                 "- \"translated_text\": the translated sentence (without any bracketed IDs).\n"
-                "- \"evidence\": a short justification paragraph (1-2 sentences) that quotes one or two supporting English sentences directly, without prefixes such as \"Source:\".\n"
-                "No additional explanations or code fences.\n"
+                "- \"evidence\": an object with the keys \"quotes\" (array of quoted sentences) and \"explanation_jp\" (Japanese justification using those quotes).\n"
+                "Do not add other keys, explanations, or code fences.\n"
             )
             prompt_preamble = "".join(prompt_parts)
         else:
@@ -563,13 +571,17 @@ def translate_range_contents(
         cite_start_row = cite_start_col = cite_rows = cite_cols = 0
         if use_references:
             if not citation_output_range:
-                raise ToolExecutionError("参照文献が指定された場合は、根拠を書き込む範囲 (citation_output_range) を指定してください。")
+                raise ToolExecutionError(
+                    "参照文献が指定された場合は、根拠を書き込む範囲 (citation_output_range) を指定してください。"
+                )
             citation_sheet, citation_range = _split_sheet_and_range(citation_output_range, target_sheet)
             cite_rows, cite_cols = _parse_range_dimensions(citation_range)
             if cite_rows != source_rows:
                 raise ToolExecutionError("citation_output_range の行数は翻訳対象範囲と一致させてください。")
             if cite_cols not in {1, source_cols}:
-                raise ToolExecutionError("citation_output_range の列数は1列または翻訳対象範囲と同じ列数にしてください。")
+                raise ToolExecutionError(
+                    "citation_output_range の列数は1列または翻訳対象範囲と同じ列数にしてください。"
+                )
             cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
             existing_citation = actions.read_range(citation_range, citation_sheet)
             try:
@@ -633,18 +645,55 @@ def translate_range_contents(
 
                 if use_references:
                     evidence_value = item.get("evidence")
-                    if isinstance(evidence_value, list):
-                        combined = " ".join(
-                            _sanitize_evidence_value(str(v))
-                            for v in evidence_value
-                            if isinstance(v, (str, int, float)) and str(v).strip()
+                    explanation_jp = ""
+                    quotes: List[str] = []
+                    if isinstance(evidence_value, dict):
+                        raw_quotes = evidence_value.get("quotes")
+                        if isinstance(raw_quotes, list):
+                            quotes = [
+                                _sanitize_evidence_value(str(q))
+                                for q in raw_quotes
+                                if isinstance(q, (str, int, float)) and str(q).strip()
+                            ]
+                        raw_explanation = (
+                            evidence_value.get("explanation_jp")
+                            or evidence_value.get("explanation")
                         )
-                    elif isinstance(evidence_value, str):
-                        combined = _sanitize_evidence_value(evidence_value)
-                    elif evidence_value is None:
-                        combined = ""
+                        if isinstance(raw_explanation, (str, int, float)):
+                            explanation_jp = _sanitize_evidence_value(str(raw_explanation))
+                    elif isinstance(evidence_value, list):
+                        quotes = [
+                            _sanitize_evidence_value(str(q))
+                            for q in evidence_value
+                            if isinstance(q, (str, int, float)) and str(q).strip()
+                        ]
+                    elif isinstance(evidence_value, (str, int, float)):
+                        explanation_jp = _sanitize_evidence_value(str(evidence_value))
+
+                    validated_quotes: List[str] = []
+                    if quotes:
+                        for quote in quotes:
+                            if not quote:
+                                continue
+                            if reference_text_pool and not any(quote in ref_text for ref_text in reference_text_pool):
+                                raise ToolExecutionError(
+                                    f"引用文 '{quote}' が参照範囲のテキストに見つかりません。引用は参照文献に存在する文章のみを使用してください。"
+                                )
+                            validated_quotes.append(quote)
+                    if reference_text_pool and not validated_quotes:
+                        raise ToolExecutionError("参照文献から引用した英文を少なくとも1文含めてください。")
+
+                    evidence_lines: List[str] = []
+                    if explanation_jp:
+                        if not JAPANESE_CHAR_PATTERN.search(explanation_jp):
+                            raise ToolExecutionError("根拠の説明は日本語で記述してください。")
+                        evidence_lines.append(f"説明: {explanation_jp}")
                     else:
-                        combined = _sanitize_evidence_value(str(evidence_value))
+                        raise ToolExecutionError("根拠の説明を日本語で1〜2文記述してください。")
+                    if validated_quotes:
+                        for quote in validated_quotes:
+                            evidence_lines.append(f"引用: {quote}")
+                    combined = "\n".join(evidence_lines).strip()
 
                     if cite_cols == source_cols:
                         chunk_cell_evidences[(local_row, col_idx)] = combined
@@ -678,6 +727,9 @@ def translate_range_contents(
 
             if use_references and citation_matrix is not None and citation_sheet is not None:
                 if cite_cols == source_cols:
+                    for local_row in range(row_start, row_end):
+                        for col_idx in range(cite_cols):
+                            citation_matrix[local_row][col_idx] = ""
                     for (local_row, col_idx), evidence_text in chunk_cell_evidences.items():
                         citation_matrix[local_row][col_idx] = evidence_text
                     chunk_citation_data = [
@@ -694,7 +746,9 @@ def translate_range_contents(
                     for local_row in range(row_start, row_end):
                         texts = row_evidence_lines.get(local_row)
                         if texts:
-                            citation_matrix[local_row][0] = "\n\n".join(texts)
+                            citation_matrix[local_row][0] = "\n".join(texts)
+                        else:
+                            citation_matrix[local_row][0] = ""
                     chunk_citation_data = [
                         [citation_matrix[local_row][0]]
                         for local_row in range(row_start, row_end)
