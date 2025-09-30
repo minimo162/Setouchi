@@ -253,6 +253,9 @@ def main(page: ft.Page):
     ui_loop_running = True
     shutdown_requested = False
     window_closed_event = threading.Event()
+    current_workbook_name: Optional[str] = None
+    current_sheet_name: Optional[str] = None
+    sheet_selection_updating = False
 
     page.title = "Excel Co-pilot"
     page.window.width = 1280
@@ -315,24 +318,37 @@ def main(page: ft.Page):
         msg.appear()
         
     def _refresh_excel_context(e=None, is_initial_start: bool = False):
+        nonlocal current_workbook_name, current_sheet_name, sheet_selection_updating
+        sheet_selector.disabled = True
         refresh_button.disabled = True
         refresh_button.text = "更新中..."
         _update_ui()
         try:
             with ExcelManager() as manager:
                 info_dict = manager.get_active_workbook_and_sheet()
+                sheet_names = manager.list_sheet_names()
+                current_workbook_name = info_dict["workbook_name"]
+                current_sheet_name = info_dict["sheet_name"]
+                sheet_selection_updating = True
                 info_text = f"ブック: {info_dict['workbook_name']}\nシート: {info_dict['sheet_name']}"
                 excel_info_label.value = info_text
+                sheet_selector.options = [ft.dropdown.Option(name) for name in sheet_names]
+                sheet_selector.value = info_dict["sheet_name"]
+                sheet_selector.disabled = False
                 if not is_initial_start:
                     request_queue.put({"type": Req.UPDATE_CONTEXT, "payload": {"sheet_name": info_dict["sheet_name"]}})
                 return info_dict['sheet_name']
         except Exception as ex:
             error_message = f"Excel情報取得失敗: {ex}"
             excel_info_label.value = error_message
+            sheet_selector.disabled = True
+            sheet_selector.options = []
+            sheet_selector.value = None
             if not is_initial_start:
                 _add_message("error", error_message)
             return None
         finally:
+            sheet_selection_updating = False
             refresh_button.disabled = False
             refresh_button.text = "更新"
             _update_ui()
@@ -351,6 +367,34 @@ def main(page: ft.Page):
     def _stop_task(e):
         _set_state(AppState.STOPPING)
         request_queue.put({"type": Req.STOP})
+
+    def _on_sheet_change(e):
+        nonlocal current_workbook_name, current_sheet_name, sheet_selection_updating
+        if sheet_selection_updating:
+            return
+        selected_sheet = e.control.value if e and e.control else None
+        if not selected_sheet:
+            return
+        previous_sheet = current_sheet_name
+
+        try:
+            with ExcelManager() as manager:
+                manager.activate_sheet(selected_sheet)
+        except Exception as ex:
+            error_message = f"シート切替に失敗: {ex}"
+            excel_info_label.value = error_message
+            sheet_selection_updating = True
+            sheet_selector.value = previous_sheet
+            sheet_selection_updating = False
+            _add_message("error", error_message)
+            _update_ui()
+            return
+
+        request_queue.put({"type": Req.UPDATE_CONTEXT, "payload": {"sheet_name": selected_sheet}})
+        excel_info_label.value = f"ブック: {current_workbook_name or '不明'}\nシート: {selected_sheet}"
+        _add_message("info", f"操作対象のシートを「{selected_sheet}」に設定しました。")
+        current_sheet_name = selected_sheet
+        _update_ui()
 
     def _process_response_queue_loop():
         while ui_loop_running:
@@ -472,6 +516,16 @@ def main(page: ft.Page):
         text="更新", on_click=_refresh_excel_context, bgcolor=ft.Colors.DEEP_PURPLE_500, color=ft.Colors.WHITE,
         scale=1, animate_scale=100, on_hover=on_hover_button
     )
+    sheet_selector = ft.Dropdown(
+        options=[],
+        width=180,
+        on_change=_on_sheet_change,
+        hint_text="シートを選択",
+        border_radius=8,
+        fill_color="#2C2A3A",
+        text_style=ft.TextStyle(color=ft.Colors.WHITE),
+        disabled=True,
+    )
 
     sidebar_content = ft.Column(
         [
@@ -480,6 +534,7 @@ def main(page: ft.Page):
             ft.Divider(color="#4A4458"),
             excel_info_label,
             refresh_button,
+            sheet_selector,
         ],
         width=200,
         spacing=20,

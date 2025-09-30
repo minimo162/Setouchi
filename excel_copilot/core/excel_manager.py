@@ -69,3 +69,21 @@ class ExcelManager:
             return {"workbook_name": book_name, "sheet_name": sheet_name}
         except Exception as e:
             raise ExcelConnectionError(f"ブックとシートの取得中にエラーが発生しました: {e}")
+
+    def list_sheet_names(self) -> list[str]:
+        """アクティブなワークブック内のシート名一覧を返す。"""
+        try:
+            book = self.get_active_workbook()
+            return [sheet.name for sheet in book.sheets]
+        except Exception as e:
+            raise ExcelConnectionError(f"シート一覧の取得中にエラーが発生しました: {e}")
+
+    def activate_sheet(self, sheet_name: str) -> str:
+        """指定したシートをアクティブにする。"""
+        try:
+            book = self.get_active_workbook()
+            sheet = book.sheets[sheet_name]
+            sheet.activate()
+            return sheet.name
+        except Exception as e:
+            raise ExcelConnectionError(f"シート '{sheet_name}' のアクティブ化に失敗しました: {e}")
