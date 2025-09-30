@@ -581,6 +581,58 @@ def translate_range_contents(
                 expanded.append(value)
 
             dash_variants = ['-'] + [chr(code) for code in (0x2010, 0x2011, 0x2012, 0x2013, 0x2014)]
+            fullwidth_space = chr(0x3000)
+
+            for keyword in keywords:
+                base = keyword.strip()
+                if not base:
+                    continue
+                _add_candidate(base)
+
+                normalized = base.replace(fullwidth_space, ' ').strip()
+                for alt_dash in dash_variants[1:]:
+                    normalized = normalized.replace(alt_dash, '-')
+
+                if '-' in normalized:
+                    _add_candidate(normalized.replace('-', ' '))
+                if ' ' in normalized:
+                    _add_candidate(normalized.replace(' ', '-'))
+                    words = [word for word in normalized.split() if word]
+                    for word in words:
+                        _add_candidate(word)
+                    if len(words) >= 2:
+                        acronym = ''.join(word[0] for word in words if word and word[0].isalpha()).upper()
+                        if len(acronym) >= 2:
+                            _add_candidate(acronym)
+
+                if '(' in normalized and ')' in normalized:
+                    start_paren = normalized.find('(') + 1
+                    end_paren = normalized.find(')', start_paren)
+                    if end_paren > start_paren:
+                        _add_candidate(normalized[start_paren:end_paren])
+
+                punctuation_stripped = normalized.strip(',:;')
+                if punctuation_stripped != normalized:
+                    _add_candidate(punctuation_stripped)
+
+            max_variants = 6
+            return expanded[:max_variants]
+
+        def _expand_keyword_variants(keywords: List[str]) -> List[str]:
+            seen: Set[str] = set()
+            expanded: List[str] = []
+
+            def _add_candidate(candidate: str) -> None:
+                value = candidate.strip()
+                if not value:
+                    return
+                lowered = value.lower()
+                if lowered in seen:
+                    return
+                seen.add(lowered)
+                expanded.append(value)
+
+            dash_variants = ['-'] + [chr(code) for code in (0x2010, 0x2011, 0x2012, 0x2013, 0x2014)]
 
             for keyword in keywords:
                 base = keyword.strip()
@@ -743,6 +795,10 @@ def translate_range_contents(
                 if not keyword_list:
                     raise ToolExecutionError("検索キーフレーズが空です、E)
                 normalized_keywords.append(keyword_list)
+
+            expanded_keywords: List[List[str]] = []
+            for base_keywords in normalized_keywords:
+                expanded_keywords.append(_expand_keyword_variants(base_keywords))
 
             expanded_keywords = []
             for base_keywords in normalized_keywords:
