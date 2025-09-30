@@ -386,7 +386,7 @@ def translate_range_contents(
     overwrite_source: bool = False,
     rows_per_batch: Optional[int] = None,
 ) -> str:
-    """Translate text ranges with optional references and controlled output."""
+    """Translate Japanese text for a range with optional references and controlled output."""
     try:
         target_sheet, normalized_range = _split_sheet_and_range(cell_range, sheet_name)
         source_rows, source_cols = _parse_range_dimensions(normalized_range)
@@ -401,8 +401,7 @@ def translate_range_contents(
         if writing_to_source_directly:
             if not overwrite_source:
                 raise ToolExecutionError(
-                    "翻訳結果の出力先が指定されていません。translation_output_range を指定するか"
-                    " overwrite_source を True にしてください。"
+                    "翻訳結果の出力先が指定されていません。translation_output_range を指定するか overwrite_source を True にしてください。"
                 )
             output_sheet = target_sheet
             output_range = normalized_range
@@ -411,9 +410,7 @@ def translate_range_contents(
             output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
             out_rows, out_cols = _parse_range_dimensions(output_range)
             if (out_rows, out_cols) != (source_rows, source_cols):
-                raise ToolExecutionError(
-                    "translation_output_range のサイズは翻訳対象範囲と一致させてください。"
-                )
+                raise ToolExecutionError("translation_output_range のサイズは翻訳対象範囲と一致させてください。")
             raw_output = actions.read_range(output_range, output_sheet)
             try:
                 output_matrix = _reshape_to_dimensions(raw_output, out_rows, out_cols)
@@ -479,31 +476,36 @@ def translate_range_contents(
 
         use_references = bool(reference_entries or reference_url_entries)
 
+        def _sanitize_evidence_value(value: str) -> str:
+            cleaned = value.strip()
+            if cleaned.lower().startswith("source:"):
+                cleaned = cleaned.split(":", 1)[1].strip()
+            return cleaned
+
         prompt_parts: List[str]
         if use_references:
             prompt_parts = [
-                f"以下のJSONリストに格納された日本語テキストを、それぞれ{target_language}に翻訳してください。\n",
-                "翻訳では必ず提供された参照文献やURLの文章を根拠として使用し、引用した表現を活かした自然な訳文を作成してください。\n",
-                "各翻訳文には対応する参照ID（例: [R1], [U2]）を本文内に含めてください。\n",
-                "入力テキストの順序は維持してください。\n",
+                f"Translate each Japanese text in the following JSON list into {target_language}.\n",
+                "Use the provided reference passages and URLs as evidence, incorporate their wording naturally, and produce fluent translations.\n",
+                "Do not include bracketed reference markers (e.g., [R1], [U2]) in the translated sentences.\n",
+                "Leverage multiple quoted sentences when forming the translation while keeping the input order.\n",
             ]
             if reference_entries:
-                prompt_parts.append(f"参照文献リスト:\n{json.dumps(reference_entries, ensure_ascii=False)}\n")
+                prompt_parts.append(f"Reference passages:\n{json.dumps(reference_entries, ensure_ascii=False)}\n")
             if reference_url_entries:
-                prompt_parts.append(f"参照可能なURLリスト:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n")
+                prompt_parts.append(f"Reference URLs:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n")
             prompt_parts.append(
-                "応答はJSON配列のみとし、各要素は必ず次のキーを含めてください:\n"
-                "- \"translated_text\": 翻訳結果の文字列（必要な参照IDを含む）\n"
-                "- \"evidence\": 翻訳に使用した参照文やURLの文章を複数含む文字列配列\n"
-                "前後に説明文やコードブロックを含めないでください。\n"
+                'Return only a JSON array. Each element must contain:\n'
+                '- "translated_text": the translated sentence (without any bracketed IDs).\n'
+                '- "evidence": an array of multiple quoted sentences taken from the references or URLs. Each quote should be the sentence itself with no prefixes such as "Source:".\n'
+                'Do not include explanatory text or code fences.\n'
             )
             prompt_preamble = "".join(prompt_parts)
         else:
             prompt_preamble = (
-                f"以下のJSONリストに格納された日本語テキストを、それぞれ{target_language}に翻訳し、"
-                "翻訳後のテキストを格納したJSONリスト形式で返してください。\n"
-                "入力テキストの順序は維持してください。\n"
-                "応答はJSONのみとし、前後に説明やコードブロックのマークアップを含めないでください。\n"
+                f"Translate each Japanese text in the following JSON list into {target_language} and return a JSON list of the same length.\n"
+                "Maintain the order of the inputs.\n"
+                "Return JSON only, without explanations or code fences.\n"
             )
 
         batch_size = rows_per_batch if rows_per_batch is not None else 1
@@ -533,7 +535,7 @@ def translate_range_contents(
             response = browser_manager.ask(prompt)
 
             try:
-                match = re.search(r"{.*}|\[.*\]", response, re.DOTALL)
+                match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
                 json_payload = match.group(0) if match else response
                 parsed_payload = json.loads(json_payload)
             except json.JSONDecodeError as exc:
@@ -546,9 +548,7 @@ def translate_range_contents(
                     raise ToolExecutionError("翻訳前と翻訳後でテキストの件数が一致しません。")
                 for item, position in zip(parsed_payload, chunk_positions):
                     if not isinstance(item, dict):
-                        raise ToolExecutionError(
-                            "参照文献やURLを利用する場合、翻訳結果はオブジェクトのリストで返してください。"
-                        )
+                        raise ToolExecutionError("参照文献やURLを利用する場合、翻訳結果はオブジェクトのリストで返してください。")
                     translation_value = item.get("translated_text") or item.get("translation") or item.get("output")
                     if not isinstance(translation_value, str):
                         raise ToolExecutionError("翻訳結果のJSONに 'translated_text' が含まれていません。")
@@ -556,14 +556,18 @@ def translate_range_contents(
 
                     evidence_value = item.get("evidence") or item.get("justification") or item.get("support")
                     if isinstance(evidence_value, list):
-                        collected = [str(v).strip() for v in evidence_value if isinstance(v, (str, int, float))]
-                        evidences[position] = "\n\n".join(filter(None, collected))
+                        cleaned = [
+                            _sanitize_evidence_value(str(v))
+                            for v in evidence_value
+                            if isinstance(v, (str, int, float)) and str(v).strip()
+                        ]
+                        evidences[position] = "\n\n".join(cleaned)
                     elif isinstance(evidence_value, str):
-                        evidences[position] = evidence_value.strip()
+                        evidences[position] = _sanitize_evidence_value(evidence_value)
                     elif evidence_value is None:
                         evidences[position] = ""
                     else:
-                        evidences[position] = str(evidence_value)
+                        evidences[position] = _sanitize_evidence_value(str(evidence_value))
             else:
                 if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
                     raise ToolExecutionError("翻訳前と翻訳後でテキストの件数が一致しません。")
@@ -618,7 +622,11 @@ def translate_range_contents(
                         citation_matrix[row_idx][col_idx] = evidence_text
             else:
                 for row_idx in range(cite_rows):
-                    entries = [evidences[pos] for pos in evidences if pos[0] == row_idx and evidences[pos]]
+                    entries = [
+                        evidences[pos]
+                        for pos in evidences
+                        if pos[0] == row_idx and evidences[pos]
+                    ]
                     citation_matrix[row_idx][0] = "\n\n".join(entries)
 
             messages.append(actions.write_range(citation_range, citation_matrix, citation_sheet))
@@ -627,8 +635,8 @@ def translate_range_contents(
 
     except ToolExecutionError:
         raise
-    except Exception as e:
-        raise ToolExecutionError(f"範囲 '{cell_range}' の翻訳中にエラーが発生しました: {e}") from e
+    except Exception as exc:
+        raise ToolExecutionError(f"範囲 '{cell_range}' の翻訳中にエラーが発生しました: {exc}") from exc
 
 def check_translation_quality(
     actions: ExcelActions,
