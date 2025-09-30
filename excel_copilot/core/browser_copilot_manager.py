@@ -398,10 +398,8 @@ class BrowserCopilotManager:
         try:
             print("Copilot ページが表示されるのを待機しています...")
             try:
-                self.page.wait_for_function(
-                    "() => location.href.startsWith('https://m365.cloud.microsoft/chat') && location.search.includes('auth=2')",
-                    timeout=180000,
-                )
+                target_pattern = re.compile(r"^https://m365\\.cloud\\.microsoft/chat.*auth=2")
+                self.page.wait_for_url(target_pattern, timeout=180000)
                 print("Copilot ページのロードを確認しました。")
             except PlaywrightTimeoutError as wait_error:
                 current_url = self.page.url if self.page else ""

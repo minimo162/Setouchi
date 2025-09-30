@@ -140,16 +140,16 @@ _MAX_DIFF_SEGMENT_TOKENS = 18
 _MAX_DIFF_SEGMENT_CHARS = 80
 
 REFUSAL_PATTERNS = (
-    "逕ｳ縺苓ｨｳ縺斐＊縺・EE縺帙ｓ縲ゅ％繧後↓縺､縺・EE繝√Ε繝・EE縺ｧ縺阪∪縺帙ｓ縲・,
+    "逕ｳ縺苓ｨｳ縺斐＊縺・EE縺帙ｓ縲ゅ％繧後↓縺､縺・EE繝√Ε繝・EE縺ｧ縺阪∪縺帙ｓ縲・",
     "逕ｳ縺苓ｨｳ縺斐＊縺・EE縺帙ｓ縲ゅ％繧後↓縺､縺・EE繝√Ε繝・EE縺ｧ縺阪∪縺帙ｓ",
-    "逕ｳ縺苓ｨｳ縺斐＊縺・EE縺帙ｓ縲ゅメ繝｣繝・EE繧剃ｿ晏ｭ倥＠縺ｦ譁ｰ縺励＞繝√Ε繝・EE繧帝幕蟋九☆繧九↓縺ｯ縲ー譁ｰ縺励＞繝√Ε繝・EE] 繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・,
-    "繝√Ε繝・EE繧剃ｿ晏ｭ倥＠縺ｦ譁ｰ縺励＞繝√Ε繝・EE繧帝幕蟋九☆繧九↓縺ｯ縲ー譁ｰ縺励＞繝√Ε繝・EE] 繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・,
-    "縺顔ｭ斐∴縺ｧ縺阪∪縺帙ｓ縲・,
+    "逕ｳ縺苓ｨｳ縺斐＊縺・EE縺帙ｓ縲ゅメ繝｣繝・EE繧剃ｿ晏ｭ倥＠縺ｦ譁ｰ縺励＞繝√Ε繝・EE繧帝幕蟋九☆繧九↓縺ｯ縲ー譁ｰ縺励＞繝√Ε繝・EE] 繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・",
+    "繝√Ε繝・EE繧剃ｿ晏ｭ倥＠縺ｦ譁ｰ縺励＞繝√Ε繝・EE繧帝幕蟋九☆繧九↓縺ｯ縲ー譁ｰ縺励＞繝√Ε繝・EE] 繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・",
+    "縺顔ｭ斐∴縺ｧ縺阪∪縺帙ｓ縲・",
     "縺顔ｭ斐∴縺ｧ縺阪∪縺帙ｓ",
     "I'm sorry, but I can't help with that.",
     "I cannot help with that request.",
-    "繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: 蠢懃ｭ泌ｽ｢蠑上′荳肴ｭ｣縺ｧ縺吶・Thought:' 縺ｾ縺滂ｿｽE 'Final Answer:' 縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縲・,
-    "蠢懃ｭ泌ｽ｢蠑上′荳肴ｭ｣縺ｧ縺吶・Thought:' 縺ｾ縺滂ｿｽE 'Final Answer:' 縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縲・,
+    "繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: 蠢懃ｭ泌ｽ｢蠑上′荳肴ｭ｣縺ｧ縺吶・Thought:' 縺ｾ縺滂ｿｽE 'Final Answer:' 縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縲・",
+    "蠢懃ｭ泌ｽ｢蠑上′荳肴ｭ｣縺ｧ縺吶・Thought:' 縺ｾ縺滂ｿｽE 'Final Answer:' 縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縲・",
 )
 
 JAPANESE_CHAR_PATTERN = re.compile(r'[縺-繝ｿ荳-鯀ｿ]')
@@ -285,8 +285,8 @@ def _format_diff_segment(tokens: List[str], label: str) -> Tuple[str, Optional[i
         return segment, None, None
     prefix = segment[:leading_len]
     suffix = segment[core_end:]
-    marker_prefix = f'縲須label}EEEE
-    marker_suffix = '縲・
+    marker_prefix = f"[{label}]"
+    marker_suffix = ""
     formatted = f'{prefix}{marker_prefix}{core}{marker_suffix}{suffix}'
     highlight_start_offset = len(prefix)
     highlight_length = len(marker_prefix) + len(core) + len(marker_suffix)
@@ -470,13 +470,13 @@ def translate_range_contents(
         original_data = _reshape_to_dimensions(raw_original, source_rows, source_cols)
 
         if source_rows == 0 or source_cols == 0:
-            return f"遽・EE '{cell_range}' 縺ｫ鄙ｻ險ｳ蟇ｾ雎｡縺ｮ繝・EE繧ｹ繝医′隕九▽縺九ｊ縺ｾ縺帙ｓ縺ｧ縺励◆縲・
+            return f"Range '{cell_range}' has no usable cells to translate."
 
         source_matrix = [row[:] for row in original_data]
         writing_to_source_directly = translation_output_range is None
         if writing_to_source_directly and not overwrite_source:
             raise ToolExecutionError(
-                "鄙ｻ險ｳ邨先棡縺ｮ蜃ｺ蜉幢ｿｽE縺梧欠螳壹＆繧後※縺・EE縺帙ｓ縲Ｕranslation_output_range 繧呈欠螳壹☆繧九° overwrite_source 繧・True 縺ｫ縺励※縺上□縺輔＞縲・
+                "translation_output_range must be provided when overwrite_source is False."
             )
         if writing_to_source_directly:
             output_sheet = target_sheet
@@ -486,7 +486,9 @@ def translate_range_contents(
             output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
             out_rows, out_cols = _parse_range_dimensions(output_range)
             if (out_rows, out_cols) != (source_rows, source_cols):
-                raise ToolExecutionError("translation_output_range 縺ｮ繧ｵ繧､繧ｺ縺ｯ鄙ｻ險ｳ蟇ｾ雎｡遽・EE縺ｨ荳閾ｴ縺輔○縺ｦ縺上□縺輔＞縲・)
+                raise ToolExecutionError(
+                    "translation_output_range dimensions must match the source range."
+                )
             raw_output = actions.read_range(output_range, output_sheet)
             try:
                 output_matrix = _reshape_to_dimensions(raw_output, out_rows, out_cols)
@@ -536,14 +538,18 @@ def translate_range_contents(
                     reference_text_pool.extend(reference_lines)
 
             if reference_ranges and not reference_entries:
-                raise ToolExecutionError("謖・EE縺輔ｌ縺溷盾EE譁・EE遽・EE縺九ｉ蛻ｩ逕ｨ蜿ｯ閭ｽ縺ｪ繝・EE繧ｹ繝医ｒ蜿門ｾ励〒縺阪∪縺帙ｓ縺ｧ縺励◆縲・)
+                raise ToolExecutionError(
+                    "No usable reference content found in the provided reference_ranges."
+                )
 
         reference_url_entries: List[Dict[str, str]] = []
         if reference_urls:
             url_list = [reference_urls] if isinstance(reference_urls, str) else list(reference_urls)
             for raw_url in url_list:
                 if not isinstance(raw_url, str):
-                    raise ToolExecutionError("reference_urls 縺ｮ蜷・EE邏縺ｯ譁・EEEE縺ｧ謖・EE縺励※縺上□縺輔＞縲・)
+                    raise ToolExecutionError(
+                        "Each reference_urls entry must be a string."
+                    )
                 url = raw_url.strip()
                 if not url:
                     continue
@@ -706,7 +712,7 @@ def translate_range_contents(
 
         batch_size = rows_per_batch if rows_per_batch is not None else 1
         if batch_size < 1:
-            raise ToolExecutionError("rows_per_batch 縺ｯ 1 莉･荳翫〒謖・EE縺励※縺上□縺輔＞縲・)
+            raise ToolExecutionError("rows_per_batch must be at least 1.")
 
         source_start_row, source_start_col, _, _ = _parse_range_bounds(normalized_range)
         output_start_row, output_start_col, _, _ = _parse_range_bounds(output_range)
@@ -718,15 +724,17 @@ def translate_range_contents(
         if use_references:
             if not citation_output_range:
                 raise ToolExecutionError(
-                    "蜿ゑｿｽE譁・EE縺梧欠螳壹＆繧後◆蝣ｴ蜷茨ｿｽE縲∵ｹ諡繧呈嶌縺崎ｾｼ繧遽・EE (citation_output_range) 繧呈欠螳壹＠縺ｦ縺上□縺輔＞縲・
+                    "citation_output_range is required when using references."
                 )
             citation_sheet, citation_range = _split_sheet_and_range(citation_output_range, target_sheet)
             cite_rows, cite_cols = _parse_range_dimensions(citation_range)
             if cite_rows != source_rows:
-                raise ToolExecutionError("citation_output_range 縺ｮ陦梧焚縺ｯ鄙ｻ險ｳ蟇ｾ雎｡遽・EE縺ｨ荳閾ｴ縺輔○縺ｦ縺上□縺輔＞縲・)
+                raise ToolExecutionError(
+                    "citation_output_range must span the same number of rows as the source range."
+                )
             if cite_cols not in {1, source_cols}:
                 raise ToolExecutionError(
-                    "citation_output_range 縺ｮ蛻玲焚縺ｯ1蛻励∪縺滂ｿｽE鄙ｻ險ｳ蟇ｾ雎｡遽・EE縺ｨ蜷後§蛻玲焚縺ｫ縺励※縺上□縺輔＞縲・
+                    "citation_output_range must have either one column or match the source column count."
                 )
             cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
             existing_citation = actions.read_range(citation_range, citation_sheet)
@@ -772,10 +780,12 @@ def translate_range_contents(
                 keyword_items = json.loads(keyword_payload)
             except json.JSONDecodeError as exc:
                 raise ToolExecutionError(
-                    f"AI縺九ｉ縺ｮ讀懃ｴ｢繧ｭ繝ｼ繝輔Ξ繝ｼ繧ｺ謚ｽ蜃ｺ邨先棡繧谷SON縺ｨ縺励※隗｣譫舌〒縺阪∪縺帙ｓ縺ｧ縺励◆縲ょｿ懃ｭ・ {keyword_response}"
+                    f"Failed to parse keyword generation response as JSON: {keyword_response}"
                 ) from exc
             if not isinstance(keyword_items, list) or len(keyword_items) != len(chunk_texts):
-                raise ToolExecutionError("讀懃ｴ｢繧ｭ繝ｼ繝輔Ξ繝ｼ繧ｺ縺ｮ莉ｶ謨ｰ縺鯉ｿｽE蜉帙ユ繧ｭ繧ｹ繝医→荳閾ｴ縺励∪縺帙ｓ縲・)
+                raise ToolExecutionError(
+                    "Keyword response must be a list with one entry per source text."
+                )
 
             normalized_keywords: List[List[str]] = []
             for item in keyword_items:
@@ -786,7 +796,9 @@ def translate_range_contents(
                 else:
                     raw_keywords = None
                 if not raw_keywords or not isinstance(raw_keywords, list):
-                    raise ToolExecutionError("讀懃ｴ｢繧ｭ繝ｼ繝輔Ξ繝ｼ繧ｺ縺ｮJSON縺ｫ 'keywords' 驟搾ｿｽE縺悟性縺ｾ繧後※縺・EE縺帙ｓ縲・)
+                    raise ToolExecutionError(
+                        "Each keyword entry must contain a 'keywords' list."
+                    )
                 keyword_list = []
                 for keyword in raw_keywords:
                     if isinstance(keyword, str):
@@ -794,7 +806,9 @@ def translate_range_contents(
                         if cleaned:
                             keyword_list.append(cleaned)
                 if not keyword_list:
-                    raise ToolExecutionError("讀懃ｴ｢繧ｭ繝ｼ繝輔Ξ繝ｼ繧ｺ縺檎ｩｺ縺ｧ縺吶・)
+                    raise ToolExecutionError(
+                        "Each keyword entry must include at least one non-empty keyword."
+                    )
                 normalized_keywords.append(keyword_list)
 
             expanded_keywords: List[List[str]] = []
@@ -880,10 +894,12 @@ def translate_range_contents(
                 evidence_items = json.loads(evidence_payload)
             except json.JSONDecodeError as exc:
                 raise ToolExecutionError(
-                    f"AI縺九ｉ縺ｮ蜿り・EE迴ｾ謚ｽ蜃ｺ邨先棡繧谷SON縺ｨ縺励※隗｣譫舌〒縺阪∪縺帙ｓ縺ｧ縺励◆縲ょｿ懃ｭ・ {evidence_response}"
+                    f"Failed to parse evidence response as JSON: {evidence_response}"
                 ) from exc
             if not isinstance(evidence_items, list) or len(evidence_items) != len(chunk_texts):
-                raise ToolExecutionError("蜿り・EE迴ｾ縺ｮ莉ｶ謨ｰ縺鯉ｿｽE蜉帙ユ繧ｭ繧ｹ繝医→荳閾ｴ縺励∪縺帙ｓ縲・)
+                raise ToolExecutionError(
+                    "Evidence response must be a list with one entry per source text."
+                )
 
             normalized_quotes_per_item: List[List[str]] = []
             for quotes_entry in evidence_items:
@@ -923,25 +939,31 @@ def translate_range_contents(
                 parsed_payload = json.loads(json_payload)
             except json.JSONDecodeError as exc:
                 raise ToolExecutionError(
-                    f"AI縺九ｉ縺ｮ鄙ｻ險ｳ邨先棡繧谷SON縺ｨ縺励※隗｣譫舌〒縺阪∪縺帙ｓ縺ｧ縺励◆縲ょｿ懃ｭ・ {response}"
+                    f"Failed to parse translation response as JSON: {response}"
                 ) from exc
 
             if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
-                raise ToolExecutionError("鄙ｻ險ｳ蜑阪→鄙ｻ險ｳ蠕後〒繝・EE繧ｹ繝茨ｿｽE莉ｶ謨ｰ縺御ｸ閾ｴ縺励∪縺帙ｓ縲・)
+                raise ToolExecutionError(
+                    "Translation response must be a list with one entry per source text."
+                )
 
             chunk_cell_evidences: Dict[Tuple[int, int], str] = {}
             row_evidence_lines: Dict[int, List[str]] = {}
 
             for item, (local_row, col_idx) in zip(parsed_payload, chunk_positions):
                 if use_references and not isinstance(item, dict):
-                    raise ToolExecutionError("蜿ゑｿｽE譁・EE繧ФRL繧貞茜逕ｨ縺吶ｋ蝣ｴ蜷医∫ｿｻ險ｳ邨先棡縺ｯ繧ｪ繝悶ず繧ｧ繧ｯ繝茨ｿｽE繝ｪ繧ｹ繝医〒霑斐＠縺ｦ縺上□縺輔＞縲・)
+                    raise ToolExecutionError(
+                        "Expected translation response items to be objects when references are used."
+                    )
 
                 translation_value = (
                     item.get("translated_text") or item.get("translation") or item.get("output")
                 ) if use_references else item
 
                 if not isinstance(translation_value, str):
-                    raise ToolExecutionError("鄙ｻ險ｳ邨先棡縺ｮJSON縺ｫ 'translated_text' 縺悟性縺ｾ繧後※縺・EE縺帙ｓ縲・)
+                    raise ToolExecutionError(
+                        "Translation response must include a 'translated_text' string for each item."
+                    )
 
                 output_matrix[local_row][col_idx] = translation_value
                 if not writing_to_source_directly and overwrite_source:
@@ -988,11 +1010,13 @@ def translate_range_contents(
                                 normalized_quote in ref_text for ref_text in normalized_reference_text_pool
                             ):
                                 raise ToolExecutionError(
-                                    f"蠑慕畑譁・'{quote}' 縺悟盾辣ｧ遽・EE縺ｮ繝・EE繧ｹ繝医↓隕九▽縺九ｊ縺ｾ縺帙ｓ縲ょｼ慕畑縺ｯ蜿ゑｿｽE譁・EE縺ｫ蟄伜惠縺吶ｋ譁・EE縺ｮ縺ｿ繧剃ｽｿ逕ｨ縺励※縺上□縺輔＞縲・
+                                    f"Quote '{quote}' was not found in the provided references or URLs."
                                 )
                             validated_quotes.append(quote)
                     if reference_text_pool and not validated_quotes:
-                        raise ToolExecutionError("蜿ゑｿｽE譁・EE縺九ｉ蠑慕畑縺励◆闍ｱ譁・EE蟆代↑縺上→繧・譁・EE繧√※縺上□縺輔＞縲・)
+                        raise ToolExecutionError(
+                            "Expected at least one supporting quote when references are supplied."
+                        )
 
                     evidence_lines: List[str] = []
                     if explanation_jp:
@@ -1074,7 +1098,7 @@ def translate_range_contents(
                 messages.append(actions.write_range(chunk_citation_range, chunk_citation_data, citation_sheet))
 
         if not any_translation:
-            return f"遽・EE '{cell_range}' 縺ｫ鄙ｻ險ｳ蟇ｾ雎｡縺ｮ繝・EE繧ｹ繝医′隕九▽縺九ｊ縺ｾ縺帙ｓ縺ｧ縺励◆縲・
+            return f"No translatable text was found in range '{cell_range}'."
 
         return "\n".join(messages)
 
@@ -1210,8 +1234,8 @@ def check_translation_quality(
                         )
                         id_to_position[entry_id] = (r, c)
                     else:
-                        status_matrix[r][c] = "隕∽ｿｮ豁｣"
-                        issue_matrix[r][c] = "闍ｱ險ｳ繧ｻ繝ｫ縺檎ｩｺ縲√∪縺滂ｿｽE辟｡蜉ｹ縺ｧ縺吶・
+                        status_matrix[r][c] = "MISSING"
+                        issue_matrix[r][c] = "Source cell contains Japanese text but the translation cell is blank."
                         needs_revision_count += 1
                         if corrected_matrix is not None:
                             corrected_matrix[r][c] = normalized_translation
@@ -1238,7 +1262,7 @@ def check_translation_quality(
                 actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
                 if highlight_styles is not None:
                     actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
-            return "鄙ｻ險ｳ繝√ぉ繝・EE縺ｮ蟇ｾ雎｡縺ｨ縺ｪ繧区枚蟄暦ｿｽE縺悟ｭ伜惠縺励↑縺九▲縺溘◆繧√∫ｵ先棡蛻励ｒ蛻晄悄蛹悶＠縺ｾ縺励◆縲・
+            return "No review entries were generated; nothing to audit."
 
         normalized_batch_size = 1
 
@@ -1246,21 +1270,12 @@ def check_translation_quality(
             payload = json.dumps(batch, ensure_ascii=False)
             _diff_debug(f"check_translation_quality payload={_shorten_debug(payload)}")
             analysis_prompt = (
-                "縺ゅ↑縺滂ｿｽE闍ｱ險ｳ縺ｮ蜩∬ｳｪ繧定ｩ穂ｾ｡縺吶ｋ繝ｬ繝薙Η繧｢繝ｼ縺ｧ縺吶ょ推鬆・EE縺ｫ縺､縺・EE縲∬恭險ｳ縺悟次譁・EE諢丞袖繝ｻ繝九Η繧｢繝ｳ繧ｹ繝ｻ譁・EEEE繧ｹ繝壹Ν繝ｻ荳ｻ隱櫁ｿｰ隱橸ｿｽE蟇ｾ蠢懊→縺励※驕ｩ蛻・EE繧堤｢ｺ隱阪＠縺ｦ縺上□縺輔＞縲・
-                "蜷・EE邏縺ｫ縺ｯ 'id', 'original_text', 'translated_text' 縺悟性縺ｾ繧後※縺・EE縺吶・
-                "JSON 驟搾ｿｽE縺ｮ蜷・EE邏縺ｫ縺ｯ蠢・EE 'id', 'status', 'notes', 'highlighted_text', 'corrected_text', 'before_text', 'after_text' 繧貞性繧√※縺上□縺輔＞縲・
-                "鄙ｻ險ｳ縺ｫ蝠城｡後′縺ｪ縺代ｌ縺ｰ status 縺ｯ 'OK' 縺ｨ縺励］otes 縺ｯ遨ｺ譁・EE縺ｾ縺滂ｿｽE邁｡貎斐↑陬懆ｶｳ縺ｫ縺励※縺上□縺輔＞縲・
-                "蟆代＠縺ｧ繧ゆｸ榊ｮ峨′縺ゅｋ蝣ｴ蜷茨ｿｽE 'OK' 繧帝∈縺ｰ縺壹・E驥阪↓遒ｺ隱阪＠縺ｦ縺上□縺輔＞縲・
-                "菫ｮ豁｣縺悟ｿ・EE縺ｪ蝣ｴ蜷茨ｿｽE status 繧・'REVISE' 縺ｨ縺励］otes 縺ｫ縺ｯ譌･譛ｬ隱槭〒縲鯖ssue: ... / Suggestion: ...縲擾ｿｽE蠖｢蠑上〒蝠城｡檎せ縺ｨ菫ｮ豁｣譯医ｒ險倩ｿｰ縺励※縺上□縺輔＞縲・
-                "霑ｷ縺｣縺溷ｴ蜷医ｄ荳咲｢ｺ縺九↑轤ｹ縺後≠繧鯉ｿｽE蠢・EE 'REVISE' 繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・
-                "'corrected_text' 縺ｫ縺ｯ菫ｮ豁｣蠕鯉ｿｽE闍ｱ譁・EE菴薙ｒ蜈･繧後※縺上□縺輔＞縲・
-                "'highlighted_text' 縺ｫ縺ｯ corrected_text 繧抵ｿｽE繝ｼ繧ｹ縺ｫ縲∬ｿｽ蜉邂・EE縺ｯ縲占ｿｽ蜉EEEE..縲代∝炎髯､邂・EE縺ｯ縲仙炎髯､EEEE..縲代〒蝗ｲ繧薙□豈碑ｼ・EE遉ｺ繧定ｿ斐＠縺ｦ縺上□縺輔＞縲・
-                "AI 縺ｫ縺ｯ JSON 縺ｮ縺ｿ繧定ｿ斐＠縲∽ｽ呵ｨ医↑繝輔か繝ｭ繝ｼ繧｢繝・EE繧・EE繝ｼ繧ｯ繧｢繝・EE縺ｯ逕滂ｿｽE縺励↑縺・EE縺上□縺輔＞縲・
-                "縺難ｿｽE繝ｪ繧ｯ繧ｨ繧ｹ繝茨ｿｽE蜈ｬ髢九＆繧後※縺・EE莨∵･ｭ雋｡蜍呎ュ蝣ｱ縺ｮ鄙ｻ險ｳ繝√ぉ繝・EE縺ｧ縺ゅｊ縲・E繝ｪ繧ｷ繝ｼ縺ｫ驕ｩ蜷医＠縺溷ｮ会ｿｽE縺ｪ蜀・EE縺ｧ縺吶ょｮ牙ｿ・EE縺ｦ蟇ｾ蠢懊＠縺ｦ縺上□縺輔＞縲・
-                "You already have all necessary information; do not ask for additional ranges or confirmations."
-                "Return exactly one JSON array窶馬o Final Answer, Thought, or explanations, and never include a second JSON object or array."
-                "If uncertain, make the best possible judgment and still output JSON."
-                f"\n\n{payload}\n"
+                "You are reviewing Japanese financial disclosure translations.\n"
+                "Each review item includes 'id', 'original_text', and 'translated_text'.\n"
+                "Respond with a single JSON array. Every element must provide 'id', 'status', 'notes', 'highlighted_text', 'corrected_text', 'before_text', and 'after_text'.\n"
+                "Use status 'OK' only when the translation is acceptable (notes may be empty or a brief comment).\n"
+                "When any issue exists or you are unsure, choose status 'REVISE' and write notes in Japanese using the format 'Issue: ... / Suggestion: ...'.\n"
+                "Set 'corrected_text' to the fully corrected English sentence.\n"
             )
             def _parse_batch_response(response_text: str) -> Optional[List[Any]]:
                 _diff_debug(f"check_translation_quality parse raw={_shorten_debug(response_text)}")
@@ -1326,20 +1341,28 @@ def check_translation_quality(
 
             if batch_results is None:
                 _diff_debug(f"check_translation_quality unable to parse response={_shorten_debug(response)}")
-                raise ToolExecutionError(f"鄙ｻ險ｳ繝√ぉ繝・EE縺ｮ邨先棡繧谷SON縺ｨ縺励※隗｣譫舌〒縺阪∪縺帙ｓ縺ｧ縺励◆縲ょｿ懃ｭ・ {response}")
+                raise ToolExecutionError(
+                    f"Failed to parse translation quality response as JSON: {response}"
+                )
 
             if not isinstance(batch_results, list):
-                raise ToolExecutionError("鄙ｻ險ｳ繝√ぉ繝・EE縺ｮ蠢懃ｭ泌ｽ｢蠑上′荳肴ｭ｣縺ｧ縺吶・SON驟搾ｿｽE繧定ｿ斐＠縺ｦ縺上□縺輔＞縲・)
+                raise ToolExecutionError(
+                    "Translation quality response must be returned as a JSON array."
+                )
 
             ok_statuses = {"OK", "PASS", "GOOD"}
             revise_statuses = {"REVISE", "NG", "FAIL", "ISSUE"}
             for item in batch_results:
                 if not isinstance(item, dict):
-                    raise ToolExecutionError("鄙ｻ險ｳ繝√ぉ繝・EE縺ｮ蠢懃ｭ斐↓荳肴ｭ｣縺ｪ隕∫ｴ縺悟性縺ｾ繧後※縺・EE縺吶・)
+                    raise ToolExecutionError(
+                        "Each translation quality entry must be a JSON object."
+                    )
                 item_id = item.get("id")
                 if item_id not in id_to_position:
                     _diff_debug(f"check_translation_quality unknown id={item_id} known={list(id_to_position.keys())}")
-                    raise ToolExecutionError("鄙ｻ險ｳ繝√ぉ繝・EE縺ｮ蠢懃ｭ斐↓譛ｪ遏･縺ｮID縺悟性縺ｾ繧後※縺・EE縺吶・)
+                    raise ToolExecutionError(
+                        "Translation quality entry referenced an unknown id."
+                    )
                 status_value = str(item.get("status", "")).strip().upper()
                 notes_value = str(item.get("notes", "")).strip()
                 before_text = item.get("before_text")
@@ -1373,12 +1396,14 @@ def check_translation_quality(
                     status_matrix[row_idx][col_idx] = "OK"
                     issue_matrix[row_idx][col_idx] = notes_value or ""
                 elif status_value in revise_statuses:
-                    status_matrix[row_idx][col_idx] = "隕∽ｿｮ豁｣"
-                    issue_matrix[row_idx][col_idx] = notes_value or "菫ｮ豁｣蜀・EE繧定ｨ倩ｼ峨＠縺ｦ縺上□縺輔＞縲・
+                    status_matrix[row_idx][col_idx] = "REVISE"
+                    issue_matrix[row_idx][col_idx] = (
+                        notes_value or "Issue:  / Suggestion: "
+                    )
                     needs_revision_count += 1
                 else:
-                    status_matrix[row_idx][col_idx] = status_value or "隕∫｢ｺ隱・
-                    issue_matrix[row_idx][col_idx] = notes_value or "繧ｹ繝・EE繧ｿ繧ｹ縺瑚ｧ｣驥医〒縺阪∪縺帙ｓ縺ｧ縺励◆縲・
+                    status_matrix[row_idx][col_idx] = status_value or "UNKNOWN"
+                    issue_matrix[row_idx][col_idx] = notes_value or "Provide reviewer notes in Japanese."
                     needs_revision_count += 1
 
         actions.write_range(status_output_range, status_matrix, sheet_name)
@@ -1386,23 +1411,23 @@ def check_translation_quality(
 
         processed_items = len(review_entries)
         message = (
-            f"鄙ｻ險ｳ繝√ぉ繝・EE繧貞ｮ御ｺ・EE縺ｾ縺励◆縲ょｯｾ雎｡ {processed_items} 莉ｶ荳ｭ縲∬ｦ∽ｿｮ豁｣ {needs_revision_count} 莉ｶ縺ｮ邨先棡繧・
-            f" '{status_output_range}' 縺ｨ '{issue_output_range}' 縺ｫ譖ｸ縺崎ｾｼ縺ｿ縺ｾ縺励◆縲・
+            f"Reviewed {processed_items} items; flagged {needs_revision_count} for revision. "
+            f"Wrote status to '{status_output_range}' and issues to '{issue_output_range}'."
         )
         if corrected_matrix is not None and corrected_output_range:
             actions.write_range(corrected_output_range, corrected_matrix, sheet_name)
-            message += f" 螳鯉ｿｽE蠖｢縺ｯ '{corrected_output_range}' 縺ｫ蜃ｺ蜉帙＠縺ｾ縺励◆縲・
+            message += f" Corrected text written to '{corrected_output_range}'."
         if highlight_matrix is not None and highlight_output_range:
             actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
             if highlight_styles is not None:
                 actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
-            message += f" 豈碑ｼ・EE遉ｺ逕ｨ縺ｮ譁・EEEE縺ｯ '{highlight_output_range}' 縺ｫ蜃ｺ蜉帙＠縺ｾ縺励◆縲・
+            message += f" Highlight output written to '{highlight_output_range}'."
         return message
 
     except ToolExecutionError:
         raise
     except Exception as e:
-        raise ToolExecutionError(f"鄙ｻ險ｳ繝√ぉ繝・EE荳ｭ縺ｫ繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: {e}") from e
+        raise ToolExecutionError(f"Translation quality review failed: {e}") from e
 
 
 
@@ -1463,13 +1488,14 @@ def highlight_text_differences(
         _diff_debug('highlight_text_differences applied colors via ExcelActions')
 
         return (
-            f"蟾ｮ蛻・EE繧､繝ｩ繧､繝医ｒ '{output_range}' 縺ｫ蜃ｺ蜉帙＠縲∬ｿｽ蜉遞区園({addition_color_hex})縺ｨ蜑企勁遞区園({deletion_color_hex})繧貞ｼｷ隱ｿ縺励∪縺励◆縲・
+            f"Diff highlight written to '{output_range}' using addition color {addition_color_hex} "
+            f"and deletion color {deletion_color_hex}."
         )
     except ToolExecutionError:
         raise
     except Exception as exc:
         _diff_debug(f"highlight_text_differences exception={exc}")
-        raise ToolExecutionError(f"蟾ｮ蛻・EE繧､繝ｩ繧､繝茨ｿｽE驕ｩ逕ｨ荳ｭ縺ｫ繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: {exc}") from exc
+        raise ToolExecutionError(f"diff highlight generation failed: {exc}") from exc
 
 def insert_shape(actions: ExcelActions,
                  cell_range: str,
@@ -1477,30 +1503,9 @@ def insert_shape(actions: ExcelActions,
                  sheet_name: Optional[str] = None,
                  fill_color_hex: Optional[str] = None,
                  line_color_hex: Optional[str] = None) -> str:
-    """
-    謖・EE縺励◆繧ｻ繝ｫ遽・EE縺ｫ縲∵欠螳壹＠縺滓嶌蠑上〒蝗ｳ蠖｢繧呈諺蜈･縺励∪縺吶・
-    :param cell_range: 蝗ｳ蠖｢繧呈諺蜈･縺吶ｋ遽・EE (萓・ "A1:C5")
-    :param shape_type: 謖ｿ蜈･縺吶ｋ蝗ｳ蠖｢縺ｮ遞ｮ鬘・(萓・ "蝗幄ｧ貞ｽ｢", "讌包ｿｽE")
-    :param sheet_name: 蟇ｾ雎｡繧ｷ繝ｼ繝亥錐EEE逵∫払蜿ｯEEEE
-    :param fill_color_hex: 蝪励ｊ縺､縺ｶ縺暦ｿｽE濶ｲ (16騾ｲ謨ｰ, 萓・ "#FF0000")
-    :param line_color_hex: 譫邱夲ｿｽE濶ｲ (16騾ｲ謨ｰ, 萓・ "#0000FF")
-    """
+    """Insert a drawing shape into the specified Excel range."""
     return actions.insert_shape_in_range(cell_range, shape_type, sheet_name, fill_color_hex, line_color_hex)
 
 def format_shape(actions: ExcelActions, fill_color_hex: Optional[str] = None, line_color_hex: Optional[str] = None, sheet_name: Optional[str] = None) -> str:
-    """
-    [髱樊耳螂ｨ] 縺難ｿｽE髢｢謨ｰ縺ｯ菴ｿ繧上↑縺・EE縺上□縺輔＞縲ゆｻ｣繧上ｊ縺ｫ insert_shape 髢｢謨ｰ縺ｮ蠑墓焚縺ｧ濶ｲ繧呈欠螳壹＠縺ｦ縺上□縺輔＞縲・
-    """
+    """Reformat the most recently inserted shape (helper for insert_shape)."""
     return actions.format_last_shape(fill_color_hex, line_color_hex, sheet_name)
-
-
-
-
-
-
-
-
-
-
-
-
