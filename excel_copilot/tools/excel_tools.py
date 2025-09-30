@@ -48,6 +48,56 @@ def _split_sheet_and_range(range_ref: str, default_sheet: Optional[str]) -> Tupl
         raise ToolExecutionError("Range string is empty.")
     return sheet_part or default_sheet, cell_part
 
+def _column_label_to_index(label: str) -> int:
+    result = 0
+    for ch in label.upper():
+        if not ('A' <= ch <= 'Z'):
+            raise ToolExecutionError('Range format is invalid.')
+        result = result * 26 + (ord(ch) - ord('A') + 1)
+    return result
+
+
+def _index_to_column_label(index: int) -> str:
+    if index <= 0:
+        raise ToolExecutionError('Column index must be positive.')
+    label_chars: List[str] = []
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        label_chars.append(chr(ord('A') + remainder))
+    return ''.join(reversed(label_chars))
+
+
+def _parse_range_bounds(range_ref: str) -> Tuple[int, int, int, int]:
+    ref = range_ref.split('!')[-1].replace('$', '').strip()
+    if not ref:
+        raise ToolExecutionError('Range string is empty.')
+    if ':' in ref:
+        start_ref, end_ref = ref.split(':', 1)
+    else:
+        start_ref = end_ref = ref
+    start_match = CELL_REFERENCE_PATTERN.fullmatch(start_ref)
+    end_match = CELL_REFERENCE_PATTERN.fullmatch(end_ref)
+    if not start_match or not end_match:
+        raise ToolExecutionError('Range format is invalid.')
+    start_col = _column_label_to_index(start_match.group(1)) - 1
+    start_row = int(start_match.group(2)) - 1
+    end_col = _column_label_to_index(end_match.group(1)) - 1
+    end_row = int(end_match.group(2)) - 1
+    if start_row > end_row:
+        start_row, end_row = end_row, start_row
+    if start_col > end_col:
+        start_col, end_col = end_col, start_col
+    return start_row, start_col, end_row, end_col
+
+
+def _build_range_reference(start_row: int, end_row: int, start_col: int, end_col: int) -> str:
+    start_cell = f"{_index_to_column_label(start_col + 1)}{start_row + 1}"
+    if start_row == end_row and start_col == end_col:
+        return start_cell
+    end_cell = f"{_index_to_column_label(end_col + 1)}{end_row + 1}"
+    return f"{start_cell}:{end_cell}"
+
+
 
 CELL_REFERENCE_PATTERN = re.compile(r"([A-Za-z]+)(\d+)")
 
@@ -85,16 +135,8 @@ def _parse_range_dimensions(range_ref: str) -> Tuple[int, int]:
     if not start_match or not end_match:
         raise ToolExecutionError('Range format is invalid.')
 
-    def _col_to_index(col: str) -> int:
-        result = 0
-        for ch in col.upper():
-            if not ('A' <= ch <= 'Z'):
-                raise ToolExecutionError('Range format is invalid.')
-            result = result * 26 + (ord(ch) - ord('A') + 1)
-        return result
-
-    start_col = _col_to_index(start_match.group(1))
-    end_col = _col_to_index(end_match.group(1))
+    start_col = _column_label_to_index(start_match.group(1))
+    end_col = _column_label_to_index(end_match.group(1))
     start_row = int(start_match.group(2))
     end_row = int(end_match.group(2))
     rows = abs(end_row - start_row) + 1
@@ -397,15 +439,14 @@ def translate_range_contents(
         if source_rows == 0 or source_cols == 0:
             return f"範囲 '{cell_range}' に翻訳対象のテキストが見つかりませんでした。"
 
+        source_matrix = [row[:] for row in original_data]
         writing_to_source_directly = translation_output_range is None
+        if writing_to_source_directly and not overwrite_source:
+            raise ToolExecutionError("翻訳結果の出力先が指定されていません。translation_output_range を指定するか overwrite_source を True にしてください。")
         if writing_to_source_directly:
-            if not overwrite_source:
-                raise ToolExecutionError(
-                    "翻訳結果の出力先が指定されていません。translation_output_range を指定するか overwrite_source を True にしてください。"
-                )
             output_sheet = target_sheet
             output_range = normalized_range
-            output_matrix = [row[:] for row in original_data]
+            output_matrix = source_matrix
         else:
             output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
             out_rows, out_cols = _parse_range_dimensions(output_range)
@@ -431,7 +472,7 @@ def translate_range_contents(
                 if isinstance(ref_data, list):
                     for ref_row in ref_data:
                         if isinstance(ref_row, list):
-                            row_text = []
+                            row_text: List[str] = []
                             for value in ref_row:
                                 text_value = _normalize_cell_value(value).strip()
                                 if text_value:
@@ -485,20 +526,21 @@ def translate_range_contents(
         prompt_parts: List[str]
         if use_references:
             prompt_parts = [
-                f"Translate each Japanese text in the following JSON list into {target_language}.\n",
-                "Use the provided reference passages and URLs as evidence, incorporate their wording naturally, and produce fluent translations.\n",
-                "Do not include bracketed reference markers (e.g., [R1], [U2]) in the translated sentences.\n",
-                "Leverage multiple quoted sentences when forming the translation while keeping the input order.\n",
+                f"Translate each Japanese text in the following JSON array into {target_language}.\n",
+                "Use the provided reference passages and URLs as evidence, weaving quoted English wording naturally into the translation.\n",
+                "Do not include bracketed reference markers (for example, [R1] or [U2]) in the translated sentences.\n",
+                "Provide a brief (1-2 sentence) justification that quotes one or two key English sentences and explains the translation clearly.\n",
+                "Keep the input order unchanged.\n",
             ]
             if reference_entries:
                 prompt_parts.append(f"Reference passages:\n{json.dumps(reference_entries, ensure_ascii=False)}\n")
             if reference_url_entries:
                 prompt_parts.append(f"Reference URLs:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n")
             prompt_parts.append(
-                'Return only a JSON array. Each element must contain:\n'
-                '- "translated_text": the translated sentence (without any bracketed IDs).\n'
-                '- "evidence": an array of multiple quoted sentences taken from the references or URLs. Each quote should be the sentence itself with no prefixes such as "Source:".\n'
-                'Do not include explanatory text or code fences.\n'
+                "Return only a JSON array. Each element must contain:\n"
+                "- \"translated_text\": the translated sentence (without any bracketed IDs).\n"
+                "- \"evidence\": a short justification paragraph (1-2 sentences) that quotes one or two supporting English sentences directly, without prefixes such as \"Source:\".\n"
+                "No additional explanations or code fences.\n"
             )
             prompt_preamble = "".join(prompt_parts)
         else:
@@ -512,20 +554,43 @@ def translate_range_contents(
         if batch_size < 1:
             raise ToolExecutionError("rows_per_batch は 1 以上で指定してください。")
 
-        translations: Dict[Tuple[int, int], str] = {}
-        evidences: Dict[Tuple[int, int], str] = {}
+        source_start_row, source_start_col, _, _ = _parse_range_bounds(normalized_range)
+        output_start_row, output_start_col, _, _ = _parse_range_bounds(output_range)
+
+        citation_sheet = None
+        citation_range = None
+        citation_matrix: Optional[List[List[str]]] = None
+        cite_start_row = cite_start_col = cite_rows = cite_cols = 0
+        if use_references:
+            if not citation_output_range:
+                raise ToolExecutionError("参照文献が指定された場合は、根拠を書き込む範囲 (citation_output_range) を指定してください。")
+            citation_sheet, citation_range = _split_sheet_and_range(citation_output_range, target_sheet)
+            cite_rows, cite_cols = _parse_range_dimensions(citation_range)
+            if cite_rows != source_rows:
+                raise ToolExecutionError("citation_output_range の行数は翻訳対象範囲と一致させてください。")
+            if cite_cols not in {1, source_cols}:
+                raise ToolExecutionError("citation_output_range の列数は1列または翻訳対象範囲と同じ列数にしてください。")
+            cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
+            existing_citation = actions.read_range(citation_range, citation_sheet)
+            try:
+                citation_matrix = _reshape_to_dimensions(existing_citation, cite_rows, cite_cols)
+            except ToolExecutionError:
+                citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
+
+        messages: List[str] = []
+        any_translation = False
 
         for row_start in range(0, source_rows, batch_size):
             row_end = min(row_start + batch_size, source_rows)
             chunk_texts: List[str] = []
             chunk_positions: List[Tuple[int, int]] = []
 
-            for row_idx in range(row_start, row_end):
+            for local_row in range(row_start, row_end):
                 for col_idx in range(source_cols):
-                    cell_value = original_data[row_idx][col_idx]
+                    cell_value = original_data[local_row][col_idx]
                     if isinstance(cell_value, str) and re.search(r"[ぁ-んァ-ン一-龯]", cell_value):
                         chunk_texts.append(cell_value)
-                        chunk_positions.append((row_idx, col_idx))
+                        chunk_positions.append((local_row, col_idx))
 
             if not chunk_texts:
                 continue
@@ -543,93 +608,107 @@ def translate_range_contents(
                     f"AIからの翻訳結果をJSONとして解析できませんでした。応答: {response}"
                 ) from exc
 
-            if use_references:
-                if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
-                    raise ToolExecutionError("翻訳前と翻訳後でテキストの件数が一致しません。")
-                for item, position in zip(parsed_payload, chunk_positions):
-                    if not isinstance(item, dict):
-                        raise ToolExecutionError("参照文献やURLを利用する場合、翻訳結果はオブジェクトのリストで返してください。")
-                    translation_value = item.get("translated_text") or item.get("translation") or item.get("output")
-                    if not isinstance(translation_value, str):
-                        raise ToolExecutionError("翻訳結果のJSONに 'translated_text' が含まれていません。")
-                    translations[position] = translation_value
+            if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
+                raise ToolExecutionError("翻訳前と翻訳後でテキストの件数が一致しません。")
 
-                    evidence_value = item.get("evidence") or item.get("justification") or item.get("support")
+            chunk_cell_evidences: Dict[Tuple[int, int], str] = {}
+            row_evidence_lines: Dict[int, List[str]] = {}
+
+            for item, (local_row, col_idx) in zip(parsed_payload, chunk_positions):
+                if use_references and not isinstance(item, dict):
+                    raise ToolExecutionError("参照文献やURLを利用する場合、翻訳結果はオブジェクトのリストで返してください。")
+
+                translation_value = (
+                    item.get("translated_text") or item.get("translation") or item.get("output")
+                ) if use_references else item
+
+                if not isinstance(translation_value, str):
+                    raise ToolExecutionError("翻訳結果のJSONに 'translated_text' が含まれていません。")
+
+                output_matrix[local_row][col_idx] = translation_value
+                if not writing_to_source_directly and overwrite_source:
+                    source_matrix[local_row][col_idx] = translation_value
+
+                any_translation = True
+
+                if use_references:
+                    evidence_value = item.get("evidence")
                     if isinstance(evidence_value, list):
-                        cleaned = [
+                        combined = " ".join(
                             _sanitize_evidence_value(str(v))
                             for v in evidence_value
                             if isinstance(v, (str, int, float)) and str(v).strip()
-                        ]
-                        evidences[position] = "\n\n".join(cleaned)
+                        )
                     elif isinstance(evidence_value, str):
-                        evidences[position] = _sanitize_evidence_value(evidence_value)
+                        combined = _sanitize_evidence_value(evidence_value)
                     elif evidence_value is None:
-                        evidences[position] = ""
+                        combined = ""
                     else:
-                        evidences[position] = _sanitize_evidence_value(str(evidence_value))
-            else:
-                if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
-                    raise ToolExecutionError("翻訳前と翻訳後でテキストの件数が一致しません。")
-                if not all(isinstance(item, str) for item in parsed_payload):
-                    raise ToolExecutionError("翻訳結果は文字列のリストで返してください。")
-                for translation_value, position in zip(parsed_payload, chunk_positions):
-                    translations[position] = translation_value
+                        combined = _sanitize_evidence_value(str(evidence_value))
 
-        if not translations:
-            return f"範囲 '{cell_range}' に翻訳対象のテキストが見つかりませんでした。"
+                    if cite_cols == source_cols:
+                        chunk_cell_evidences[(local_row, col_idx)] = combined
+                    elif combined:
+                        row_evidence_lines.setdefault(local_row, []).append(combined)
 
-        for (row_idx, col_idx), translated_text in translations.items():
-            output_matrix[row_idx][col_idx] = translated_text
+            chunk_output_data = [
+                list(output_matrix[local_row][0:source_cols])
+                for local_row in range(row_start, row_end)
+            ]
+            chunk_output_range = _build_range_reference(
+                output_start_row + row_start,
+                output_start_row + row_end - 1,
+                output_start_col,
+                output_start_col + source_cols - 1,
+            )
+            messages.append(actions.write_range(chunk_output_range, chunk_output_data, output_sheet))
 
-        messages: List[str] = []
-        messages.append(actions.write_range(output_range, output_matrix, output_sheet))
-
-        if not writing_to_source_directly and overwrite_source:
-            source_matrix = [row[:] for row in original_data]
-            for (row_idx, col_idx), translated_text in translations.items():
-                source_matrix[row_idx][col_idx] = translated_text
-            messages.append(actions.write_range(normalized_range, source_matrix, target_sheet))
-
-        if use_references:
-            if not citation_output_range:
-                raise ToolExecutionError(
-                    "参照文献が指定された場合は、根拠を書き込む範囲 (citation_output_range) を指定してください。"
+            if not writing_to_source_directly and overwrite_source:
+                chunk_source_data = [
+                    list(source_matrix[local_row][0:source_cols])
+                    for local_row in range(row_start, row_end)
+                ]
+                chunk_source_range = _build_range_reference(
+                    source_start_row + row_start,
+                    source_start_row + row_end - 1,
+                    source_start_col,
+                    source_start_col + source_cols - 1,
                 )
+                messages.append(actions.write_range(chunk_source_range, chunk_source_data, target_sheet))
 
-            citation_sheet, citation_range = _split_sheet_and_range(citation_output_range, target_sheet)
-            cite_rows, cite_cols = _parse_range_dimensions(citation_range)
-
-            if cite_rows != source_rows:
-                raise ToolExecutionError("citation_output_range の行数は翻訳対象範囲と一致させてください。")
-            if cite_cols not in {1, source_cols}:
-                raise ToolExecutionError(
-                    "citation_output_range の列数は1列または翻訳対象範囲と同じ列数にしてください。"
-                )
-
-            existing_citation = actions.read_range(citation_range, citation_sheet)
-            try:
-                citation_matrix = _reshape_to_dimensions(existing_citation, cite_rows, cite_cols)
-            except ToolExecutionError:
-                citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
-
-            if cite_cols == source_cols:
-                for row_idx in range(cite_rows):
-                    for col_idx in range(cite_cols):
-                        citation_matrix[row_idx][col_idx] = ""
-                for (row_idx, col_idx), evidence_text in evidences.items():
-                    if row_idx < cite_rows and col_idx < cite_cols:
-                        citation_matrix[row_idx][col_idx] = evidence_text
-            else:
-                for row_idx in range(cite_rows):
-                    entries = [
-                        evidences[pos]
-                        for pos in evidences
-                        if pos[0] == row_idx and evidences[pos]
+            if use_references and citation_matrix is not None and citation_sheet is not None:
+                if cite_cols == source_cols:
+                    for (local_row, col_idx), evidence_text in chunk_cell_evidences.items():
+                        citation_matrix[local_row][col_idx] = evidence_text
+                    chunk_citation_data = [
+                        list(citation_matrix[local_row][0:cite_cols])
+                        for local_row in range(row_start, row_end)
                     ]
-                    citation_matrix[row_idx][0] = "\n\n".join(entries)
+                    chunk_citation_range = _build_range_reference(
+                        cite_start_row + row_start,
+                        cite_start_row + row_end - 1,
+                        cite_start_col,
+                        cite_start_col + cite_cols - 1,
+                    )
+                else:
+                    for local_row in range(row_start, row_end):
+                        texts = row_evidence_lines.get(local_row)
+                        if texts:
+                            citation_matrix[local_row][0] = "\n\n".join(texts)
+                    chunk_citation_data = [
+                        [citation_matrix[local_row][0]]
+                        for local_row in range(row_start, row_end)
+                    ]
+                    chunk_citation_range = _build_range_reference(
+                        cite_start_row + row_start,
+                        cite_start_row + row_end - 1,
+                        cite_start_col,
+                        cite_start_col,
+                    )
+                messages.append(actions.write_range(chunk_citation_range, chunk_citation_data, citation_sheet))
 
-            messages.append(actions.write_range(citation_range, citation_matrix, citation_sheet))
+        if not any_translation:
+            return f"範囲 '{cell_range}' に翻訳対象のテキストが見つかりませんでした。"
 
         return "\n".join(messages)
 
