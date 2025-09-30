@@ -147,18 +147,19 @@ class BrowserCopilotManager:
         raise RuntimeError(f"{description}が見つかりません。UI が変更された可能性があります。") from last_exception
 
     def _fill_chat_input(self, chat_input: Locator, prompt: str):
-        """入力欄の種類に応じて、テキストを確実に入力する"""
+        """Simulate a human paste into the chat editor so Copilot treats URLs normally."""
+        if not self.page:
+            raise RuntimeError("Page is not initialized.")
+
         try:
-            chat_input.fill(prompt)
-            # contenteditable要素ではinner_textの変化を確認
-            current_text = chat_input.inner_text().strip()
-            if current_text:
-                return
+            chat_input.scroll_into_view_if_needed()
         except Exception:
             pass
 
         chat_input.click()
         modifier = "Meta" if sys.platform == "darwin" else "Control"
+
+        # Clear any existing value
         try:
             chat_input.press(f"{modifier}+A")
         except Exception:
@@ -174,41 +175,20 @@ class BrowserCopilotManager:
             except Exception:
                 pass
 
-        # contenteditable な場合に備えて JavaScript で直接値を書き込む
-        injected = False
+        clipboard_value = prompt.replace("\n", "\r\n")
+        pasted = False
         try:
-            self.page.evaluate(
-                """
-                (target, value) => {
-                    if (!target) return false;
-                    target.innerHTML = '';
-                    const paragraph = document.createElement('p');
-                    paragraph.textContent = value;
-                    target.appendChild(paragraph);
-                    const inputEvt = new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' });
-                    target.dispatchEvent(inputEvt);
-                    const changeEvt = new Event('change', { bubbles: true });
-                    target.dispatchEvent(changeEvt);
-                    return true;
-                }
-                """,
-                chat_input,
-                prompt,
-            )
-            injected = True
-        except Exception:
-            injected = False
-
-        if not injected:
+            pyperclip.copy(clipboard_value)
             try:
-                chat_input.type(prompt, delay=20)
+                chat_input.press(f"{modifier}+V")
             except Exception:
-                try:
-                    self.page.keyboard.type(prompt, delay=20)
-                except Exception:
-                    pass
+                self.page.keyboard.press(f"{modifier}+V")
+        except Exception:
+            pasted = False
+        else:
+            pasted = True
 
-        self.page.wait_for_timeout(120)
+        self.page.wait_for_timeout(400)
         try:
             current_text = chat_input.inner_text().strip()
         except Exception:
@@ -216,18 +196,57 @@ class BrowserCopilotManager:
 
         if not current_text:
             try:
-                self.page.keyboard.insert_text(prompt)
+                chat_input.type(prompt, delay=15)
             except Exception:
-                pass
-            self.page.wait_for_timeout(120)
+                try:
+                    self.page.keyboard.type(prompt, delay=15)
+                except Exception:
+                    pass
+            self.page.wait_for_timeout(200)
             try:
                 current_text = chat_input.inner_text().strip()
             except Exception:
                 current_text = ""
 
         if not current_text:
-            raise RuntimeError("チャット入力欄へのテキスト入力に失敗しました。")
+            try:
+                injected = self.page.evaluate(
+                    """
+                    (target, value) => {
+                        if (!target) return false;
+                        target.innerHTML = '';
+                        value.split('\n').forEach((line) => {
+                            if (line) {
+                                const p = document.createElement('p');
+                                p.textContent = line;
+                                target.appendChild(p);
+                            } else {
+                                const p = document.createElement('p');
+                                p.innerHTML = '<br>';
+                                target.appendChild(p);
+                            }
+                        });
+                        const inputEvt = new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' });
+                        target.dispatchEvent(inputEvt);
+                        const changeEvt = new Event('change', { bubbles: true });
+                        target.dispatchEvent(changeEvt);
+                        return true;
+                    }
+                    """,
+                    chat_input,
+                    prompt,
+                )
+            except Exception:
+                injected = False
+            if injected:
+                self.page.wait_for_timeout(200)
+                try:
+                    current_text = chat_input.inner_text().strip()
+                except Exception:
+                    current_text = ""
 
+        if not current_text:
+            raise RuntimeError("Failed to populate the chat input with the prompt.")
 
     def _chat_input_locator_factories(self) -> List[Tuple[str, Callable[[], Locator]]]:
         if not self.page:

@@ -685,36 +685,70 @@ def translate_range_contents(
                     raise ToolExecutionError("検索キーフレーズが空です。")
                 normalized_keywords.append(keyword_list)
 
-            search_plan = [
-                {"source_text": text, "keywords": keywords}
-                for text, keywords in zip(chunk_texts, normalized_keywords)
-            ]
-            search_plan_json = json.dumps(search_plan, ensure_ascii=False)
+            keyword_plan_lines: List[str] = []
+            for index, (source_text, keywords) in enumerate(zip(chunk_texts, normalized_keywords), start=1):
+                keyword_plan_lines.append(f"Item {index}:")
+                keyword_plan_lines.append(f"- Japanese: {source_text}")
+                keyword_plan_lines.append("- Search keywords:")
+                for keyword in keywords:
+                    keyword_plan_lines.append(f"  * {keyword}")
+            keyword_plan_text = "\n".join(keyword_plan_lines)
+
+            reference_passage_text = ""
+            if reference_entries:
+                passage_lines: List[str] = []
+                for entry in reference_entries:
+                    label_parts = [entry.get("id")]
+                    sheet_name = entry.get("sheet")
+                    if sheet_name:
+                        label_parts.append(f"sheet {sheet_name}")
+                    source_range = entry.get("source_range")
+                    if source_range:
+                        label_parts.append(f"range {source_range}")
+                    header = " ".join(part for part in label_parts if part) or "Reference"
+                    passage_lines.append(f"{header}:")
+                    for content_line in entry.get("content", []):
+                        passage_lines.append(f"  - {content_line}")
+                reference_passage_text = "\n".join(passage_lines)
+
+            reference_urls_text = ""
+            if reference_url_entries:
+                reference_urls_text = "\n".join(
+                    entry["url"] for entry in reference_url_entries if entry.get("url")
+                )
 
             if use_references:
-                evidence_prompt_parts = [
-                    "Using the Japanese texts and their search keywords, locate the most relevant English sentences or fragments within the provided references and URLs.\n",
-                    "Return a JSON array matching the input order. Each element must be an object with the key \"quotes\" containing an array of exact English sentences from the references.\n",
-                    "Only include sentences that appear verbatim in the references or URLs.\n",
-                    f"Japanese texts and keywords (JSON): {search_plan_json}\n",
+                evidence_prompt_sections: List[str] = [
+                    "Use the search keywords below to locate the most relevant English sentences in the provided materials.",
+                    "",
+                    "Japanese texts and search keywords:",
+                    keyword_plan_text,
+                    "",
                 ]
-                if reference_entries:
-                    evidence_prompt_parts.append(
-                        f"Reference passages (JSON): {json.dumps(reference_entries, ensure_ascii=False)}\n"
-                    )
-                if reference_url_entries:
-                    evidence_prompt_parts.append(
-                        f"Reference URLs (JSON): {json.dumps(reference_url_entries, ensure_ascii=False)}\n"
-                    )
+                if reference_passage_text:
+                    evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
+                if reference_urls_text:
+                    evidence_prompt_sections.extend([
+                        "Reference URLs (open as needed before responding):",
+                        reference_urls_text,
+                        "",
+                    ])
+                evidence_prompt_sections.extend([
+                    'Return a JSON array matching the input order. Each element must be an object with the key "quotes" containing an array of exact English sentences from the references or URLs.',
+                    'Only include sentences that appear verbatim in those sources.',
+                ])
             else:
-                evidence_prompt_parts = [
-                    "Using the Japanese texts and their search keywords, craft up to three concise English candidate sentences per item that could serve as high-quality reference expressions.\n",
-                    "Return a JSON array matching the input order. Each element must be an object with the key \"quotes\" containing an array of English sentences.\n",
-                    "If no suitable expression exists, provide an empty string in the array.\n",
-                    f"Japanese texts and keywords (JSON): {search_plan_json}\n",
+                evidence_prompt_sections = [
+                    "Use the search keywords below to craft up to three concise English candidate sentences per item that could serve as high-quality reference expressions.",
+                    "",
+                    "Japanese texts and search keywords:",
+                    keyword_plan_text,
+                    "",
+                    'Return a JSON array matching the input order. Each element must be an object with the key "quotes" containing an array of English sentences.',
+                    'If no suitable expression exists, provide an empty string in the array.',
                 ]
 
-            evidence_prompt = "".join(evidence_prompt_parts)
+            evidence_prompt = "\n".join(evidence_prompt_sections)
             evidence_response = browser_manager.ask(evidence_prompt)
             try:
                 match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
