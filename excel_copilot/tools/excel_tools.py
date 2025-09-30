@@ -135,7 +135,7 @@ LEGACY_DIFF_MARKER_PATTERN = re.compile(r"【(追加|削除)：(.*?)】")
 MODERN_DIFF_MARKER_PATTERN = re.compile(r"\?(?:追加|削除)\?\s*(.*?)\?")
 _BASE_DIFF_TOKEN_PATTERN = re.compile(r"\s+|[^\s]+")
 _SENTENCE_BOUNDARY_CHARS = set("!.?。！？")
-_CLOSING_PUNCTUATION = ")]}、。！？」』】》）］'\"”’
+_CLOSING_PUNCTUATION = ")]}、。！？」』】》）］'\"”’"
 _MAX_DIFF_SEGMENT_TOKENS = 18
 _MAX_DIFF_SEGMENT_CHARS = 80
 
