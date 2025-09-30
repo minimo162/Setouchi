@@ -159,7 +159,6 @@ class BrowserCopilotManager:
         chat_input.click()
         modifier = "Meta" if sys.platform == "darwin" else "Control"
 
-        # Clear any existing value
         try:
             chat_input.press(f"{modifier}+A")
         except Exception:
@@ -176,7 +175,6 @@ class BrowserCopilotManager:
                 pass
 
         clipboard_value = prompt.replace("\n", "\r\n")
-        pasted = False
         try:
             pyperclip.copy(clipboard_value)
             try:
@@ -184,9 +182,7 @@ class BrowserCopilotManager:
             except Exception:
                 self.page.keyboard.press(f"{modifier}+V")
         except Exception:
-            pasted = False
-        else:
-            pasted = True
+            pass
 
         self.page.wait_for_timeout(400)
         try:
@@ -216,15 +212,13 @@ class BrowserCopilotManager:
                         if (!target) return false;
                         target.innerHTML = '';
                         value.split('\n').forEach((line) => {
+                            const p = document.createElement('p');
                             if (line) {
-                                const p = document.createElement('p');
                                 p.textContent = line;
-                                target.appendChild(p);
                             } else {
-                                const p = document.createElement('p');
                                 p.innerHTML = '<br>';
-                                target.appendChild(p);
                             }
+                            target.appendChild(p);
                         });
                         const inputEvt = new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' });
                         target.dispatchEvent(inputEvt);

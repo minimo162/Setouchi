@@ -571,7 +571,9 @@ def translate_range_contents(
             prompt_parts = [
                 f"Translate each Japanese text in the following JSON array into {target_language}.\n",
                 "Use the provided reference passages and URLs as evidence, weaving quoted English wording naturally into the translation.\n",
-                "Follow this three-step workflow for each item:\n1. From the Japanese text, create concise English search key phrases that capture the core meaning.\n2. Use those key phrases to locate the most relevant English sentences or fragments within the provided references and URLs.\n3. When writing the translation, prioritize the expressions gathered in step 2 and reuse them verbatim where appropriate.\n",
+                "Give preference to sentences that convey financial metrics, operational milestones, or strategic commitments related to the Japanese text.\n",
+                "Keep every translation strictly faithful to the Japanese source; do not add, infer, or omit facts beyond what is stated.\n",
+                "Follow this three-step workflow for each item:\n1. From the Japanese text, create concise English search key phrases that capture the core meaning.\n2. Use those key phrases to locate the most relevant English sentences or fragments within the provided references and URLs.\n3. When writing the translation, reuse the strongest wording from step 2 only when it supports the same fact, keeping the sentence smooth and idiomatic.\n",
                 "Do not include bracketed reference markers (for example, [R1] or [U2]) in the translated sentences.\n",
                 "Provide a brief (1-2 sentence) justification in Japanese that quotes one or two key English sentences exactly as they appear in the references.\n",
                 "Keep the input order unchanged.\n",
@@ -719,7 +721,10 @@ def translate_range_contents(
 
             if use_references:
                 evidence_prompt_sections: List[str] = [
-                    "Use the search keywords below to locate the most relevant English sentences in the provided materials.",
+                    "Use the search keywords below to locate multiple relevant English sentences in the provided materials.",
+                    "Collect between three and five distinct candidate quotes per item. Prioritise variety across sections and wording.",
+                    "Capture each sentence exactly as it appears, including punctuation.",
+                    "If no quotation directly supports the Japanese meaning, include an empty string for that item.",
                     "",
                     "Japanese texts and search keywords:",
                     keyword_plan_text,
@@ -734,18 +739,19 @@ def translate_range_contents(
                         "",
                     ])
                 evidence_prompt_sections.extend([
-                    'Return a JSON array matching the input order. Each element must be an object with the key "quotes" containing an array of exact English sentences from the references or URLs.',
-                    'Only include sentences that appear verbatim in those sources.',
+                    "Return a JSON array matching the input order. Each element must be an object with the key \"quotes\" containing between one and five exact English sentences from the references or URLs.",
+                    "Only include sentences that appear verbatim in those sources; avoid duplicating the same sentence within an item.",
                 ])
             else:
                 evidence_prompt_sections = [
-                    "Use the search keywords below to craft up to three concise English candidate sentences per item that could serve as high-quality reference expressions.",
+                    "Use the search keywords below to craft several concise English candidate sentences per item that align closely with the Japanese meaning.",
+                    "Provide between two and five varied sentences per item when possible.",
                     "",
                     "Japanese texts and search keywords:",
                     keyword_plan_text,
                     "",
-                    'Return a JSON array matching the input order. Each element must be an object with the key "quotes" containing an array of English sentences.',
-                    'If no suitable expression exists, provide an empty string in the array.',
+                    "Return a JSON array matching the input order. Each element must be an object with the key \"quotes\" containing an array of English sentences.",
+                    "Include an empty string if no suitable expression exists or if every English sentence would add information beyond the Japanese text.",
                 ]
 
             evidence_prompt = "\n".join(evidence_prompt_sections)
@@ -786,8 +792,9 @@ def translate_range_contents(
 
             final_prompt = (
                 f"{prompt_preamble}{texts_json}"
-                "Use the expressions listed for each item under the 'quotes' key when crafting the translation.\n"
-                "Ensure the evidence output reuses those quotes verbatim.\n"
+                "Blend the supporting expressions for each item into natural English prose, reusing key wording from the quotes where it fits fluently.\n"
+                "Ensure the translation remains faithful to the Japanese source; do not introduce information that is absent or uncertain.\n"
+                "Use quoted wording only when it expresses the same fact, and ensure the evidence output quotes exactly match the source sentences you relied on.\n"
                 f"Supporting expressions (JSON): {translation_context_json}\n"
             )
             response = browser_manager.ask(final_prompt)
@@ -868,27 +875,6 @@ def translate_range_contents(
                             validated_quotes.append(quote)
                     if reference_text_pool and not validated_quotes:
                         raise ToolExecutionError("参照文献から引用した英文を少なくとも1文含めてください。")
-
-                    if validated_quotes:
-                        normalized_translation = _normalize_for_match(translation_value)
-                        if not normalized_translation:
-                            raise ToolExecutionError("翻訳結果に引用表現を含めてください。")
-                        translation_tokens = set(normalized_translation.split())
-                        for quote in validated_quotes:
-                            normalized_quote = _normalize_for_match(quote)
-                            if not normalized_quote:
-                                continue
-                            if normalized_quote in normalized_translation:
-                                continue
-                            quote_tokens = [token for token in normalized_quote.split() if token]
-                            if not quote_tokens:
-                                continue
-                            overlap = sum(1 for token in quote_tokens if token in translation_tokens)
-                            coverage = overlap / len(quote_tokens)
-                            if coverage < _MIN_QUOTE_TOKEN_COVERAGE:
-                                raise ToolExecutionError(
-                                    f"引用文 '{quote}' の主要表現を翻訳結果にも含めてください。"
-                                )
 
                     evidence_lines: List[str] = []
                     if explanation_jp:
