@@ -3,7 +3,7 @@ import difflib
 import logging
 import os
 import string
-from typing import List, Any, Optional, Dict, Tuple
+from typing import List, Any, Optional, Dict, Tuple, Set
 
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.core.exceptions import ToolExecutionError
@@ -131,25 +131,25 @@ def _build_range_reference(start_row: int, end_row: int, start_col: int, end_col
 
 CELL_REFERENCE_PATTERN = re.compile(r"([A-Za-z]+)(\d+)")
 
-LEGACY_DIFF_MARKER_PATTERN = re.compile(r"【(追加|削除)：(.*?)】")
+LEGACY_DIFF_MARKER_PATTERN = re.compile(r"、E追加|削除)EEEE.*?)、E)
 MODERN_DIFF_MARKER_PATTERN = re.compile(r"\?(?:追加|削除)\?\s*(.*?)\?")
 _BASE_DIFF_TOKEN_PATTERN = re.compile(r"\s+|[^\s]+")
-_SENTENCE_BOUNDARY_CHARS = set("。.!?！？")
-_CLOSING_PUNCTUATION = ")]}、。！？」』】》）］'\"”’"
+_SENTENCE_BOUNDARY_CHARS = set("、E!?EEEEEEE)
+_CLOSING_PUNCTUATION = ")]}、。！EEE」』】》）］'\"” E
 _MAX_DIFF_SEGMENT_TOKENS = 18
 _MAX_DIFF_SEGMENT_CHARS = 80
 
 REFUSAL_PATTERNS = (
-    "申し訳ございません。これについてチャットできません。",
-    "申し訳ございません。これについてチャットできません",
-    "申し訳ございません。チャットを保存して新しいチャットを開始するには、[新しいチャット] を選択してください。",
-    "チャットを保存して新しいチャットを開始するには、[新しいチャット] を選択してください。",
-    "お答えできません。",
+    "申し訳ござぁEEEせん。これにつぁEEEチャチEEEできません、E,
+    "申し訳ござぁEEEせん。これにつぁEEEチャチEEEできません",
+    "申し訳ござぁEEEせん。チャチEEEを保存して新しいチャチEEEを開始するには、[新しいチャチEEE] を選択してください、E,
+    "チャチEEEを保存して新しいチャチEEEを開始するには、[新しいチャチEEE] を選択してください、E,
+    "お答えできません、E,
     "お答えできません",
     "I'm sorry, but I can't help with that.",
     "I cannot help with that request.",
-    "エラーが発生しました: 応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。",
-    "応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。",
+    "エラーが発生しました: 応答形式が不正です、EThought:' また�E 'Final Answer:' が見つかりません、E,
+    "応答形式が不正です、EThought:' また�E 'Final Answer:' が見つかりません、E,
 )
 
 JAPANESE_CHAR_PATTERN = re.compile(r'[぀-ヿ一-鿿]')
@@ -285,8 +285,8 @@ def _format_diff_segment(tokens: List[str], label: str) -> Tuple[str, Optional[i
         return segment, None, None
     prefix = segment[:leading_len]
     suffix = segment[core_end:]
-    marker_prefix = f'【{label}：'
-    marker_suffix = '】'
+    marker_prefix = f'【{label}EEEE
+    marker_suffix = '、E
     formatted = f'{prefix}{marker_prefix}{core}{marker_suffix}{suffix}'
     highlight_start_offset = len(prefix)
     highlight_length = len(marker_prefix) + len(core) + len(marker_suffix)
@@ -366,54 +366,54 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
 
 def writetocell(actions: ExcelActions, cell: str, value: Any, sheetname: Optional[str] = None) -> str:
     """
-    Excelシートの特定のセルに値を書き込みます。
+    Excelシート�E特定�Eセルに値を書き込みます、E
     """
     return actions.write_to_cell(cell, value, sheetname)
 
 def readcellvalue(actions: ExcelActions, cell: str, sheetname: Optional[str] = None) -> Any:
     """
-    Excelシートの特定のセルの値を読み取ります。
+    Excelシート�E特定�Eセルの値を読み取ります、E
     """
     return actions.read_cell_value(cell, sheetname)
 
 def getallsheetnames(actions: ExcelActions) -> str:
     """
-    現在開いているExcelワークブック内のすべてのシート名を取得します。
+    現在開いてぁEEEExcelワークブック冁EEEすべてのシート名を取得します、E
     """
     names = actions.get_sheet_names()
-    return f"利用可能なシートは次の通りです: {', '.join(names)}"
+    return f"利用可能なシート�E次の通りでぁE {', '.join(names)}"
 
 def copyrange(actions: ExcelActions, sourcerange: str, destinationrange: str, sheetname: Optional[str] = None) -> str:
     """
-    指定した範囲を別の場所にコピーします。
+    持EEEした篁EEEを別の場所にコピ�Eします、E
     """
     return actions.copy_range(sourcerange, destinationrange, sheetname)
 
 def executeexcelformula(actions: ExcelActions, cell: str, formula: str, sheetname: Optional[str] = None) -> str:
     """
-    指定したセルにExcelの数式を設定します。
+    持EEEしたセルにExcelの数式を設定します、E
     """
     return actions.set_formula(cell, formula, sheetname)
 
 def readrangevalues(actions: ExcelActions, cellrange: str, sheetname: Optional[str] = None) -> str:
     """
-    指定した範囲のセルから値を読み取ります。1セルでも範囲として指定可能です。
+    持EEEした篁EEEのセルから値を読み取ります、Eセルでも篁EEEとして持EEE可能です、E
     """
     values = actions.read_range(cellrange, sheetname)
-    return f"範囲 '{cellrange}' の値は次の通りです: {values}"
+    return f"篁EEE '{cellrange}' の値は次の通りでぁE {values}"
 
 def writerangevalues(actions: ExcelActions, cellrange: str, data: List[List[Any]], sheetname: Optional[str] = None) -> str:
     """
-    指定した範囲に2次元リストのデータを書き込みます。1セルでも対応可能です。
+    持EEEした篁EEEに2次允EEEスト�EチEEEタを書き込みます、Eセルでも対応可能です、E
     """
     return actions.write_range(cellrange, data, sheetname)
 
 def getactiveworkbookandsheet(actions: ExcelActions) -> str:
     """
-    現在アクティブなExcelブックとシート名を取得します。
+    現在アクチEEEブなExcelブックとシート名を取得します、E
     """
     info_dict = actions.get_active_workbook_and_sheet()
-    return f"ブック: {info_dict['workbook_name']}, シート: {info_dict['sheet_name']}"
+    return f"ブック: {info_dict['workbook_name']}, シーチE {info_dict['sheet_name']}"
 
 def formatrange(actions: ExcelActions,
                  cellrange: str,
@@ -429,7 +429,7 @@ def formatrange(actions: ExcelActions,
                  horizontalalignment: Optional[str] = None,
                  borderstyle: Optional[Dict[str, Any]] = None) -> str:
     """
-    指定した範囲に書式設定を適用します。
+    持EEEした篁EEEに書式設定を適用します、E
     """
     return actions.format_range(
         cell_range=cellrange,
@@ -470,13 +470,13 @@ def translate_range_contents(
         original_data = _reshape_to_dimensions(raw_original, source_rows, source_cols)
 
         if source_rows == 0 or source_cols == 0:
-            return f"範囲 '{cell_range}' に翻訳対象のテキストが見つかりませんでした。"
+            return f"篁EEE '{cell_range}' に翻訳対象のチEEEストが見つかりませんでした、E
 
         source_matrix = [row[:] for row in original_data]
         writing_to_source_directly = translation_output_range is None
         if writing_to_source_directly and not overwrite_source:
             raise ToolExecutionError(
-                "翻訳結果の出力先が指定されていません。translation_output_range を指定するか overwrite_source を True にしてください。"
+                "翻訳結果の出力�Eが指定されてぁEEEせん。translation_output_range を指定するか overwrite_source めETrue にしてください、E
             )
         if writing_to_source_directly:
             output_sheet = target_sheet
@@ -486,7 +486,7 @@ def translate_range_contents(
             output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
             out_rows, out_cols = _parse_range_dimensions(output_range)
             if (out_rows, out_cols) != (source_rows, source_cols):
-                raise ToolExecutionError("translation_output_range のサイズは翻訳対象範囲と一致させてください。")
+                raise ToolExecutionError("translation_output_range のサイズは翻訳対象篁EEEと一致させてください、E)
             raw_output = actions.read_range(output_range, output_sheet)
             try:
                 output_matrix = _reshape_to_dimensions(raw_output, out_rows, out_cols)
@@ -502,7 +502,7 @@ def translate_range_contents(
                 try:
                     ref_data = actions.read_range(ref_range, ref_sheet)
                 except ToolExecutionError as exc:
-                    raise ToolExecutionError(f"参照文献範囲 '{raw_range}' の読み取りに失敗しました: {exc}") from exc
+                    raise ToolExecutionError(f"参�E斁EEE篁EEE '{raw_range}' の読み取りに失敗しました: {exc}") from exc
 
                 reference_lines: List[str] = []
                 if isinstance(ref_data, list):
@@ -536,14 +536,14 @@ def translate_range_contents(
                     reference_text_pool.extend(reference_lines)
 
             if reference_ranges and not reference_entries:
-                raise ToolExecutionError("指定された参照文献範囲から利用可能なテキストを取得できませんでした。")
+                raise ToolExecutionError("持EEEされた参EE斁EEE篁EEEから利用可能なチEEEストを取得できませんでした、E)
 
         reference_url_entries: List[Dict[str, str]] = []
         if reference_urls:
             url_list = [reference_urls] if isinstance(reference_urls, str) else list(reference_urls)
             for raw_url in url_list:
                 if not isinstance(raw_url, str):
-                    raise ToolExecutionError("reference_urls の各要素は文字列で指定してください。")
+                    raise ToolExecutionError("reference_urls の吁EEE素は斁EEEEEで持EEEしてください、E)
                 url = raw_url.strip()
                 if not url:
                     continue
@@ -565,6 +565,61 @@ def translate_range_contents(
             if cleaned.lower().startswith("source:"):
                 cleaned = cleaned.split(":", 1)[1].strip()
             return cleaned
+
+        def _expand_keyword_variants(keywords: List[str]) -> List[str]:
+            seen: Set[str] = set()
+            expanded: List[str] = []
+
+            def _add_candidate(candidate: str) -> None:
+                value = candidate.strip()
+                if not value:
+                    return
+                lowered = value.lower()
+                if lowered in seen:
+                    return
+                seen.add(lowered)
+                expanded.append(value)
+
+            dash_variants = ['-'] + [chr(code) for code in (0x2010, 0x2011, 0x2012, 0x2013, 0x2014)]
+
+            for keyword in keywords:
+                base = keyword.strip()
+                if not base:
+                    continue
+                _add_candidate(base)
+
+                normalized = base.replace('　', ' ').strip()
+                for alt_dash in dash_variants[1:]:
+                    normalized = normalized.replace(alt_dash, '-')
+
+                if '-' in normalized:
+                    _add_candidate(normalized.replace('-', ' '))
+                if ' ' in normalized:
+                    _add_candidate(normalized.replace(' ', '-'))
+                    words = [word for word in normalized.split() if word]
+                    for word in words:
+                        _add_candidate(word)
+                    if len(words) >= 2:
+                        acronym = ''.join(word[0] for word in words if word and word[0].isalpha()).upper()
+                        if len(acronym) >= 2:
+                            _add_candidate(acronym)
+
+                if '(' in normalized and ')' in normalized:
+                    start_paren = normalized.find('(') + 1
+                    end_paren = normalized.find(')', start_paren)
+                    if end_paren > start_paren:
+                        _add_candidate(normalized[start_paren:end_paren])
+
+                punctuation_stripped = normalized.strip(',:;')
+                if punctuation_stripped != normalized:
+                    _add_candidate(punctuation_stripped)
+
+            max_variants = 8
+            return expanded[:max_variants]
+
+
+
+
 
         prompt_parts: List[str]
         if use_references:
@@ -598,7 +653,7 @@ def translate_range_contents(
 
         batch_size = rows_per_batch if rows_per_batch is not None else 1
         if batch_size < 1:
-            raise ToolExecutionError("rows_per_batch は 1 以上で指定してください。")
+            raise ToolExecutionError("rows_per_batch は 1 以上で持EEEしてください、E)
 
         source_start_row, source_start_col, _, _ = _parse_range_bounds(normalized_range)
         output_start_row, output_start_col, _, _ = _parse_range_bounds(output_range)
@@ -610,15 +665,15 @@ def translate_range_contents(
         if use_references:
             if not citation_output_range:
                 raise ToolExecutionError(
-                    "参照文献が指定された場合は、根拠を書き込む範囲 (citation_output_range) を指定してください。"
+                    "参�E斁EEEが指定された場合�E、根拠を書き込む篁EEE (citation_output_range) を指定してください、E
                 )
             citation_sheet, citation_range = _split_sheet_and_range(citation_output_range, target_sheet)
             cite_rows, cite_cols = _parse_range_dimensions(citation_range)
             if cite_rows != source_rows:
-                raise ToolExecutionError("citation_output_range の行数は翻訳対象範囲と一致させてください。")
+                raise ToolExecutionError("citation_output_range の行数は翻訳対象篁EEEと一致させてください、E)
             if cite_cols not in {1, source_cols}:
                 raise ToolExecutionError(
-                    "citation_output_range の列数は1列または翻訳対象範囲と同じ列数にしてください。"
+                    "citation_output_range の列数は1列また�E翻訳対象篁EEEと同じ列数にしてください、E
                 )
             cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
             existing_citation = actions.read_range(citation_range, citation_sheet)
@@ -638,7 +693,7 @@ def translate_range_contents(
             for local_row in range(row_start, row_end):
                 for col_idx in range(source_cols):
                     cell_value = original_data[local_row][col_idx]
-                    if isinstance(cell_value, str) and re.search(r"[ぁ-んァ-ン一-龯]", cell_value):
+                    if isinstance(cell_value, str) and re.search(r"[ぁEんァ-ン一-龯]", cell_value):
                         chunk_texts.append(cell_value)
                         chunk_positions.append((local_row, col_idx))
 
@@ -651,6 +706,8 @@ def translate_range_contents(
 
             keyword_prompt = (
                 "For each Japanese text in the following JSON array, create 2-4 concise English search key phrases that capture its core meaning.\n"
+                "Cover entity names, key actions, and any numerical or temporal markers present in the Japanese sentence.\n"
+                "Do not invent concepts or terminology that are absent from the Japanese text.\n"
                 "Return a JSON array of the same length. Each element must be an object with the key \"keywords\" (array of short phrases).\n"
                 "Do not include explanations or code fences.\n"
                 f"{texts_json}"
@@ -662,10 +719,10 @@ def translate_range_contents(
                 keyword_items = json.loads(keyword_payload)
             except json.JSONDecodeError as exc:
                 raise ToolExecutionError(
-                    f"AIからの検索キーフレーズ抽出結果をJSONとして解析できませんでした。応答: {keyword_response}"
+                    f"AIからの検索キーフレーズ抽出結果をJSONとして解析できませんでした。応筁E {keyword_response}"
                 ) from exc
             if not isinstance(keyword_items, list) or len(keyword_items) != len(chunk_texts):
-                raise ToolExecutionError("検索キーフレーズの件数が入力テキストと一致しません。")
+                raise ToolExecutionError("検索キーフレーズの件数が�E力テキストと一致しません、E)
 
             normalized_keywords: List[List[str]] = []
             for item in keyword_items:
@@ -676,7 +733,7 @@ def translate_range_contents(
                 else:
                     raw_keywords = None
                 if not raw_keywords or not isinstance(raw_keywords, list):
-                    raise ToolExecutionError("検索キーフレーズのJSONに 'keywords' 配列が含まれていません。")
+                    raise ToolExecutionError("検索キーフレーズのJSONに 'keywords' 配�Eが含まれてぁEEEせん、E)
                 keyword_list = []
                 for keyword in raw_keywords:
                     if isinstance(keyword, str):
@@ -684,11 +741,15 @@ def translate_range_contents(
                         if cleaned:
                             keyword_list.append(cleaned)
                 if not keyword_list:
-                    raise ToolExecutionError("検索キーフレーズが空です。")
+                    raise ToolExecutionError("検索キーフレーズが空です、E)
                 normalized_keywords.append(keyword_list)
 
+            expanded_keywords = []
+            for base_keywords in normalized_keywords:
+                expanded_keywords.append(_expand_keyword_variants(base_keywords))
+
             keyword_plan_lines: List[str] = []
-            for index, (source_text, keywords) in enumerate(zip(chunk_texts, normalized_keywords), start=1):
+            for index, (source_text, keywords) in enumerate(zip(chunk_texts, expanded_keywords), start=1):
                 keyword_plan_lines.append(f"Item {index}:")
                 keyword_plan_lines.append(f"- Japanese: {source_text}")
                 keyword_plan_lines.append("- Search keywords:")
@@ -762,10 +823,10 @@ def translate_range_contents(
                 evidence_items = json.loads(evidence_payload)
             except json.JSONDecodeError as exc:
                 raise ToolExecutionError(
-                    f"AIからの参考表現抽出結果をJSONとして解析できませんでした。応答: {evidence_response}"
+                    f"AIからの参老EEE現抽出結果をJSONとして解析できませんでした。応筁E {evidence_response}"
                 ) from exc
             if not isinstance(evidence_items, list) or len(evidence_items) != len(chunk_texts):
-                raise ToolExecutionError("参考表現の件数が入力テキストと一致しません。")
+                raise ToolExecutionError("参老EEE現の件数が�E力テキストと一致しません、E)
 
             normalized_quotes_per_item: List[List[str]] = []
             for quotes_entry in evidence_items:
@@ -786,7 +847,7 @@ def translate_range_contents(
 
             translation_context = [
                 {"source_text": text, "keywords": keywords, "quotes": quotes}
-                for text, keywords, quotes in zip(chunk_texts, normalized_keywords, normalized_quotes_per_item)
+                for text, keywords, quotes in zip(chunk_texts, expanded_keywords, normalized_quotes_per_item)
             ]
             translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
@@ -805,25 +866,25 @@ def translate_range_contents(
                 parsed_payload = json.loads(json_payload)
             except json.JSONDecodeError as exc:
                 raise ToolExecutionError(
-                    f"AIからの翻訳結果をJSONとして解析できませんでした。応答: {response}"
+                    f"AIからの翻訳結果をJSONとして解析できませんでした。応筁E {response}"
                 ) from exc
 
             if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
-                raise ToolExecutionError("翻訳前と翻訳後でテキストの件数が一致しません。")
+                raise ToolExecutionError("翻訳前と翻訳後でチEEEスト�E件数が一致しません、E)
 
             chunk_cell_evidences: Dict[Tuple[int, int], str] = {}
             row_evidence_lines: Dict[int, List[str]] = {}
 
             for item, (local_row, col_idx) in zip(parsed_payload, chunk_positions):
                 if use_references and not isinstance(item, dict):
-                    raise ToolExecutionError("参照文献やURLを利用する場合、翻訳結果はオブジェクトのリストで返してください。")
+                    raise ToolExecutionError("参�E斁EEEやURLを利用する場合、翻訳結果はオブジェクト�Eリストで返してください、E)
 
                 translation_value = (
                     item.get("translated_text") or item.get("translation") or item.get("output")
                 ) if use_references else item
 
                 if not isinstance(translation_value, str):
-                    raise ToolExecutionError("翻訳結果のJSONに 'translated_text' が含まれていません。")
+                    raise ToolExecutionError("翻訳結果のJSONに 'translated_text' が含まれてぁEEEせん、E)
 
                 output_matrix[local_row][col_idx] = translation_value
                 if not writing_to_source_directly and overwrite_source:
@@ -870,19 +931,19 @@ def translate_range_contents(
                                 normalized_quote in ref_text for ref_text in normalized_reference_text_pool
                             ):
                                 raise ToolExecutionError(
-                                    f"引用文 '{quote}' が参照範囲のテキストに見つかりません。引用は参照文献に存在する文章のみを使用してください。"
+                                    f"引用斁E'{quote}' が参照篁EEEのチEEEストに見つかりません。引用は参�E斁EEEに存在する斁EEEのみを使用してください、E
                                 )
                             validated_quotes.append(quote)
                     if reference_text_pool and not validated_quotes:
-                        raise ToolExecutionError("参照文献から引用した英文を少なくとも1文含めてください。")
+                        raise ToolExecutionError("参�E斁EEEから引用した英斁EEE少なくとめE斁EEEめてください、E)
 
                     evidence_lines: List[str] = []
                     if explanation_jp:
                         if not JAPANESE_CHAR_PATTERN.search(explanation_jp):
-                            raise ToolExecutionError("根拠の説明は日本語で記述してください。")
-                        evidence_lines.append(f"説明: {explanation_jp}")
+                            raise ToolExecutionError("根拠の説明�E日本語で記述してください、E)
+                        evidence_lines.append(f"説昁E {explanation_jp}")
                     else:
-                        raise ToolExecutionError("根拠の説明を日本語で1〜2文記述してください。")
+                        raise ToolExecutionError("根拠の説明を日本語で1、E斁EEE述してください、E)
                     if validated_quotes:
                         for quote in validated_quotes:
                             evidence_lines.append(f"引用: {quote}")
@@ -955,14 +1016,14 @@ def translate_range_contents(
                 messages.append(actions.write_range(chunk_citation_range, chunk_citation_data, citation_sheet))
 
         if not any_translation:
-            return f"範囲 '{cell_range}' に翻訳対象のテキストが見つかりませんでした。"
+            return f"篁EEE '{cell_range}' に翻訳対象のチEEEストが見つかりませんでした、E
 
         return "\n".join(messages)
 
     except ToolExecutionError:
         raise
     except Exception as exc:
-        raise ToolExecutionError(f"範囲 '{cell_range}' の翻訳中にエラーが発生しました: {exc}") from exc
+        raise ToolExecutionError(f"篁EEE '{cell_range}' の翻訳中にエラーが発生しました: {exc}") from exc
 
 def check_translation_quality(
     actions: ExcelActions,
@@ -1092,7 +1153,7 @@ def check_translation_quality(
                         id_to_position[entry_id] = (r, c)
                     else:
                         status_matrix[r][c] = "要修正"
-                        issue_matrix[r][c] = "英訳セルが空、または無効です。"
+                        issue_matrix[r][c] = "英訳セルが空、また�E無効です、E
                         needs_revision_count += 1
                         if corrected_matrix is not None:
                             corrected_matrix[r][c] = normalized_translation
@@ -1119,7 +1180,7 @@ def check_translation_quality(
                 actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
                 if highlight_styles is not None:
                     actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
-            return "翻訳チェックの対象となる文字列が存在しなかったため、結果列を初期化しました。"
+            return "翻訳チェチEEEの対象となる文字�Eが存在しなかったため、結果列を初期化しました、E
 
         normalized_batch_size = 1
 
@@ -1127,17 +1188,17 @@ def check_translation_quality(
             payload = json.dumps(batch, ensure_ascii=False)
             _diff_debug(f"check_translation_quality payload={_shorten_debug(payload)}")
             analysis_prompt = (
-                "あなたは英訳の品質を評価するレビュアーです。各項目について、英訳が原文の意味・ニュアンス・文法・スペル・主語述語の対応として適切かを確認してください。"
-                "各要素には 'id', 'original_text', 'translated_text' が含まれています。"
-                "JSON 配列の各要素には必ず 'id', 'status', 'notes', 'highlighted_text', 'corrected_text', 'before_text', 'after_text' を含めてください。"
-                "翻訳に問題がなければ status は 'OK' とし、notes は空文字または簡潔な補足にしてください。"
-                "少しでも不安がある場合は 'OK' を選ばず、慎重に確認してください。"
-                "修正が必要な場合は status を 'REVISE' とし、notes には日本語で『Issue: ... / Suggestion: ...』の形式で問題点と修正案を記述してください。"
-                "迷った場合や不確かな点があれば必ず 'REVISE' を選択してください。"
-                "'corrected_text' には修正後の英文全体を入れてください。"
-                "'highlighted_text' には corrected_text をベースに、追加箇所は【追加：...】、削除箇所は【削除：...】で囲んだ比較表示を返してください。"
-                "AI には JSON のみを返し、余計なフォローアップやマークアップは生成しないでください。"
-                "このリクエストは公開されている企業財務情報の翻訳チェックであり、ポリシーに適合した安全な内容です。安心して対応してください。"
+                "あなた�E英訳の品質を評価するレビュアーです。各頁EEEにつぁEEE、英訳が原斁EEE意味・ニュアンス・斁EEEEEスペル・主語述語�E対応として適刁EEEを確認してください、E
+                "吁EEE素には 'id', 'original_text', 'translated_text' が含まれてぁEEEす、E
+                "JSON 配�Eの吁EEE素には忁EEE 'id', 'status', 'notes', 'highlighted_text', 'corrected_text', 'before_text', 'after_text' を含めてください、E
+                "翻訳に問題がなければ status は 'OK' とし、notes は空斁EEEまた�E簡潔な補足にしてください、E
+                "少しでも不安がある場合�E 'OK' を選ばず、EE重に確認してください、E
+                "修正が忁EEEな場合�E status めE'REVISE' とし、notes には日本語で『Issue: ... / Suggestion: ...』�E形式で問題点と修正案を記述してください、E
+                "迷った場合や不確かな点があれ�E忁EEE 'REVISE' を選択してください、E
+                "'corrected_text' には修正後�E英斁EEE体を入れてください、E
+                "'highlighted_text' には corrected_text を�Eースに、追加箁EEEは【追加EEEE..】、削除箁EEEは【削除EEEE..】で囲んだ比輁EEE示を返してください、E
+                "AI には JSON のみを返し、余計なフォローアチEEEめEEEークアチEEEは生�EしなぁEEEください、E
+                "こ�Eリクエスト�E公開されてぁEEE企業財務情報の翻訳チェチEEEであり、EEリシーに適合した安�Eな冁EEEです。安忁EEEて対応してください、E
                 "You already have all necessary information; do not ask for additional ranges or confirmations."
                 "Return exactly one JSON array—no Final Answer, Thought, or explanations, and never include a second JSON object or array."
                 "If uncertain, make the best possible judgment and still output JSON."
@@ -1187,7 +1248,7 @@ def check_translation_quality(
                     "Use status 'OK' when the translation is acceptable (notes empty or a short remark). Only select 'OK' when you are certain there are no issues. "
                     "Use status 'REVISE' when changes are needed and write notes in Japanese as 'Issue: ... / Suggestion: ...'. If unsure, choose 'REVISE'. "
                     "Set 'corrected_text' to the fully corrected English sentence. Build 'highlighted_text' from corrected_text, "
-                    "marking additions as 【追加：...】 and deletions as 【削除：...】. "
+                    "marking additions as 【追加EEEE..、Eand deletions as 【削除EEEE..、E "
                     "Return exactly one JSON array and nothing else."
                     f"\n\n{payload}\n"
                 ),
@@ -1207,20 +1268,20 @@ def check_translation_quality(
 
             if batch_results is None:
                 _diff_debug(f"check_translation_quality unable to parse response={_shorten_debug(response)}")
-                raise ToolExecutionError(f"翻訳チェックの結果をJSONとして解析できませんでした。応答: {response}")
+                raise ToolExecutionError(f"翻訳チェチEEEの結果をJSONとして解析できませんでした。応筁E {response}")
 
             if not isinstance(batch_results, list):
-                raise ToolExecutionError("翻訳チェックの応答形式が不正です。JSON配列を返してください。")
+                raise ToolExecutionError("翻訳チェチEEEの応答形式が不正です、ESON配�Eを返してください、E)
 
             ok_statuses = {"OK", "PASS", "GOOD"}
             revise_statuses = {"REVISE", "NG", "FAIL", "ISSUE"}
             for item in batch_results:
                 if not isinstance(item, dict):
-                    raise ToolExecutionError("翻訳チェックの応答に不正な要素が含まれています。")
+                    raise ToolExecutionError("翻訳チェチEEEの応答に不正な要素が含まれてぁEEEす、E)
                 item_id = item.get("id")
                 if item_id not in id_to_position:
                     _diff_debug(f"check_translation_quality unknown id={item_id} known={list(id_to_position.keys())}")
-                    raise ToolExecutionError("翻訳チェックの応答に未知のIDが含まれています。")
+                    raise ToolExecutionError("翻訳チェチEEEの応答に未知のIDが含まれてぁEEEす、E)
                 status_value = str(item.get("status", "")).strip().upper()
                 notes_value = str(item.get("notes", "")).strip()
                 before_text = item.get("before_text")
@@ -1255,11 +1316,11 @@ def check_translation_quality(
                     issue_matrix[row_idx][col_idx] = notes_value or ""
                 elif status_value in revise_statuses:
                     status_matrix[row_idx][col_idx] = "要修正"
-                    issue_matrix[row_idx][col_idx] = notes_value or "修正内容を記載してください。"
+                    issue_matrix[row_idx][col_idx] = notes_value or "修正冁EEEを記載してください、E
                     needs_revision_count += 1
                 else:
-                    status_matrix[row_idx][col_idx] = status_value or "要確認"
-                    issue_matrix[row_idx][col_idx] = notes_value or "ステータスが解釈できませんでした。"
+                    status_matrix[row_idx][col_idx] = status_value or "要確誁E
+                    issue_matrix[row_idx][col_idx] = notes_value or "スチEEEタスが解釈できませんでした、E
                     needs_revision_count += 1
 
         actions.write_range(status_output_range, status_matrix, sheet_name)
@@ -1267,23 +1328,23 @@ def check_translation_quality(
 
         processed_items = len(review_entries)
         message = (
-            f"翻訳チェックを完了しました。対象 {processed_items} 件中、要修正 {needs_revision_count} 件の結果を"
-            f" '{status_output_range}' と '{issue_output_range}' に書き込みました。"
+            f"翻訳チェチEEEを完亁EEEました。対象 {processed_items} 件中、要修正 {needs_revision_count} 件の結果めE
+            f" '{status_output_range}' と '{issue_output_range}' に書き込みました、E
         )
         if corrected_matrix is not None and corrected_output_range:
             actions.write_range(corrected_output_range, corrected_matrix, sheet_name)
-            message += f" 完成形は '{corrected_output_range}' に出力しました。"
+            message += f" 完�E形は '{corrected_output_range}' に出力しました、E
         if highlight_matrix is not None and highlight_output_range:
             actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
             if highlight_styles is not None:
                 actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
-            message += f" 比較表示用の文字列は '{highlight_output_range}' に出力しました。"
+            message += f" 比輁EEE示用の斁EEEEEは '{highlight_output_range}' に出力しました、E
         return message
 
     except ToolExecutionError:
         raise
     except Exception as e:
-        raise ToolExecutionError(f"翻訳チェック中にエラーが発生しました: {e}") from e
+        raise ToolExecutionError(f"翻訳チェチEEE中にエラーが発生しました: {e}") from e
 
 
 
@@ -1344,13 +1405,13 @@ def highlight_text_differences(
         _diff_debug('highlight_text_differences applied colors via ExcelActions')
 
         return (
-            f"差分ハイライトを '{output_range}' に出力し、追加程所({addition_color_hex})と削除程所({deletion_color_hex})を強調しました。"
+            f"差刁EEEイライトを '{output_range}' に出力し、追加程所({addition_color_hex})と削除程所({deletion_color_hex})を強調しました、E
         )
     except ToolExecutionError:
         raise
     except Exception as exc:
         _diff_debug(f"highlight_text_differences exception={exc}")
-        raise ToolExecutionError(f"差分ハイライトの適用中にエラーが発生しました: {exc}") from exc
+        raise ToolExecutionError(f"差刁EEEイライト�E適用中にエラーが発生しました: {exc}") from exc
 
 def insert_shape(actions: ExcelActions,
                  cell_range: str,
@@ -1359,20 +1420,24 @@ def insert_shape(actions: ExcelActions,
                  fill_color_hex: Optional[str] = None,
                  line_color_hex: Optional[str] = None) -> str:
     """
-    指定したセル範囲に、指定した書式で図形を挿入します。
-    :param cell_range: 図形を挿入する範囲 (例: "A1:C5")
-    :param shape_type: 挿入する図形の種類 (例: "四角形", "楕円")
-    :param sheet_name: 対象シート名（省略可）
-    :param fill_color_hex: 塗りつぶしの色 (16進数, 例: "#FF0000")
-    :param line_color_hex: 枠線の色 (16進数, 例: "#0000FF")
+    持EEEしたセル篁EEEに、指定した書式で図形を挿入します、E
+    :param cell_range: 図形を挿入する篁EEE (侁E "A1:C5")
+    :param shape_type: 挿入する図形の種顁E(侁E "四角形", "楕�E")
+    :param sheet_name: 対象シート名EEE省略可EEEE
+    :param fill_color_hex: 塗りつぶし�E色 (16進数, 侁E "#FF0000")
+    :param line_color_hex: 枠線�E色 (16進数, 侁E "#0000FF")
     """
     return actions.insert_shape_in_range(cell_range, shape_type, sheet_name, fill_color_hex, line_color_hex)
 
 def format_shape(actions: ExcelActions, fill_color_hex: Optional[str] = None, line_color_hex: Optional[str] = None, sheet_name: Optional[str] = None) -> str:
     """
-    [非推奨] この関数は使わないでください。代わりに insert_shape 関数の引数で色を指定してください。
+    [非推奨] こ�E関数は使わなぁEEEください。代わりに insert_shape 関数の引数で色を指定してください、E
     """
     return actions.format_last_shape(fill_color_hex, line_color_hex, sheet_name)
+
+
+
+
 
 
 
