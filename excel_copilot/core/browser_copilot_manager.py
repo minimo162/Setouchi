@@ -613,7 +613,7 @@ class BrowserCopilotManager:
             send_button.click()
 
             _ensure_not_stopped()
-            # 新しいコピーボタン（＝新しい応答）が出現するのを待つ
+            # 新しいコピーボタン（＝ユーザー入力・応答）が出現するのを待つ
             print("Copilotの応答を待っています...")
             new_copy_button_locator = self.page.locator(copy_button_selector).nth(initial_copy_button_count)
             deadline = time.monotonic() + 180
@@ -626,23 +626,73 @@ class BrowserCopilotManager:
                     if time.monotonic() >= deadline:
                         raise
                     continue
-            print("応答が完了したと判断しました。")
 
-            _ensure_not_stopped()
-            # 最新のコピー ボタンをクリックして返す
-            copy_buttons = self.page.locator(copy_button_selector)
-            if copy_buttons.count() > initial_copy_button_count:
-                print("応答をクリップボードにコピーします...")
-                copy_buttons.last.click()
-                time.sleep(0.5)  # クリップボードへの反映を待つ
-                response_text = pyperclip.paste().strip()
-                # "Thought:" が含まれている場合、そこから後を抽出する
-                thought_pos = response_text.find("Thought:")
-                if thought_pos != -1:
-                    return response_text[thought_pos:]
-                return response_text
-            else:
-                return "エラー: 新しい応答のコピーボタンが見つかりませんでした。"
+            def _looks_like_prompt_echo(captured: str) -> bool:
+                sanitized = (captured or "").strip()
+                if not sanitized:
+                    return True
+                lowered = sanitized.lower()
+                prompt_sample = (prompt or "").strip().lower()[:40]
+                if prompt_sample and lowered.startswith(prompt_sample):
+                    return True
+                if lowered.startswith("system:") or lowered.startswith("user:"):
+                    return True
+                if lowered.startswith("[translation mode request]") or lowered.startswith("[translation review mode request]"):
+                    return True
+                if lowered.endswith("assistant:"):
+                    return True
+                if prompt and sanitized == prompt.strip():
+                    return True
+                return False
+
+            response_text = None
+            while True:
+                _ensure_not_stopped()
+                copy_buttons = self.page.locator(copy_button_selector)
+                total_buttons = copy_buttons.count()
+                if total_buttons <= initial_copy_button_count:
+                    if time.monotonic() >= deadline:
+                        return "エラー: 新しい応答のコピーボタンが見つかりませんでした。"
+                    time.sleep(0.4)
+                    continue
+
+                for index in range(total_buttons - 1, initial_copy_button_count - 1, -1):
+                    candidate_button = copy_buttons.nth(index)
+                    try:
+                        candidate_button.wait_for(state="visible", timeout=1000)
+                    except PlaywrightTimeoutError:
+                        continue
+                    except Exception:
+                        continue
+
+                    try:
+                        candidate_button.click()
+                    except Exception:
+                        continue
+
+                    time.sleep(0.5)
+                    clipboard_text = pyperclip.paste().strip()
+                    if _looks_like_prompt_echo(clipboard_text):
+                        continue
+
+                    response_text = clipboard_text
+                    break
+
+                if response_text is not None:
+                    break
+
+                if time.monotonic() >= deadline:
+                    return "エラー: Copilotからの応答を取得できませんでした。"
+                time.sleep(0.5)
+
+            print("応答が完了したと判断しました。")
+            if response_text is None:
+                return "エラー: Copilotからの応答を取得できませんでした。"
+
+            thought_pos = response_text.find("Thought:")
+            if thought_pos != -1:
+                return response_text[thought_pos:]
+            return response_text
 
         except PlaywrightTimeoutError:
             return "エラー: Copilotからの応答がタイムアウトしました。応答に時間がかかりすぎるか、Copilotが応答不能になっている可能性があります。"
