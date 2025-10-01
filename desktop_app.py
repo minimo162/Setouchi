@@ -357,7 +357,40 @@ class ChatMessage(ft.ResponsiveRow):
         if config.get("title"):
             content_controls.append(ft.Text(config["title"], weight=ft.FontWeight.BOLD, size=12, color=config.get("icon_color")))
 
-        content_controls.append(ft.Text(msg_content, **config.get("text_style", {}), selectable=True))
+        text_style = dict(config.get("text_style", {}))
+        line_controls = []
+        icon_color = config.get("icon_color", text_style.get("color"))
+        size = text_style.get("size")
+        normalized_content = (msg_content or "").replace("\r\n", "\n")
+        for raw_line in normalized_content.split("\n"):
+            if raw_line.strip() == "":
+                line_controls.append(ft.Container(height=6))
+                continue
+
+            stripped = raw_line.strip()
+            if stripped.startswith("引用"):
+                label, sep, remainder = stripped.partition(":")
+                bullet = ft.Text("•", size=size or 13, color=icon_color)
+                label_text = ft.Text(label.strip() + (sep if sep else ""), weight=ft.FontWeight.BOLD, size=size or 13, color=icon_color)
+                remainder_texts = []
+                remainder_value = remainder.strip() if remainder else ""
+                if remainder_value:
+                    remainder_texts.append(ft.Text(remainder_value, **text_style, selectable=True))
+                line_controls.append(
+                    ft.Row(
+                        [
+                            bullet,
+                            ft.Column([label_text] + remainder_texts, spacing=2, tight=True),
+                        ],
+                        alignment=ft.MainAxisAlignment.START,
+                        vertical_alignment=ft.CrossAxisAlignment.START,
+                        spacing=6,
+                    )
+                )
+            else:
+                line_controls.append(ft.Text(raw_line, **text_style, selectable=True))
+
+        content_controls.extend(line_controls if line_controls else [ft.Text(msg_content, **text_style, selectable=True)])
 
         message_bubble = ft.Container(
             content=ft.Column(content_controls, spacing=5, tight=True),
