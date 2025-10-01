@@ -751,7 +751,7 @@ def translate_range_contents(
             if reference_url_entries:
                 prompt_parts.append(f"Reference URLs:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n")
             prompt_parts.append(
-                "Return a JSON array of objects with 'translated_text' and 'evidence.explanation_jp' (2-6 Japanese sentences explaining key terminology and tone). No other keys or markdown.\n"
+                "Return a JSON array of objects with 'translated_text' and 'explanation_jp' (2-6 Japanese sentences explaining key terminology and tone). No other keys or markdown.\n"
             )
             prompt_preamble = "".join(prompt_parts)
         else:
@@ -983,7 +983,7 @@ def translate_range_contents(
                 f"{prompt_preamble}{texts_json}"
                 "Write natural English translations that stay faithful to each Japanese sentence.\n"
                 "Use the supporting expressions only when they fit; do not add or omit facts.\n"
-                "Return a JSON array where every element has 'translated_text' and 'evidence.explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
+                "Return a JSON array where every element has 'translated_text' and 'explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
                 f"Supporting expressions (JSON): {translation_context_json}\n"
             )
             response = browser_manager.ask(final_prompt)
@@ -1015,12 +1015,19 @@ def translate_range_contents(
                         or item.get("translation")
                         or item.get("output")
                     )
-                    if use_references:
+                    raw_explanation = (
+                        item.get("explanation_jp")
+                        or item.get("explanation")
+                    )
+                    if raw_explanation is None:
                         evidence_value = item.get("evidence")
                         if isinstance(evidence_value, dict):
-                            raw_explanation = evidence_value.get("explanation_jp") or evidence_value.get("explanation")
-                            if isinstance(raw_explanation, (str, int, float)):
-                                explanation_jp = _sanitize_evidence_value(str(raw_explanation))
+                            raw_explanation = (
+                                evidence_value.get("explanation_jp")
+                                or evidence_value.get("explanation")
+                            )
+                    if isinstance(raw_explanation, (str, int, float)):
+                        explanation_jp = _sanitize_evidence_value(str(raw_explanation))
                 elif isinstance(item, str):
                     translation_value = item
 
