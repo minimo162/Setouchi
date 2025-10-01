@@ -19,3 +19,7 @@ class LLMResponseError(ExcelCoPilotError):
 class SchemaGenerationError(ExcelCoPilotError):
     """ツールのJSONスキーマ生成に失敗した際に送出される。"""
     pass
+
+class UserStopRequested(ExcelCoPilotError):
+    """ユーザーが処理の停止を要求した場合に送出される。"""
+    pass

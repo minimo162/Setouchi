@@ -161,7 +161,13 @@ class CopilotWorker:
                 break
             if request.type is RequestType.STOP:
                 self.stop_event.set()
+                if self.browser_manager:
+                    try:
+                        self.browser_manager.request_stop()
+                    except Exception as stop_err:
+                        print(f"Stop request forwarding failed: {stop_err}")
                 continue
+
             if request.type is RequestType.UPDATE_CONTEXT:
                 self._update_context(request.payload)
                 continue

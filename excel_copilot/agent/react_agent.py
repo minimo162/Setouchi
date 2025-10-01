@@ -5,7 +5,7 @@ import threading
 from typing import Generator, List, Dict, Any, Optional, Tuple
 
 from excel_copilot.config import MAX_ITERATIONS, HISTORY_MAX_MESSAGES
-from excel_copilot.core.exceptions import LLMResponseError, ToolExecutionError
+from excel_copilot.core.exceptions import LLMResponseError, ToolExecutionError, UserStopRequested
 from excel_copilot.agent.prompts import SYSTEM_PROMPT
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.core.excel_manager import ExcelManager, ExcelConnectionError
@@ -134,9 +134,12 @@ class ReActAgent:
                     prompt = self._build_prompt()
 
                     try:
-                        response_content = self.browser_manager.ask(prompt)
+                        response_content = self.browser_manager.ask(prompt, stop_event=stop_event)
                         if response_content.startswith("エラー:"):
                             raise LLMResponseError(response_content)
+                    except UserStopRequested:
+                        yield {"type": "info", "content": "ユーザーの操作で処理が中断されました。"}
+                        return
                     except Exception as e:
                         yield {"type": "error", "content": f"Copilotとの通信に失敗しました: {e}"}
                         return

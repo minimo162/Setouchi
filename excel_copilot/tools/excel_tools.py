@@ -689,7 +689,7 @@ def translate_range_contents(
             prompt_parts.append(
                 "Return only a JSON array. Each element must contain:\n"
                 "- \"translated_text\": the translated sentence (without any bracketed IDs).\n"
-                "You may optionally include an \"evidence\" object with an \"explanation_jp\" string (Japanese rationale).\n"
+                "- \"evidence\": object that must include an \"explanation_jp\" string written in Japanese. Provide 2-6 sentences that justify key terminology choices, tone, and alignment with the supporting materials.\n"
                 "Do not include quote arrays, extra keys, or markdown fences.\n"
             )
             prompt_preamble = "".join(prompt_parts)
@@ -710,6 +710,7 @@ def translate_range_contents(
         citation_range = None
         citation_matrix: Optional[List[List[str]]] = None
         cite_start_row = cite_start_col = cite_rows = cite_cols = 0
+        citation_mode: Optional[str] = None
         if use_references:
             if not citation_output_range:
                 raise ToolExecutionError(
@@ -721,9 +722,15 @@ def translate_range_contents(
                 raise ToolExecutionError(
                     "citation_output_range must span the same number of rows as the source range."
                 )
-            if cite_cols not in {1, source_cols}:
+            if cite_cols == 1:
+                citation_mode = "single_column"
+            elif cite_cols == source_cols:
+                citation_mode = "per_cell"
+            elif cite_cols == source_cols * 2:
+                citation_mode = "paired_columns"
+            else:
                 raise ToolExecutionError(
-                    "citation_output_range must have either one column or match the source column count."
+                    "citation_output_range must have either one column, match the source column count, or provide two columns per source column for explanation and quotes."
                 )
             cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
             existing_citation = actions.read_range(citation_range, citation_sheet)
@@ -865,7 +872,7 @@ def translate_range_contents(
                     "Return a JSON array matching the input order. Each element must contain a 'quotes' array of distinct English sentences copied verbatim from the provided materials.\n",
                     "Preserve punctuation, casing, numerals, and spacing exactly as they appear, ordering sentences from most to least useful.\n",
                     "Include an empty array when no suitable sentence exists.\n",
-                    "Optionally include an 'explanation_jp' string in the same object when a concise Japanese rationale is helpful.\n",
+                    "Require an 'explanation_jp' string in the same object. Write it in Japanese with at least two sentences explaining how the chosen quotes support terminology, tone, and numerical accuracy.\n",
                 ])
             else:
                 evidence_prompt_sections = [
@@ -927,7 +934,7 @@ def translate_range_contents(
                 "Ensure the translation remains faithful to the Japanese source; do not introduce information that is absent or uncertain.\n"
                 "Use wording consistent with the references and avoid introducing unsupported statements.\n"
                 "Return only a JSON array. Each element must include a 'translated_text' string written in natural English.\n"
-                "You may optionally include an 'evidence' object with an 'explanation_jp' string (Japanese rationale).\n"
+                "Each element must also include an 'evidence' object with an 'explanation_jp' string written in Japanese. Explain in at least two sentences how the translation reflects the source meaning, terminology, and tone.\n"
                 "Do not include quote arrays, additional keys, or markdown fences.\n"
                 f"Supporting expressions (JSON): {translation_context_json}\n"
             )
@@ -947,8 +954,8 @@ def translate_range_contents(
                     "Translation response must be a list with one entry per source text."
                 )
 
-            chunk_cell_evidences: Dict[Tuple[int, int], str] = {}
-            row_evidence_lines: Dict[int, List[str]] = {}
+            chunk_cell_evidences: Dict[Tuple[int, int], Dict[str, Any]] = {}
+            row_evidence_details: Dict[int, List[Dict[str, Any]]] = {}
 
             for item_index, (item, (local_row, col_idx)) in enumerate(zip(parsed_payload, chunk_positions)):
                 translation_value: Optional[str] = None
@@ -975,6 +982,9 @@ def translate_range_contents(
                     )
 
                 translation_value = translation_value.strip()
+                if not translation_value:
+                    raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+
                 existing_output_value = output_matrix[local_row][col_idx]
                 if translation_value != existing_output_value:
                     output_matrix[local_row][col_idx] = translation_value
@@ -999,29 +1009,48 @@ def translate_range_contents(
                         seen_quotes.add(cleaned_candidate)
                         final_quotes.append(cleaned_candidate)
 
-                evidence_lines: List[str] = []
-                if explanation_jp:
-                    if not JAPANESE_CHAR_PATTERN.search(explanation_jp):
-                        raise ToolExecutionError("根拠の説明は日本語で記述してください。")
-                    evidence_lines.append(f"説明: {explanation_jp.strip()}")
+                explanation_text = explanation_jp.strip()
+                if use_references:
+                    if not explanation_text:
+                        raise ToolExecutionError("Translation response must include an 'explanation_jp' string for each item.")
+                    if not JAPANESE_CHAR_PATTERN.search(explanation_text):
+                        raise ToolExecutionError("explanation_jp の記載は必ず日本語で行ってください。")
+                    if len(explanation_text) < 20:
+                        raise ToolExecutionError("explanation_jp には翻訳判断を具体的に説明してください (20文字以上)。")
+
+                quotes_lines: List[str] = []
                 if final_quotes:
                     multiple_quotes = len(final_quotes) > 1
                     for idx_quote, quote in enumerate(final_quotes, start=1):
                         label = f"引用{idx_quote}" if multiple_quotes else "引用"
-                        evidence_lines.append(f"{label}: {quote}")
-                combined = "\n".join(evidence_lines).strip()
+                        quotes_lines.append(f"{label}: {quote}")
 
-                if cite_cols == source_cols:
-                    chunk_cell_evidences[(local_row, col_idx)] = combined
-                elif combined:
-                    row_evidence_lines.setdefault(local_row, []).append(combined)
+                evidence_record = {
+                    "explanation": explanation_text,
+                    "quotes_lines": quotes_lines,
+                }
+
+                if use_references:
+                    if citation_mode == "paired_columns":
+                        chunk_cell_evidences[(local_row, col_idx)] = evidence_record
+                    elif citation_mode == "per_cell":
+                        chunk_cell_evidences[(local_row, col_idx)] = evidence_record
+                    else:  # single_column
+                        row_evidence_details.setdefault(local_row, []).append(evidence_record)
+
             if use_references and citation_matrix is not None:
-                if cite_cols == source_cols:
+                if citation_mode == "paired_columns":
                     for local_row in range(row_start, row_end):
-                        for col_idx in range(cite_cols):
-                            citation_matrix[local_row][col_idx] = ""
-                    for (local_row, col_idx), evidence_text in chunk_cell_evidences.items():
-                        citation_matrix[local_row][col_idx] = evidence_text
+                        for col_offset in range(cite_cols):
+                            citation_matrix[local_row][col_offset] = ""
+                    for (local_row, col_idx), data in chunk_cell_evidences.items():
+                        base_col = col_idx * 2
+                        if base_col + 1 >= cite_cols:
+                            continue
+                        explanation_text = (data.get("explanation") or "").strip()
+                        quotes_text = "\n".join(data.get("quotes_lines", []))
+                        citation_matrix[local_row][base_col] = explanation_text
+                        citation_matrix[local_row][base_col + 1] = quotes_text
                     chunk_citation_data = [
                         list(citation_matrix[local_row][0:cite_cols])
                         for local_row in range(row_start, row_end)
@@ -1032,13 +1061,42 @@ def translate_range_contents(
                         cite_start_col,
                         cite_start_col + cite_cols - 1,
                     )
-                else:
+                elif citation_mode == "per_cell":
                     for local_row in range(row_start, row_end):
-                        texts = row_evidence_lines.get(local_row)
-                        if texts:
-                            citation_matrix[local_row][0] = "\n".join(texts)
-                        else:
-                            citation_matrix[local_row][0] = ""
+                        for col_idx in range(cite_cols):
+                            citation_matrix[local_row][col_idx] = ""
+                    for (local_row, col_idx), data in chunk_cell_evidences.items():
+                        explanation_text = (data.get("explanation") or "").strip()
+                        quotes_lines = data.get("quotes_lines", [])
+                        combined_lines: List[str] = []
+                        if explanation_text:
+                            combined_lines.append(f"説明: {explanation_text}")
+                        combined_lines.extend(quotes_lines)
+                        citation_matrix[local_row][col_idx] = "\n".join(combined_lines).strip()
+                    chunk_citation_data = [
+                        list(citation_matrix[local_row][0:cite_cols])
+                        for local_row in range(row_start, row_end)
+                    ]
+                    chunk_citation_range = _build_range_reference(
+                        cite_start_row + row_start,
+                        cite_start_row + row_end - 1,
+                        cite_start_col,
+                        cite_start_col + cite_cols - 1,
+                    )
+                else:  # single_column
+                    for local_row in range(row_start, row_end):
+                        entries = row_evidence_details.get(local_row, [])
+                        blocks: List[str] = []
+                        for data in entries:
+                            explanation_text = (data.get("explanation") or "").strip()
+                            quotes_lines = data.get("quotes_lines", [])
+                            lines: List[str] = []
+                            if explanation_text:
+                                lines.append(f"説明: {explanation_text}")
+                            lines.extend(quotes_lines)
+                            if lines:
+                                blocks.append("\n".join(lines))
+                        citation_matrix[local_row][0] = "\n".join(blocks).strip()
                     chunk_citation_data = [
                         [citation_matrix[local_row][0]]
                         for local_row in range(row_start, row_end)
@@ -1050,6 +1108,7 @@ def translate_range_contents(
                         cite_start_col,
                     )
                 messages.append(actions.write_range(chunk_citation_range, chunk_citation_data, citation_sheet))
+
 
         if not any_translation:
             return f"No translatable text was found in range '{cell_range}'."

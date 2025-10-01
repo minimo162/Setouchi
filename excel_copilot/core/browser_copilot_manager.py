@@ -13,8 +13,10 @@ import pyperclip
 import sys
 import re
 from typing import Optional, Callable, List, Tuple, Union
+from threading import Event
 
 from ..config import COPILOT_USER_DATA_DIR
+from .exceptions import UserStopRequested
 
 class BrowserCopilotManager:
     """
@@ -543,12 +545,22 @@ class BrowserCopilotManager:
             raise
 
 
-    def ask(self, prompt: str) -> str:
+    def ask(self, prompt: str, stop_event: Optional[Event] = None) -> str:
         """プロンプトを送信し、Copilotからの応答をクリップボード経由で取得する"""
         if not self.page:
             raise ConnectionError("ブラウザが初期化されていません。start()を呼び出してください。")
 
+        def _ensure_not_stopped():
+            if stop_event and stop_event.is_set():
+                print("Stop requested: attempting to cancel Copilot response.")
+                try:
+                    self.request_stop()
+                except Exception:
+                    pass
+                raise UserStopRequested("ユーザーによる中断が要求されました。")
+
         try:
+            _ensure_not_stopped()
             # 応答のコピーボタンの現在の数を数える
             copy_button_selector = '[data-testid="CopyButtonTestId"]'
             initial_copy_button_count = self.page.locator(copy_button_selector).count()
@@ -567,20 +579,23 @@ class BrowserCopilotManager:
             except Exception:
                 pass
 
+            _ensure_not_stopped()
             try:
                 chat_input.click(timeout=5000)
             except TypeError:
                 chat_input.click()
             except Exception as click_error:
-                print(f"チャット入力欄へのフォーカス時に警告: {click_error}")
+                print(f"チャット入力欄でのフォーカス時に警告: {click_error}")
 
-
+            _ensure_not_stopped()
             self._fill_chat_input(chat_input, prompt)
             # Allow the pasted content to settle before sending
             try:
                 self.page.wait_for_timeout(350)
             except Exception:
                 time.sleep(0.35)
+
+            _ensure_not_stopped()
             send_button = self._wait_for_first_visible(
                 "送信ボタン",
                 [
@@ -594,15 +609,27 @@ class BrowserCopilotManager:
                 ],
                 timeout=15000,
             )
+            _ensure_not_stopped()
             send_button.click()
 
+            _ensure_not_stopped()
             # 新しいコピーボタン（＝新しい応答）が出現するのを待つ
             print("Copilotの応答を待っています...")
             new_copy_button_locator = self.page.locator(copy_button_selector).nth(initial_copy_button_count)
-            new_copy_button_locator.wait_for(state="visible", timeout=180000) # タイムアウトを3分に延長
+            deadline = time.monotonic() + 180
+            while True:
+                try:
+                    new_copy_button_locator.wait_for(state="visible", timeout=1000)
+                    break
+                except PlaywrightTimeoutError:
+                    _ensure_not_stopped()
+                    if time.monotonic() >= deadline:
+                        raise
+                    continue
             print("応答が完了したと判断しました。")
 
-            # 最新のコピーボタンをクリックして内容を取得
+            _ensure_not_stopped()
+            # 最新のコピー ボタンをクリックして返す
             copy_buttons = self.page.locator(copy_button_selector)
             if copy_buttons.count() > initial_copy_button_count:
                 print("応答をクリップボードにコピーします...")
@@ -618,9 +645,45 @@ class BrowserCopilotManager:
                 return "エラー: 新しい応答のコピーボタンが見つかりませんでした。"
 
         except PlaywrightTimeoutError:
-            return "エラー: Copilotからの応答がタイムアウトしました。処理が複雑すぎるか、Copilotが応答不能になっている可能性があります。"
+            return "エラー: Copilotからの応答がタイムアウトしました。応答に時間がかかりすぎるか、Copilotが応答不能になっている可能性があります。"
+        except UserStopRequested:
+            raise
         except Exception as e:
             return f"エラー: ブラウザ操作中に予期せぬエラーが発生しました: {e}"
+
+    def request_stop(self) -> bool:
+        if not self.page:
+            return False
+
+        stop_candidates = [
+            lambda: self.page.get_by_role("button", name="停止"),
+            lambda: self.page.get_by_role("button", name="中止"),
+            lambda: self.page.get_by_role("button", name="中断"),
+            lambda: self.page.get_by_role("button", name=re.compile("Stop", re.IGNORECASE)),
+            lambda: self.page.get_by_role("button", name=re.compile("Cancel", re.IGNORECASE)),
+            lambda: self.page.get_by_test_id("StopGenerating"),
+        ]
+
+        for factory in stop_candidates:
+            try:
+                locator = factory()
+                if locator.count() == 0:
+                    continue
+                locator.first.click()
+                print("Copilot応答の停止ボタンをクリックしました。")
+                return True
+            except Exception:
+                continue
+
+        try:
+            self.page.keyboard.press("Escape")
+            print("Copilot応答の停止を Escape キーで試みました。")
+            return True
+        except Exception:
+            pass
+
+        return False
+
 
     def close(self):
         """ブラウザとPlaywrightセッションを安全に閉じる"""
