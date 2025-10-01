@@ -560,6 +560,7 @@ def translate_range_contents(
             return f"Range '{cell_range}' has no usable cells to translate."
 
         source_matrix = [row[:] for row in original_data]
+        range_adjustment_note: Optional[str] = None
         writing_to_source_directly = translation_output_range is None
         if writing_to_source_directly and not overwrite_source:
             raise ToolExecutionError(
@@ -572,10 +573,31 @@ def translate_range_contents(
         else:
             output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
             out_rows, out_cols = _parse_range_dimensions(output_range)
-            if (out_rows, out_cols) != (source_rows, source_cols):
+            required_output_cols = source_cols * 3
+            if out_rows < source_rows or out_cols < required_output_cols:
                 raise ToolExecutionError(
-                    "translation_output_range dimensions must match the source range."
+                    "translation_output_range must provide three columns (translation, quotes, explanation) per source column."
                 )
+            if out_rows != source_rows or out_cols != required_output_cols:
+                start_row, start_col, _, _ = _parse_range_bounds(output_range)
+                adjusted_end_row = start_row + source_rows - 1
+                adjusted_end_col = start_col + required_output_cols - 1
+                adjusted_range = _build_range_reference(
+                    start_row,
+                    adjusted_end_row,
+                    start_col,
+                    adjusted_end_col,
+                )
+                original_range_display = translation_output_range
+                adjusted_range_display = (
+                    f"{output_sheet}!{adjusted_range}" if output_sheet else adjusted_range
+                )
+                range_adjustment_note = (
+                    f"translation_output_range '{original_range_display}' did not match the required layout; "
+                    f"using '{adjusted_range_display}' instead."
+                )
+                output_range = adjusted_range
+                out_rows, out_cols = source_rows, required_output_cols
             raw_output = actions.read_range(output_range, output_sheet)
             try:
                 output_matrix = _reshape_to_dimensions(raw_output, out_rows, out_cols)
@@ -711,33 +733,35 @@ def translate_range_contents(
         citation_matrix: Optional[List[List[str]]] = None
         cite_start_row = cite_start_col = cite_rows = cite_cols = 0
         citation_mode: Optional[str] = None
+        citation_note: Optional[str] = None
         if use_references:
             if not citation_output_range:
-                raise ToolExecutionError(
-                    "citation_output_range is required when using references."
+                citation_note = (
+                    "citation_output_range was not provided; evidence details were retained within the translation output range."
                 )
-            citation_sheet, citation_range = _split_sheet_and_range(citation_output_range, target_sheet)
-            cite_rows, cite_cols = _parse_range_dimensions(citation_range)
-            if cite_rows != source_rows:
-                raise ToolExecutionError(
-                    "citation_output_range must span the same number of rows as the source range."
-                )
-            if cite_cols == 1:
-                citation_mode = "single_column"
-            elif cite_cols == source_cols:
-                citation_mode = "per_cell"
-            elif cite_cols == source_cols * 2:
-                citation_mode = "paired_columns"
             else:
-                raise ToolExecutionError(
-                    "citation_output_range must have either one column, match the source column count, or provide two columns per source column for explanation and quotes."
-                )
-            cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
-            existing_citation = actions.read_range(citation_range, citation_sheet)
-            try:
-                citation_matrix = _reshape_to_dimensions(existing_citation, cite_rows, cite_cols)
-            except ToolExecutionError:
-                citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
+                citation_sheet, citation_range = _split_sheet_and_range(citation_output_range, target_sheet)
+                cite_rows, cite_cols = _parse_range_dimensions(citation_range)
+                if cite_rows != source_rows:
+                    raise ToolExecutionError(
+                        "citation_output_range must span the same number of rows as the source range."
+                    )
+                if cite_cols == 1:
+                    citation_mode = "single_column"
+                elif cite_cols == source_cols:
+                    citation_mode = "per_cell"
+                elif cite_cols == source_cols * 2:
+                    citation_mode = "paired_columns"
+                else:
+                    raise ToolExecutionError(
+                        "citation_output_range must have either one column, match the source column count, or provide two columns per source column for explanation and quotes."
+                    )
+                cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
+                existing_citation = actions.read_range(citation_range, citation_sheet)
+                try:
+                    citation_matrix = _reshape_to_dimensions(existing_citation, cite_rows, cite_cols)
+                except ToolExecutionError:
+                    citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
 
         messages: List[str] = []
         any_translation = False
@@ -985,9 +1009,18 @@ def translate_range_contents(
                 if not translation_value:
                     raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
-                existing_output_value = output_matrix[local_row][col_idx]
+                if writing_to_source_directly:
+                    translation_col_index = col_idx
+                    quotes_col_index = None
+                    explanation_col_index = None
+                else:
+                    translation_col_index = col_idx * 3
+                    quotes_col_index = translation_col_index + 1
+                    explanation_col_index = translation_col_index + 2
+
+                existing_output_value = output_matrix[local_row][translation_col_index]
                 if translation_value != existing_output_value:
-                    output_matrix[local_row][col_idx] = translation_value
+                    output_matrix[local_row][translation_col_index] = translation_value
                     output_dirty = True
                 if not writing_to_source_directly and overwrite_source:
                     existing_source_value = source_matrix[local_row][col_idx]
@@ -1010,6 +1043,16 @@ def translate_range_contents(
                         final_quotes.append(cleaned_candidate)
 
                 explanation_text = explanation_jp.strip()
+
+                if quotes_col_index is not None and explanation_col_index is not None:
+                    quotes_text = "\n".join(final_quotes)
+                    if output_matrix[local_row][quotes_col_index] != quotes_text:
+                        output_matrix[local_row][quotes_col_index] = quotes_text
+                        output_dirty = True
+                    if output_matrix[local_row][explanation_col_index] != explanation_text:
+                        output_matrix[local_row][explanation_col_index] = explanation_text
+                        output_dirty = True
+
                 if use_references:
                     if not explanation_text:
                         raise ToolExecutionError("Translation response must include an 'explanation_jp' string for each item.")
@@ -1035,7 +1078,7 @@ def translate_range_contents(
                         chunk_cell_evidences[(local_row, col_idx)] = evidence_record
                     elif citation_mode == "per_cell":
                         chunk_cell_evidences[(local_row, col_idx)] = evidence_record
-                    else:  # single_column
+                    elif citation_mode == "single_column":
                         row_evidence_details.setdefault(local_row, []).append(evidence_record)
 
             if use_references and citation_matrix is not None:
@@ -1083,7 +1126,7 @@ def translate_range_contents(
                         cite_start_col,
                         cite_start_col + cite_cols - 1,
                     )
-                else:  # single_column
+                elif citation_mode == "single_column":
                     for local_row in range(row_start, row_end):
                         entries = row_evidence_details.get(local_row, [])
                         blocks: List[str] = []
@@ -1114,6 +1157,11 @@ def translate_range_contents(
             return f"No translatable text was found in range '{cell_range}'."
 
         write_messages: List[str] = []
+
+        if range_adjustment_note:
+            write_messages.append(range_adjustment_note)
+        if citation_note:
+            write_messages.append(citation_note)
 
         if output_dirty:
             translation_message = actions.write_range(output_range, output_matrix, output_sheet)
