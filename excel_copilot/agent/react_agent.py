@@ -6,7 +6,7 @@ from typing import Generator, List, Dict, Any, Optional, Tuple
 
 from excel_copilot.config import MAX_ITERATIONS, HISTORY_MAX_MESSAGES
 from excel_copilot.core.exceptions import LLMResponseError, ToolExecutionError, UserStopRequested
-from excel_copilot.agent.prompts import SYSTEM_PROMPT
+from excel_copilot.agent.prompts import CopilotMode, build_system_prompt
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.core.excel_manager import ExcelManager, ExcelConnectionError
 from excel_copilot.tools.actions import ExcelActions
@@ -20,13 +20,28 @@ class ReActAgent:
     ReAct (Reasoning and Acting) フレームワークに基づいたAIエージェント。
     UIからの停止要求(stop_event)に対応し、構造化された辞書をyieldします。
     """
-    def __init__(self, tools: List[callable], tool_schemas: List[Dict], browser_manager: BrowserCopilotManager, sheet_name: Optional[str] = None):
+    def __init__(self, tools: List[callable], tool_schemas: List[Dict], browser_manager: BrowserCopilotManager, sheet_name: Optional[str] = None, mode: CopilotMode = CopilotMode.TRANSLATION):
         self.browser_manager = browser_manager
         self.sheet_name = sheet_name
+        self.mode = mode
         self.tools = {tool.__name__: tool for tool in tools}
         self.tool_schemas_str = json.dumps(tool_schemas, indent=2, ensure_ascii=False)
-        self.system_prompt = SYSTEM_PROMPT.replace("TOOLS", self.tool_schemas_str)
+        self.system_prompt = build_system_prompt(self.mode, self.tool_schemas_str)
         self.messages: List[Dict[str, str]] = []
+
+    def reset(self):
+        """Reset the conversation history for a fresh run."""
+
+        self.messages = []
+
+    def set_mode(self, mode: CopilotMode):
+        """Switch the agent to a new mode and rebuild the system prompt."""
+
+        if mode == self.mode:
+            return
+        self.mode = mode
+        self.system_prompt = build_system_prompt(self.mode, self.tool_schemas_str)
+        self.reset()
 
     def _initialize_messages(self, user_query: str):
         """会話履歴を初期化する"""

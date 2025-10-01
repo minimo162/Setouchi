@@ -11,16 +11,16 @@ import os
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any, Union
+from typing import Dict, Optional, Any, Union, List
 from enum import Enum, auto
 
 from excel_copilot.core.excel_manager import ExcelManager, ExcelConnectionError
 from excel_copilot.agent.react_agent import ReActAgent
+from excel_copilot.agent.prompts import CopilotMode
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.tools import excel_tools
 from excel_copilot.tools.schema_builder import create_tool_schema
 from excel_copilot.config import COPILOT_USER_DATA_DIR
-
 
 class AppState(Enum):
     INITIALIZING = auto()
@@ -29,13 +29,11 @@ class AppState(Enum):
     STOPPING = auto()
     ERROR = auto()
 
-
 class RequestType(str, Enum):
     USER_INPUT = "USER_INPUT"
     STOP = "STOP"
     QUIT = "QUIT"
     UPDATE_CONTEXT = "UPDATE_CONTEXT"
-
 
 class ResponseType(str, Enum):
     STATUS = "status"
@@ -47,7 +45,6 @@ class ResponseType(str, Enum):
     ACTION = "action"
     OBSERVATION = "observation"
     FINAL_ANSWER = "final_answer"
-
 
 @dataclass(frozen=True)
 class RequestMessage:
@@ -69,7 +66,6 @@ class RequestMessage:
             except ValueError as exc:
                 raise ValueError(f"Unsupported request type: {raw_type}") from exc
         return cls(type=request_type, payload=raw.get("payload"))
-
 
 @dataclass(frozen=True)
 class ResponseMessage:
@@ -97,7 +93,6 @@ class ResponseMessage:
             metadata.setdefault("source_type", raw_type)
         return cls(type=response_type, content=content, metadata=metadata)
 
-
 class CopilotWorker:
     def __init__(self, request_q: queue.Queue, response_q: queue.Queue, sheet_name: Optional[str] = None):
         self.request_queue = request_q
@@ -106,6 +101,9 @@ class CopilotWorker:
         self.agent: Optional[ReActAgent] = None
         self.stop_event = threading.Event()
         self.sheet_name = sheet_name
+        self.mode = CopilotMode.TRANSLATION
+        self.tool_functions: List[callable] = []
+        self.tool_schemas: List[Dict[str, Any]] = []
 
     def run(self):
         try:
@@ -125,6 +123,17 @@ class CopilotWorker:
         except Exception as err:
             print(f"Failed to enqueue response: {err}")
 
+    def _build_agent(self):
+        if not self.browser_manager or not self.tool_functions or not self.tool_schemas:
+            return
+        self.agent = ReActAgent(
+            tools=self.tool_functions,
+            tool_schemas=self.tool_schemas,
+            browser_manager=self.browser_manager,
+            sheet_name=self.sheet_name,
+            mode=self.mode,
+        )
+
     def _initialize(self):
         try:
             print("Worker初期化開始..")
@@ -134,9 +143,9 @@ class CopilotWorker:
             print("BrowserManagerの起動完了")
 
             self._emit_response(ResponseMessage(ResponseType.STATUS, "AIエージェントを準備中..."))
-            tool_functions = [obj for _, obj in inspect.getmembers(excel_tools) if inspect.isfunction(obj)]
-            tool_schemas = [create_tool_schema(func) for func in tool_functions]
-            self.agent = ReActAgent(tools=tool_functions, tool_schemas=tool_schemas, browser_manager=self.browser_manager, sheet_name=self.sheet_name)
+            self.tool_functions = [obj for _, obj in inspect.getmembers(excel_tools) if inspect.isfunction(obj)]
+            self.tool_schemas = [create_tool_schema(func) for func in self.tool_functions]
+            self._build_agent()
             print("AIエージェントの準備完了")
 
             self._emit_response(ResponseMessage(ResponseType.INITIALIZATION_COMPLETE, "準備完了。指示をどうぞ。"))
@@ -178,12 +187,29 @@ class CopilotWorker:
                     self._emit_response(ResponseMessage(ResponseType.ERROR, "ユーザー入力が不正です。"))
 
     def _update_context(self, payload: Optional[Dict[str, Any]]):
-        new_sheet_name = payload.get("sheet_name") if isinstance(payload, dict) else None
-        self.sheet_name = new_sheet_name
-        if self.agent:
-            self.agent.sheet_name = new_sheet_name
-        sheet_label = new_sheet_name or "未選択"
-        self._emit_response(ResponseMessage(ResponseType.INFO, f"操作対象のシートを「{sheet_label}」に変更しました。"))
+        if not isinstance(payload, dict):
+            return
+
+        new_sheet_name = payload.get("sheet_name")
+        if new_sheet_name:
+            self.sheet_name = new_sheet_name
+            if self.agent:
+                self.agent.sheet_name = new_sheet_name
+            sheet_label = new_sheet_name or "\u672a\u9078\u629e"
+            self._emit_response(ResponseMessage(ResponseType.INFO, f"操作対象のシートを「{sheet_label}」に変更しました。"))
+
+        mode_value = payload.get("mode")
+        if mode_value is not None:
+            try:
+                new_mode = CopilotMode(mode_value)
+            except ValueError:
+                self._emit_response(ResponseMessage(ResponseType.ERROR, f"?????????[?h????????????: {mode_value}"))
+            else:
+                if new_mode != self.mode:
+                    self.mode = new_mode
+                    self._build_agent()
+                    mode_label = "\u7ffb\u8a33" if new_mode is CopilotMode.TRANSLATION else "\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af"
+                    self._emit_response(ResponseMessage(ResponseType.INFO, f"モードを{mode_label}に切り替えました。"))
 
     def _execute_task(self, user_input: str):
         self.stop_event.clear()
@@ -208,7 +234,6 @@ class CopilotWorker:
         if self.browser_manager:
             self.browser_manager.close()
         print("ワーカーをクリーンアップしました")
-
 
 class ChatMessage(ft.ResponsiveRow):
     def __init__(self, msg_type: Union[ResponseType, str], msg_content: str):
@@ -324,7 +349,6 @@ class ChatMessage(ft.ResponsiveRow):
         self.offset = ft.Offset(0, 0)
         self.update()
 
-
 class CopilotApp:
     def __init__(self, page: ft.Page):
         self.page = page
@@ -340,6 +364,9 @@ class CopilotApp:
         self.current_workbook_name: Optional[str] = None
         self.current_sheet_name: Optional[str] = None
         self.sheet_selection_updating = False
+
+        self.mode = CopilotMode.TRANSLATION
+        self.mode_selector: Optional[ft.RadioGroup] = None
 
         self.title_label: Optional[ft.Text] = None
         self.status_label: Optional[ft.Text] = None
@@ -371,6 +398,8 @@ class CopilotApp:
 
         self.queue_thread = threading.Thread(target=self._process_response_queue_loop, daemon=True)
         self.queue_thread.start()
+
+        self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
 
     def _configure_page(self):
         self.page.title = "Excel Co-pilot"
@@ -455,12 +484,30 @@ class CopilotApp:
 
         self.chat_list = ft.ListView(expand=True, spacing=15, auto_scroll=True, padding=20)
         self.user_input = ft.TextField(
-            hint_text="A1セルに「こんにちは」と入力して...",
+            hint_text="",
             expand=True,
             on_submit=self._run_copilot,
             border_color="#4A4458",
             focused_border_color="#B39DDB",
             border_radius=10,
+        )
+        self._apply_mode_to_input_placeholder()
+
+        self.mode_selector = ft.RadioGroup(
+            value=self.mode.value,
+            on_change=self._on_mode_change,
+            content=ft.Row(
+                controls=[
+                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="翻訳"),
+                    ft.Radio(value=CopilotMode.REVIEW.value, label="翻訳チェック"),
+                ],
+                alignment=ft.MainAxisAlignment.START,
+                spacing=16,
+            ),
+        )
+        mode_selector_container = ft.Container(
+            content=self.mode_selector,
+            padding=ft.Padding(left=8, top=4, right=8, bottom=8),
         )
 
         action_button_content = self._make_send_button()
@@ -478,6 +525,7 @@ class CopilotApp:
         main_content = ft.Column(
             [
                 self.chat_list,
+                mode_selector_container,
                 input_row,
             ],
             expand=True,
@@ -512,6 +560,32 @@ class CopilotApp:
             e.control.scale = 1
         e.control.update()
 
+    def _apply_mode_to_input_placeholder(self):
+        if not self.user_input:
+            return
+        if self.mode is CopilotMode.TRANSLATION:
+            self.user_input.hint_text = "翻訳の指示を書き込んでください（例: B列を翻訳してC:E列に出力して）"
+        else:
+            self.user_input.hint_text = "翻訳チェックの指示を書き込んでください（例: B列とC列の訳を比較してD:G列にまとめて）"
+
+    def _on_mode_change(self, e: Optional[ft.ControlEvent]):
+        control = getattr(e, "control", None) if e else None
+        selected_value = getattr(control, "value", None)
+        if not selected_value:
+            return
+        try:
+            new_mode = CopilotMode(selected_value)
+        except ValueError:
+            return
+        if new_mode == self.mode:
+            return
+        self.mode = new_mode
+        self._apply_mode_to_input_placeholder()
+        if self.mode_selector:
+            self.mode_selector.value = self.mode.value
+        self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
+        self._update_ui()
+
     def _set_state(self, new_state: AppState):
         if self.app_state == new_state:
             return
@@ -525,6 +599,8 @@ class CopilotApp:
 
         if self.user_input:
             self.user_input.disabled = not can_interact
+        if self.mode_selector:
+            self.mode_selector.disabled = not can_interact
         if self.refresh_button:
             self.refresh_button.disabled = new_state is AppState.INITIALIZING
 
@@ -922,12 +998,10 @@ class CopilotApp:
         self.window_closed_event.set()
         self._force_exit(reason="page-disconnect")
 
-
 def main(page: ft.Page):
     app = CopilotApp(page)
     page.copilot_app = app
     app.mount()
-
 
 if __name__ == "__main__":
     ft.app(target=main)

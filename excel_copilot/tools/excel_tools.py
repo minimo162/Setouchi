@@ -696,30 +696,22 @@ def translate_range_contents(
         prompt_parts: List[str]
         if use_references:
             prompt_parts = [
-                f"Translate each Japanese text in the following JSON array into {target_language}.\n",
-                "Use the provided reference passages and URLs to keep terminology consistent, but do not emit citations or quote lists.\n",
-                "Give preference to sentences that convey financial metrics, operational milestones, or strategic commitments related to the Japanese text.\n",
-                "Keep every translation strictly faithful to the Japanese source; do not add, infer, or omit facts beyond what is stated.\n",
-                "Follow this three-step workflow for each item:\n1. From the Japanese text, create concise English search key phrases that capture the core meaning.\n2. Use those key phrases to locate the most relevant English sentences or fragments within the provided references and URLs.\n3. When writing the translation, reuse the strongest wording from step 2 only when it supports the same fact while keeping the sentence smooth and idiomatic.\n",
-                "Do not include bracketed reference markers (for example, [R1] or [U2]) in the translated sentences.\n",
-                "Keep the input order unchanged.\n",
+                f"Translate each Japanese entry below into {target_language}; keep the order and stay faithful to the source.\n",
+                "Use the references/URLs only to keep terminology consistent and never emit citation markers.\n",
+                "Workflow: make English search keywords, scan the references, and reuse wording only when it supports the same fact.\n",
             ]
             if reference_entries:
                 prompt_parts.append(f"Reference passages:\n{json.dumps(reference_entries, ensure_ascii=False)}\n")
             if reference_url_entries:
                 prompt_parts.append(f"Reference URLs:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n")
             prompt_parts.append(
-                "Return only a JSON array. Each element must contain:\n"
-                "- \"translated_text\": the translated sentence (without any bracketed IDs).\n"
-                "- \"evidence\": object that must include an \"explanation_jp\" string written in Japanese. Provide 2-6 sentences that justify key terminology choices, tone, and alignment with the supporting materials.\n"
-                "Do not include quote arrays, extra keys, or markdown fences.\n"
+                "Return a JSON array of objects with 'translated_text' and 'evidence.explanation_jp' (2-6 Japanese sentences explaining key terminology and tone). No other keys or markdown.\n"
             )
             prompt_preamble = "".join(prompt_parts)
         else:
             prompt_preamble = (
-                f"Translate each Japanese text in the following JSON list into {target_language} and return a JSON list of the same length.\n"
-                "Maintain the order of the inputs.\n"
-                "Return JSON only, without explanations or code fences.\n"
+                f"Translate each Japanese entry below into {target_language} while preserving order and meaning.\n"
+                "Return a JSON array of the same length, with no commentary or markdown.\n"
             )
         batch_size = rows_per_batch if rows_per_batch is not None else 1
         if batch_size < 1:
@@ -788,11 +780,9 @@ def translate_range_contents(
             texts_json = json.dumps(chunk_texts, ensure_ascii=False)
 
             keyword_prompt = (
-                "For each Japanese text in the following JSON array, generate 5-8 varied English search phrases. Blend literal translations with broader contextual, thematic, or industry phrases, and include noun, verb, adjective, and adverb options where appropriate so you can locate reference sentences even when the source material covers adjacent topics.\n"
-                "Cover entity names, key actions, and any numerical or temporal markers present in the Japanese sentence.\n"
-                "Do not invent concepts or terminology that are absent from the Japanese text.\n"
-                "Return a JSON array of the same length. Each element must be an object with the key \"keywords\" (array of short phrases).\n"
-                "Do not include explanations or code fences.\n"
+                "For each Japanese item in the JSON array below, supply 5-8 concise English search phrases.\n"
+                "Include key entities, actions, numbers, and dates, and avoid inventing unsupported ideas.\n"
+                "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
                 f"{texts_json}"
             )
             keyword_response = browser_manager.ask(keyword_prompt)
@@ -875,37 +865,27 @@ def translate_range_contents(
 
             if use_references:
                 evidence_prompt_sections: List[str] = [
-                    "Use the search keywords below to gather every relevant English sentence in the provided materials, even when the surrounding topic differs, whenever the wording can guide the translation.",
-                    "Collect as many distinct candidate quotes as are useful (aim for four to seven) and prioritise variety across sections, tone, and wording.",
-                    "Capture each sentence exactly as it appears, preserving punctuation, casing, numerals, and spacing.",
-                    "If no quotation directly supports the Japanese meaning, include an empty array for that item.",
+                    "Use the keywords to pull English sentences from the provided materials that support each Japanese item.",
+                    "Copy sentences verbatim (punctuation, casing, numerals) and aim for 3-6 varied quotes; use an empty array if nothing fits.",
+                    "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
                     "",
-                    "Japanese texts and search keywords:",
+                    "Japanese texts with search keywords:",
                     keyword_plan_text,
                     "",
                 ]
                 if reference_passage_text:
                     evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
                 if reference_urls_text:
-                    evidence_prompt_sections.extend([
-                        "Reference URLs (open as needed before responding):",
-                        reference_urls_text,
-                        "",
-                    ])
-                evidence_prompt_sections.extend([
-                    "Return a JSON array matching the input order. Each element must contain a 'quotes' array of distinct English sentences copied verbatim from the provided materials.\n",
-                    "Preserve punctuation, casing, numerals, and spacing exactly as they appear, ordering sentences from most to least useful.\n",
-                    "Include an empty array when no suitable sentence exists.\n",
-                    "Require an 'explanation_jp' string in the same object. Write it in Japanese with at least two sentences explaining how the chosen quotes support terminology, tone, and numerical accuracy.\n",
-                ])
+                    evidence_prompt_sections.extend(["Reference URLs:", reference_urls_text, ""])
             else:
                 evidence_prompt_sections = [
-                    "Use the search keywords below to craft several concise English candidate sentences per item that could serve as reusable reference expressions, even if they broaden the topic beyond the original text.\n",
-                    "Provide three to six varied sentences per item when possible, mixing direct renderings with broader contextual phrasing.\n",
-                    "Return a JSON array matching the input order. Each element must contain a 'quotes' array of English sentences you propose, ordered by usefulness.\n",
-                    "Use empty arrays when no suitable expression exists.\n",
+                    "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
+                    "Return a JSON array matching the order. Each element must include a 'quotes' array and an 'explanation_jp' string (>=2 Japanese sentences).",
+                    "",
+                    "Japanese texts with search keywords:",
+                    keyword_plan_text,
+                    "",
                 ]
-
             evidence_prompt = "\n".join(evidence_prompt_sections)
             evidence_response = browser_manager.ask(evidence_prompt)
             try:
@@ -954,12 +934,9 @@ def translate_range_contents(
 
             final_prompt = (
                 f"{prompt_preamble}{texts_json}"
-                "Blend the supporting expressions for each item into natural English prose, drawing on the supporting expressions when it fits fluently.\n"
-                "Ensure the translation remains faithful to the Japanese source; do not introduce information that is absent or uncertain.\n"
-                "Use wording consistent with the references and avoid introducing unsupported statements.\n"
-                "Return only a JSON array. Each element must include a 'translated_text' string written in natural English.\n"
-                "Each element must also include an 'evidence' object with an 'explanation_jp' string written in Japanese. Explain in at least two sentences how the translation reflects the source meaning, terminology, and tone.\n"
-                "Do not include quote arrays, additional keys, or markdown fences.\n"
+                "Write natural English translations that stay faithful to each Japanese sentence.\n"
+                "Use the supporting expressions only when they fit; do not add or omit facts.\n"
+                "Return a JSON array where every element has 'translated_text' and 'evidence.explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
                 f"Supporting expressions (JSON): {translation_context_json}\n"
             )
             response = browser_manager.ask(final_prompt)
