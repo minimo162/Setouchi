@@ -871,7 +871,7 @@ def translate_range_contents(
                         "",
                     ])
                 evidence_prompt_sections.extend([
-                    "Return a JSON array matching the input order. Each element must be an object with the key \"quotes\" containing the full set of exact English sentences you gathered from the references or URLs (no omissions).",
+                    "Return a JSON array matching the input order. Each element must include a 'translated_text' string summarising each Japanese sentence in natural English.",
                     "Only include sentences that appear verbatim in those sources and keep every unique sentence without duplication.",
                 ])
             else:
@@ -882,7 +882,7 @@ def translate_range_contents(
                     "Japanese texts and search keywords:",
                     keyword_plan_text,
                     "",
-                    "Return a JSON array matching the input order. Each element must be an object with the key \"quotes\" containing the complete array of English sentences you propose (include them all, ordered by usefulness).",
+                    "Return a JSON array matching the input order. Each element must include a 'translated_text' string written in natural English.",
                     "Include an empty string if no suitable expression exists or if every English sentence would add information beyond the Japanese text.",
                 ]
 
@@ -919,16 +919,16 @@ def translate_range_contents(
                 normalized_quotes_per_item.append(quotes_list)
 
             translation_context = [
-                {"source_text": text, "keywords": keywords, "quotes": quotes}
-                for text, keywords, quotes in zip(chunk_texts, expanded_keywords, normalized_quotes_per_item)
+                {"source_text": text, "keywords": keywords}
+                for text, keywords in zip(chunk_texts, expanded_keywords)
             ]
             translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
             final_prompt = (
                 f"{prompt_preamble}{texts_json}"
-                "Blend the supporting expressions for each item into natural English prose, reusing key wording from the quotes where it fits fluently.\n"
+                "Blend the supporting expressions for each item into natural English prose, drawing on the supporting expressions when it fits fluently.\n"
                 "Ensure the translation remains faithful to the Japanese source; do not introduce information that is absent or uncertain.\n"
-                "Use quoted wording only when it expresses the same fact, and ensure the evidence output quotes exactly match the source sentences you relied on.\n"
+                "Use wording consistent with the references and avoid introducing unsupported statements.\n"
                 f"Supporting expressions (JSON): {translation_context_json}\n"
             )
             response = browser_manager.ask(final_prompt)
@@ -972,53 +972,14 @@ def translate_range_contents(
                 any_translation = True
 
                 if use_references:
-                    evidence_value = item.get("evidence")
                     explanation_jp = ""
-                    quotes: List[str] = []
-                    if isinstance(evidence_value, dict):
-                        raw_quotes = evidence_value.get("quotes")
-                        if isinstance(raw_quotes, list):
-                            quotes = [
-                                _sanitize_evidence_value(str(q))
-                                for q in raw_quotes
-                                if isinstance(q, (str, int, float)) and str(q).strip()
-                            ]
-                        raw_explanation = (
-                            evidence_value.get("explanation_jp")
-                            or evidence_value.get("explanation")
-                        )
-                        if isinstance(raw_explanation, (str, int, float)):
-                            explanation_jp = _sanitize_evidence_value(str(raw_explanation))
-                    elif isinstance(evidence_value, list):
-                        quotes = [
-                            _sanitize_evidence_value(str(q))
-                            for q in evidence_value
-                            if isinstance(q, (str, int, float)) and str(q).strip()
-                        ]
-                    elif isinstance(evidence_value, (str, int, float)):
-                        explanation_jp = _sanitize_evidence_value(str(evidence_value))
-
-                    candidate_quotes: List[str] = []
-                    seen_candidates: Set[str] = set()
-                    def _append_candidates(items):
-                        if not items:
-                            return
-                        for candidate in items:
-                            if not isinstance(candidate, str):
-                                continue
-                            cleaned = candidate.strip()
-                            if not cleaned or cleaned in seen_candidates:
-                                continue
-                            seen_candidates.add(cleaned)
-                            candidate_quotes.append(candidate)
-                    _append_candidates(quotes)
-                    if item_index < len(normalized_quotes_per_item):
-                        _append_candidates(normalized_quotes_per_item[item_index])
-                    final_quotes: List[str] = []
-                    if candidate_quotes:
-                        final_quotes = [q for q in candidate_quotes if q.strip()]
-                    elif item_index < len(normalized_quotes_per_item):
-                        final_quotes = [q for q in normalized_quotes_per_item[item_index] if q.strip()]
+                    if use_references and isinstance(item, dict):
+                        evidence_value = item.get("evidence")
+                        if isinstance(evidence_value, dict):
+                            raw_explanation = evidence_value.get("explanation_jp") or evidence_value.get("explanation")
+                            if isinstance(raw_explanation, (str, int, float)):
+                                explanation_jp = _sanitize_evidence_value(str(raw_explanation))
+                    final_quotes: List[str] = [q for q in normalized_quotes_per_item[item_index] if q.strip()] if item_index < len(normalized_quotes_per_item) else []
                     evidence_lines: List[str] = []
                     explanation_text = None
                     if explanation_jp:
