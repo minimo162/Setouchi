@@ -134,6 +134,27 @@ class CopilotWorker:
             mode=self.mode,
         )
 
+    def _format_user_prompt(self, user_input: str) -> str:
+        trimmed_input = (user_input or "").strip()
+        if self.mode is CopilotMode.TRANSLATION:
+            prefix_lines = [
+                "[Translation Mode Request]",
+                "- Solve this by calling `translate_range_contents` with explicit ranges (source, output, citations as needed).",
+                "- Keep translation, quote, and explanation columns aligned with the specified output range.",
+                "- Do not request workbook uploads; Excel is already connected.",
+            ]
+        else:
+            prefix_lines = [
+                "[Translation Review Mode Request]",
+                "- Use `check_translation_quality` with all required ranges for status, issues, and corrections.",
+                "- Keep outputs aligned with the ranges specified in the instructions.",
+                "- Do not request workbook uploads; Excel is already connected.",
+            ]
+        prefix = "\n".join(prefix_lines)
+        if not trimmed_input:
+            return prefix
+        return f"{prefix}\n\nUser instruction:\n{trimmed_input}"
+
     def _load_tools(self, mode: Optional[CopilotMode] = None):
         target_mode = mode or self.mode
         allowed_by_mode: Dict[CopilotMode, List[str]] = {
@@ -245,7 +266,8 @@ class CopilotWorker:
             return
 
         try:
-            for message_dict in self.agent.run(user_input, self.stop_event):
+            formatted_input = self._format_user_prompt(user_input)
+            for message_dict in self.agent.run(formatted_input, self.stop_event):
                 self._emit_response(message_dict)
         except ExcelConnectionError as e:
             self._emit_response(ResponseMessage(ResponseType.ERROR, str(e)))
