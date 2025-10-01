@@ -30,6 +30,93 @@ def _shorten_debug(value: str, limit: int = 120) -> str:
     text = str(value).replace('\r', '\r').replace('\n', '\n')
     return text if len(text) <= limit else text[:limit] + '窶ｦ'
 
+def _generate_keyword_variants(base: str) -> List[str]:
+    """Produce diverse keyword variants to widen reference searches."""
+    variants: List[str] = []
+    seen: Set[str] = set()
+
+    def _add(candidate: str) -> None:
+        cleaned = (candidate or '').strip()
+        if not cleaned:
+            return
+        lowered = cleaned.lower()
+        if lowered in seen:
+            return
+        seen.add(lowered)
+        variants.append(cleaned)
+
+    candidate_base = (base or '').replace('\u3000', ' ').strip()
+    if not candidate_base:
+        return []
+
+    dash_normalised = (
+        candidate_base
+        .replace('\u2010', '-')
+        .replace('\u2011', '-')
+        .replace('\u2012', '-')
+        .replace('\u2013', '-')
+        .replace('\u2014', '-')
+        .replace('\u2212', '-')
+    )
+    _add(candidate_base)
+    _add(dash_normalised)
+    _add(dash_normalised.lower())
+    _add(dash_normalised.upper())
+
+    space_normalised = ' '.join(dash_normalised.split())
+    _add(space_normalised)
+    _add(space_normalised.replace(' ', '-'))
+    _add(dash_normalised.replace('-', ' '))
+
+    separators = r'[\\s/\\&+・×-]'
+    raw_tokens = [tok for tok in re.split(separators, space_normalised) if tok]
+
+    def _add_word_forms(token: str) -> None:
+        if not token:
+            return
+        _add(token)
+        lower_tok = token.lower()
+        _add(lower_tok)
+        title_tok = token.title()
+        if title_tok != token:
+            _add(title_tok)
+        if lower_tok.endswith('ies') and len(lower_tok) > 3:
+            _add(lower_tok[:-3] + 'y')
+        if lower_tok.endswith('ing') and len(lower_tok) > 4:
+            stem = lower_tok[:-3]
+            _add(stem)
+            if not stem.endswith('e'):
+                _add(stem + 'e')
+        if lower_tok.endswith('ed') and len(lower_tok) > 3:
+            stem = lower_tok[:-2]
+            _add(stem)
+            if not stem.endswith('e'):
+                _add(stem + 'e')
+        if lower_tok.endswith('s') and len(lower_tok) > 3:
+            _add(lower_tok[:-1])
+        if lower_tok.endswith('es') and len(lower_tok) > 4:
+            _add(lower_tok[:-2])
+
+    for token in raw_tokens:
+        _add_word_forms(token)
+
+    if len(raw_tokens) >= 2:
+        for i in range(len(raw_tokens) - 1):
+            pair = f"{raw_tokens[i]} {raw_tokens[i + 1]}"
+            _add(pair)
+            _add(pair.replace(' ', '-'))
+    if len(raw_tokens) >= 3:
+        trio = ' '.join(raw_tokens[:3])
+        _add(trio)
+        _add(trio.replace(' ', '-'))
+
+    punctuation_sanitised = re.sub(r'[,:;]', ' ', space_normalised)
+    if punctuation_sanitised != space_normalised:
+        _add(' '.join(punctuation_sanitised.split()))
+
+    return variants
+
+
 
 
 _MIN_QUOTE_TOKEN_COVERAGE = 0.5
@@ -567,108 +654,17 @@ def translate_range_contents(
                 cleaned = cleaned.split(":", 1)[1].strip()
             return cleaned
 
-        def _expand_keyword_variants(keywords: List[str]) -> List[str]:
-            seen: Set[str] = set()
-            expanded: List[str] = []
-
-            def _add_candidate(candidate: str) -> None:
-                value = candidate.strip()
-                if not value:
-                    return
-                lowered = value.lower()
-                if lowered in seen:
-                    return
-                seen.add(lowered)
-                expanded.append(value)
-
-            dash_variants = ['-'] + [chr(code) for code in (0x2010, 0x2011, 0x2012, 0x2013, 0x2014)]
-            fullwidth_space = chr(0x3000)
-
+        def _expand_keyword_variants(keywords: List[str], max_variants: int) -> List[str]:
+            variants: List[str] = []
             for keyword in keywords:
-                base = keyword.strip()
-                if not base:
-                    continue
-                _add_candidate(base)
+                for variant in _generate_keyword_variants(keyword):
+                    if variant not in variants:
+                        variants.append(variant)
+                    if len(variants) >= max_variants:
+                        return variants
+            return variants
 
-                normalized = base.replace(fullwidth_space, ' ').strip()
-                for alt_dash in dash_variants[1:]:
-                    normalized = normalized.replace(alt_dash, '-')
 
-                if '-' in normalized:
-                    _add_candidate(normalized.replace('-', ' '))
-                if ' ' in normalized:
-                    _add_candidate(normalized.replace(' ', '-'))
-                    words = [word for word in normalized.split() if word]
-                    for word in words:
-                        _add_candidate(word)
-                    if len(words) >= 2:
-                        acronym = ''.join(word[0] for word in words if word and word[0].isalpha()).upper()
-                        if len(acronym) >= 2:
-                            _add_candidate(acronym)
-
-                if '(' in normalized and ')' in normalized:
-                    start_paren = normalized.find('(') + 1
-                    end_paren = normalized.find(')', start_paren)
-                    if end_paren > start_paren:
-                        _add_candidate(normalized[start_paren:end_paren])
-
-                punctuation_stripped = normalized.strip(',:;')
-                if punctuation_stripped != normalized:
-                    _add_candidate(punctuation_stripped)
-
-            max_variants = 6
-            return expanded[:max_variants]
-
-        def _expand_keyword_variants(keywords: List[str]) -> List[str]:
-            seen: Set[str] = set()
-            expanded: List[str] = []
-
-            def _add_candidate(candidate: str) -> None:
-                value = candidate.strip()
-                if not value:
-                    return
-                lowered = value.lower()
-                if lowered in seen:
-                    return
-                seen.add(lowered)
-                expanded.append(value)
-
-            dash_variants = ['-'] + [chr(code) for code in (0x2010, 0x2011, 0x2012, 0x2013, 0x2014)]
-
-            for keyword in keywords:
-                base = keyword.strip()
-                if not base:
-                    continue
-                _add_candidate(base)
-
-                normalized = base.replace('縲', ' ').strip()
-                for alt_dash in dash_variants[1:]:
-                    normalized = normalized.replace(alt_dash, '-')
-
-                if '-' in normalized:
-                    _add_candidate(normalized.replace('-', ' '))
-                if ' ' in normalized:
-                    _add_candidate(normalized.replace(' ', '-'))
-                    words = [word for word in normalized.split() if word]
-                    for word in words:
-                        _add_candidate(word)
-                    if len(words) >= 2:
-                        acronym = ''.join(word[0] for word in words if word and word[0].isalpha()).upper()
-                        if len(acronym) >= 2:
-                            _add_candidate(acronym)
-
-                if '(' in normalized and ')' in normalized:
-                    start_paren = normalized.find('(') + 1
-                    end_paren = normalized.find(')', start_paren)
-                    if end_paren > start_paren:
-                        _add_candidate(normalized[start_paren:end_paren])
-
-                punctuation_stripped = normalized.strip(',:;')
-                if punctuation_stripped != normalized:
-                    _add_candidate(punctuation_stripped)
-
-            max_variants = 8
-            return expanded[:max_variants]
 
 
 
@@ -759,7 +755,7 @@ def translate_range_contents(
             texts_json = json.dumps(chunk_texts, ensure_ascii=False)
 
             keyword_prompt = (
-                "For each Japanese text in the following JSON array, generate 4-6 varied English search phrases. Blend literal translations with broader contextual, thematic, or industry phrases so you can locate reference sentences even when the source material covers adjacent topics.\n"
+                "For each Japanese text in the following JSON array, generate 5-8 varied English search phrases. Blend literal translations with broader contextual, thematic, or industry phrases, and include noun, verb, adjective, and adverb options where appropriate so you can locate reference sentences even when the source material covers adjacent topics.\n"
                 "Cover entity names, key actions, and any numerical or temporal markers present in the Japanese sentence.\n"
                 "Do not invent concepts or terminology that are absent from the Japanese text.\n"
                 "Return a JSON array of the same length. Each element must be an object with the key \"keywords\" (array of short phrases).\n"
@@ -805,12 +801,12 @@ def translate_range_contents(
                 normalized_keywords.append(keyword_list)
 
             expanded_keywords: List[List[str]] = []
+            max_keyword_variants = 12 if use_references else 8
             for base_keywords in normalized_keywords:
-                expanded_keywords.append(_expand_keyword_variants(base_keywords))
-
-            expanded_keywords = []
-            for base_keywords in normalized_keywords:
-                expanded_keywords.append(_expand_keyword_variants(base_keywords))
+                expanded = _expand_keyword_variants(base_keywords, max_keyword_variants)
+                if not expanded:
+                    expanded = base_keywords[:max_keyword_variants]
+                expanded_keywords.append(expanded)
 
             keyword_plan_lines: List[str] = []
             for index, (source_text, keywords) in enumerate(zip(chunk_texts, expanded_keywords), start=1):
@@ -849,7 +845,7 @@ def translate_range_contents(
                     "Use the search keywords below to gather every relevant English sentence in the provided materials, even when the surrounding topic differs, whenever the wording can guide the translation.",
                     "Collect as many distinct candidate quotes as are useful (aim for four to seven) and prioritise variety across sections, tone, and wording.",
                     "Capture each sentence exactly as it appears, preserving punctuation, casing, numerals, and spacing.",
-                    "If no quotation directly supports the Japanese meaning, include an empty string for that item.",
+                    "If no quotation directly supports the Japanese meaning, include an empty array for that item.",
                     "",
                     "Japanese texts and search keywords:",
                     keyword_plan_text,
@@ -864,19 +860,17 @@ def translate_range_contents(
                         "",
                     ])
                 evidence_prompt_sections.extend([
-                    "Return a JSON array matching the input order. Each element must include a 'translated_text' string summarising each Japanese sentence in natural English.",
-                    "Only include sentences that appear verbatim in those sources and keep every unique sentence without duplication.",
+                    "Return a JSON array matching the input order. Each element must contain a 'quotes' array of distinct English sentences copied verbatim from the provided materials.\n",
+                    "Preserve punctuation, casing, numerals, and spacing exactly as they appear, ordering sentences from most to least useful.\n",
+                    "Include an empty array when no suitable sentence exists.\n",
+                    "Optionally include an 'explanation_jp' string in the same object when a concise Japanese rationale is helpful.\n",
                 ])
             else:
                 evidence_prompt_sections = [
-                    "Use the search keywords below to craft several concise English candidate sentences per item that could serve as reusable reference expressions, even if they broaden the topic beyond the original text.",
-                    "Provide three to six varied sentences per item when possible, mixing direct renderings with broader contextual phrasing.",
-                    "",
-                    "Japanese texts and search keywords:",
-                    keyword_plan_text,
-                    "",
-                    "Return a JSON array matching the input order. Each element must include a 'translated_text' string written in natural English.",
-                    "Include an empty string if no suitable expression exists or if every English sentence would add information beyond the Japanese text.",
+                    "Use the search keywords below to craft several concise English candidate sentences per item that could serve as reusable reference expressions, even if they broaden the topic beyond the original text.\n",
+                    "Provide three to six varied sentences per item when possible, mixing direct renderings with broader contextual phrasing.\n",
+                    "Return a JSON array matching the input order. Each element must contain a 'quotes' array of English sentences you propose, ordered by usefulness.\n",
+                    "Use empty arrays when no suitable expression exists.\n",
                 ]
 
             evidence_prompt = "\n".join(evidence_prompt_sections)
@@ -898,6 +892,10 @@ def translate_range_contents(
             for quotes_entry in evidence_items:
                 if isinstance(quotes_entry, dict):
                     raw_quotes = quotes_entry.get("quotes")
+                    if raw_quotes is None:
+                        translated_candidate = quotes_entry.get("translated_text")
+                        if isinstance(translated_candidate, str) and translated_candidate.strip():
+                            raw_quotes = [translated_candidate]
                 elif isinstance(quotes_entry, list):
                     raw_quotes = quotes_entry
                 else:
@@ -912,8 +910,12 @@ def translate_range_contents(
                 normalized_quotes_per_item.append(quotes_list)
 
             translation_context = [
-                {"source_text": text, "keywords": keywords}
-                for text, keywords in zip(chunk_texts, expanded_keywords)
+                {
+                    "source_text": text,
+                    "keywords": keywords,
+                    "quotes": normalized_quotes_per_item[index] if index < len(normalized_quotes_per_item) else []
+                }
+                for index, (text, keywords) in enumerate(zip(chunk_texts, expanded_keywords))
             ]
             translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
@@ -922,6 +924,9 @@ def translate_range_contents(
                 "Blend the supporting expressions for each item into natural English prose, drawing on the supporting expressions when it fits fluently.\n"
                 "Ensure the translation remains faithful to the Japanese source; do not introduce information that is absent or uncertain.\n"
                 "Use wording consistent with the references and avoid introducing unsupported statements.\n"
+                "Return only a JSON array. Each element must include a 'translated_text' string written in natural English.\n"
+                "You may optionally include an 'evidence' object with an 'explanation_jp' string (Japanese rationale).\n"
+                "Do not include quote arrays, additional keys, or markdown fences.\n"
                 f"Supporting expressions (JSON): {translation_context_json}\n"
             )
             response = browser_manager.ask(final_prompt)
@@ -975,12 +980,16 @@ def translate_range_contents(
                 any_translation = True
 
                 final_quotes: List[str] = []
-                if use_references and item_index < len(normalized_quotes_per_item):
-                    final_quotes = [
-                        q.strip()
-                        for q in normalized_quotes_per_item[item_index]
-                        if isinstance(q, str) and q.strip()
-                    ]
+                if item_index < len(normalized_quotes_per_item):
+                    seen_quotes: Set[str] = set()
+                    for candidate in normalized_quotes_per_item[item_index]:
+                        if not isinstance(candidate, str):
+                            continue
+                        cleaned_candidate = candidate.strip()
+                        if not cleaned_candidate or cleaned_candidate in seen_quotes:
+                            continue
+                        seen_quotes.add(cleaned_candidate)
+                        final_quotes.append(cleaned_candidate)
 
                 evidence_lines: List[str] = []
                 if explanation_jp:
