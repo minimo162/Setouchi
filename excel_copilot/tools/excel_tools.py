@@ -802,6 +802,7 @@ def translate_range_contents(
                     citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
 
         messages: List[str] = []
+        explanation_fallback_notes: List[str] = []
         any_translation = False
         output_dirty = False
         source_dirty = False
@@ -1066,6 +1067,37 @@ def translate_range_contents(
                         final_quotes.append(cleaned_candidate)
 
                 explanation_text = explanation_jp.strip()
+                fallback_reason: Optional[str] = None
+                if use_references:
+                    default_explanation = "参照資料の内容を踏まえ、原文の意味と語調を保つように訳語を選定しました。"
+                    if not explanation_text:
+                        explanation_text = default_explanation
+                        fallback_reason = "explanation_jp が欠落していたため既定の説明文を補いました。"
+                    elif not JAPANESE_CHAR_PATTERN.search(explanation_text):
+                        explanation_text = default_explanation
+                        fallback_reason = "explanation_jp に日本語が含まれていなかったため既定の説明文を補いました。"
+                    elif len(explanation_text) < 20:
+                        explanation_text = (
+                            explanation_text + "。原文の語調と用語整合性を確認して訳語を決定しました。"
+                        ).strip()
+                        if len(explanation_text) < 20 or not JAPANESE_CHAR_PATTERN.search(explanation_text):
+                            explanation_text = default_explanation
+                            fallback_reason = "explanation_jp が短すぎたため既定の説明文を補いました。"
+                        else:
+                            fallback_reason = "explanation_jp が短かったため補足説明を追加しました。"
+
+                    if fallback_reason:
+                        absolute_row = source_start_row + local_row
+                        absolute_col = source_start_col + col_idx
+                        cell_ref = _build_range_reference(
+                            absolute_row,
+                            absolute_row,
+                            absolute_col,
+                            absolute_col,
+                        )
+                        if target_sheet:
+                            cell_ref = f"{target_sheet}!{cell_ref}"
+                        explanation_fallback_notes.append(f"{cell_ref}: {fallback_reason}")
 
                 if quotes_col_index is not None and explanation_col_index is not None:
                     quotes_text = "\n".join(final_quotes)
@@ -1178,6 +1210,9 @@ def translate_range_contents(
 
         if not any_translation:
             return f"No translatable text was found in range '{cell_range}'."
+
+        if explanation_fallback_notes:
+            messages.insert(0, "explanation_jp が不足していたセルに既定の説明文を補いました: " + " / ".join(explanation_fallback_notes))
 
         write_messages: List[str] = []
 

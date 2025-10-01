@@ -134,6 +134,26 @@ class CopilotWorker:
             mode=self.mode,
         )
 
+    def _load_tools(self, mode: Optional[CopilotMode] = None):
+        target_mode = mode or self.mode
+        allowed_by_mode: Dict[CopilotMode, List[str]] = {
+            CopilotMode.TRANSLATION: ["translate_range_contents"],
+            CopilotMode.REVIEW: ["check_translation_quality"],
+        }
+        allowed_tool_names = allowed_by_mode.get(target_mode, [])
+
+        selected = []
+        for name in allowed_tool_names:
+            func = getattr(excel_tools, name, None)
+            if inspect.isfunction(func):
+                selected.append(func)
+
+        if not selected:
+            raise RuntimeError(f"No tools available for mode '{target_mode.value}'.")
+
+        self.tool_functions = selected
+        self.tool_schemas = [create_tool_schema(func) for func in self.tool_functions]
+
     def _initialize(self):
         try:
             print("Workerの初期化を開始します...")
@@ -143,12 +163,7 @@ class CopilotWorker:
             print("BrowserManager の起動が完了しました。")
 
             self._emit_response(ResponseMessage(ResponseType.STATUS, "AIエージェントを準備中..."))
-            self.tool_functions = [
-                func
-                for name, func in inspect.getmembers(excel_tools, inspect.isfunction)
-                if not name.startswith('_')
-            ]
-            self.tool_schemas = [create_tool_schema(func) for func in self.tool_functions]
+            self._load_tools(self.mode)
             self._build_agent()
             print("AIエージェントの準備が完了しました。")
 
@@ -211,6 +226,14 @@ class CopilotWorker:
             else:
                 if new_mode != self.mode:
                     self.mode = new_mode
+                    try:
+                        self._load_tools(new_mode)
+                    except Exception as tool_err:
+                        self.tool_functions = []
+                        self.tool_schemas = []
+                        self.agent = None
+                        self._emit_response(ResponseMessage(ResponseType.ERROR, f"利用可能なツールが見つかりません: {tool_err}"))
+                        return
                     self._build_agent()
                     mode_label = "翻訳" if new_mode is CopilotMode.TRANSLATION else "翻訳チェック"
                     self._emit_response(ResponseMessage(ResponseType.INFO, f"モードを{mode_label}に切り替えました。"))
