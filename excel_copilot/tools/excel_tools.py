@@ -560,11 +560,6 @@ def translate_range_contents(
 
         use_references = bool(reference_entries or reference_url_entries)
         reference_text_pool = [text for text in reference_text_pool if text]
-        normalized_reference_text_pool: List[str] = []
-        for _ref_text in reference_text_pool:
-            normalized = _normalize_for_match(_ref_text)
-            if normalized:
-                normalized_reference_text_pool.append(normalized)
 
         def _sanitize_evidence_value(value: str) -> str:
             cleaned = value.strip()
@@ -679,16 +674,16 @@ def translate_range_contents(
 
 
 
+
         prompt_parts: List[str]
         if use_references:
             prompt_parts = [
                 f"Translate each Japanese text in the following JSON array into {target_language}.\n",
-                "Use the provided reference passages and URLs as evidence, weaving quoted English wording naturally into the translation.\n",
+                "Use the provided reference passages and URLs to keep terminology consistent, but do not emit citations or quote lists.\n",
                 "Give preference to sentences that convey financial metrics, operational milestones, or strategic commitments related to the Japanese text.\n",
                 "Keep every translation strictly faithful to the Japanese source; do not add, infer, or omit facts beyond what is stated.\n",
-                "Follow this three-step workflow for each item:\n1. From the Japanese text, create concise English search key phrases that capture the core meaning.\n2. Use those key phrases to locate the most relevant English sentences or fragments within the provided references and URLs.\n3. When writing the translation, reuse the strongest wording from step 2 only when it supports the same fact, keeping the sentence smooth and idiomatic.\n",
+                "Follow this three-step workflow for each item:\n1. From the Japanese text, create concise English search key phrases that capture the core meaning.\n2. Use those key phrases to locate the most relevant English sentences or fragments within the provided references and URLs.\n3. When writing the translation, reuse the strongest wording from step 2 only when it supports the same fact while keeping the sentence smooth and idiomatic.\n",
                 "Do not include bracketed reference markers (for example, [R1] or [U2]) in the translated sentences.\n",
-                "Do not provide a Japanese justification. Ensure evidence.explanation_jp is an empty string ("").\n",
                 "Keep the input order unchanged.\n",
             ]
             if reference_entries:
@@ -698,9 +693,8 @@ def translate_range_contents(
             prompt_parts.append(
                 "Return only a JSON array. Each element must contain:\n"
                 "- \"translated_text\": the translated sentence (without any bracketed IDs).\n"
-                "- \"evidence\": an object with the key \"quotes\" (array of quoted sentences copied verbatim from step 2).\n"
-                "Do not include \"explanation_jp\" or any additional commentary keys.\n"
-                "Do not add other keys, explanations, or code fences.\n"
+                "You may optionally include an \"evidence\" object with an \"explanation_jp\" string (Japanese rationale).\n"
+                "Do not include quote arrays, extra keys, or markdown fences.\n"
             )
             prompt_preamble = "".join(prompt_parts)
         else:
@@ -709,7 +703,6 @@ def translate_range_contents(
                 "Maintain the order of the inputs.\n"
                 "Return JSON only, without explanations or code fences.\n"
             )
-
         batch_size = rows_per_batch if rows_per_batch is not None else 1
         if batch_size < 1:
             raise ToolExecutionError("rows_per_batch must be at least 1.")
@@ -951,80 +944,60 @@ def translate_range_contents(
             row_evidence_lines: Dict[int, List[str]] = {}
 
             for item_index, (item, (local_row, col_idx)) in enumerate(zip(parsed_payload, chunk_positions)):
-                if use_references and not isinstance(item, dict):
-                    raise ToolExecutionError(
-                        "Expected translation response items to be objects when references are used."
-                    )
+                translation_value: Optional[str] = None
+                explanation_jp = ""
 
-                translation_value = (
-                    item.get("translated_text") or item.get("translation") or item.get("output")
-                ) if use_references else item
+                if isinstance(item, dict):
+                    translation_value = (
+                        item.get("translated_text")
+                        or item.get("translation")
+                        or item.get("output")
+                    )
+                    if use_references:
+                        evidence_value = item.get("evidence")
+                        if isinstance(evidence_value, dict):
+                            raw_explanation = evidence_value.get("explanation_jp") or evidence_value.get("explanation")
+                            if isinstance(raw_explanation, (str, int, float)):
+                                explanation_jp = _sanitize_evidence_value(str(raw_explanation))
+                elif isinstance(item, str):
+                    translation_value = item
 
                 if not isinstance(translation_value, str):
                     raise ToolExecutionError(
                         "Translation response must include a 'translated_text' string for each item."
                     )
 
+                translation_value = translation_value.strip()
                 output_matrix[local_row][col_idx] = translation_value
                 if not writing_to_source_directly and overwrite_source:
                     source_matrix[local_row][col_idx] = translation_value
 
                 any_translation = True
 
-                if use_references:
-                    explanation_jp = ""
-                    if use_references and isinstance(item, dict):
-                        evidence_value = item.get("evidence")
-                        if isinstance(evidence_value, dict):
-                            raw_explanation = evidence_value.get("explanation_jp") or evidence_value.get("explanation")
-                            if isinstance(raw_explanation, (str, int, float)):
-                                explanation_jp = _sanitize_evidence_value(str(raw_explanation))
-                    final_quotes: List[str] = [q for q in normalized_quotes_per_item[item_index] if q.strip()] if item_index < len(normalized_quotes_per_item) else []
-                    evidence_lines: List[str] = []
-                    explanation_text = None
-                    if explanation_jp:
-                        if not JAPANESE_CHAR_PATTERN.search(explanation_jp):
-                            raise ToolExecutionError("根拠の説明は日本語で記述してください。")
-                        explanation_text = explanation_jp.strip()
-                    if explanation_text:
-                        evidence_lines.append(f"説明: {explanation_text}")
-                    if final_quotes:
-                        multiple_quotes = len(final_quotes) > 1
-                        for idx_quote, quote in enumerate(final_quotes, start=1):
-                            label = f"引用{idx_quote}" if multiple_quotes else "引用"
-                            evidence_lines.append(f"{label}: {quote}")
-                    combined = "\n".join(evidence_lines).strip()
+                final_quotes: List[str] = []
+                if use_references and item_index < len(normalized_quotes_per_item):
+                    final_quotes = [
+                        q.strip()
+                        for q in normalized_quotes_per_item[item_index]
+                        if isinstance(q, str) and q.strip()
+                    ]
 
-                    if cite_cols == source_cols:
-                        chunk_cell_evidences[(local_row, col_idx)] = combined
-                    elif combined:
-                        row_evidence_lines.setdefault(local_row, []).append(combined)
+                evidence_lines: List[str] = []
+                if explanation_jp:
+                    if not JAPANESE_CHAR_PATTERN.search(explanation_jp):
+                        raise ToolExecutionError("根拠の説明は日本語で記述してください。")
+                    evidence_lines.append(f"説明: {explanation_jp.strip()}")
+                if final_quotes:
+                    multiple_quotes = len(final_quotes) > 1
+                    for idx_quote, quote in enumerate(final_quotes, start=1):
+                        label = f"引用{idx_quote}" if multiple_quotes else "引用"
+                        evidence_lines.append(f"{label}: {quote}")
+                combined = "\n".join(evidence_lines).strip()
 
-            chunk_output_data = [
-                list(output_matrix[local_row][0:source_cols])
-                for local_row in range(row_start, row_end)
-            ]
-            chunk_output_range = _build_range_reference(
-                output_start_row + row_start,
-                output_start_row + row_end - 1,
-                output_start_col,
-                output_start_col + source_cols - 1,
-            )
-            messages.append(actions.write_range(chunk_output_range, chunk_output_data, output_sheet))
-
-            if not writing_to_source_directly and overwrite_source:
-                chunk_source_data = [
-                    list(source_matrix[local_row][0:source_cols])
-                    for local_row in range(row_start, row_end)
-                ]
-                chunk_source_range = _build_range_reference(
-                    source_start_row + row_start,
-                    source_start_row + row_end - 1,
-                    source_start_col,
-                    source_start_col + source_cols - 1,
-                )
-                messages.append(actions.write_range(chunk_source_range, chunk_source_data, target_sheet))
-
+                if cite_cols == source_cols:
+                    chunk_cell_evidences[(local_row, col_idx)] = combined
+                elif combined:
+                    row_evidence_lines.setdefault(local_row, []).append(combined)
             if use_references and citation_matrix is not None:
                 if cite_cols == source_cols:
                     for local_row in range(row_start, row_end):
