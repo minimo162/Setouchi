@@ -4,9 +4,12 @@ import flet as ft
 import threading
 import queue
 import inspect
+import json
 import time
 import traceback
 import os
+from datetime import datetime
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Any, Union
 from enum import Enum, auto
@@ -341,6 +344,12 @@ class CopilotApp:
         self.user_input: Optional[ft.TextField] = None
         self.action_button: Optional[ft.Container] = None
 
+        self.chat_history: list[dict[str, str]] = []
+        self.history_lock = threading.Lock()
+        self.log_dir = Path(COPILOT_USER_DATA_DIR) / "setouchi_logs"
+        self.preference_file = Path(COPILOT_USER_DATA_DIR) / "setouchi_state.json"
+        self.preference_lock = threading.Lock()
+
         self._configure_page()
         self._build_layout()
         self._register_window_handlers()
@@ -383,6 +392,18 @@ class CopilotApp:
             on_hover=self._handle_button_hover,
         )
 
+        self.save_log_button = ft.ElevatedButton(
+            text="会話ログ保存",
+            icon=ft.Icons.SAVE_OUTLINED,
+            on_click=self._handle_save_log_click,
+            bgcolor="#2C2A3A",
+            color=ft.Colors.WHITE,
+            disabled=True,
+            animate_scale=100,
+            scale=1,
+            on_hover=self._handle_button_hover,
+        )
+
         self.sheet_selector = ft.Dropdown(
             options=[],
             width=180,
@@ -401,6 +422,7 @@ class CopilotApp:
                 ft.Divider(color="#4A4458"),
                 self.excel_info_label,
                 self.refresh_button,
+                self.save_log_button,
                 self.sheet_selector,
             ],
             width=220,
@@ -543,13 +565,121 @@ class CopilotApp:
             print(f"UIの更新に失敗しました: {e}")
 
     def _add_message(self, msg_type: Union[ResponseType, str], msg_content: str):
+        if not msg_content:
+            return
+
+        msg_type_value = msg_type.value if isinstance(msg_type, ResponseType) else str(msg_type)
+        self._append_history(msg_type_value, msg_content)
+        self._update_save_button_state()
+
         if not self.chat_list:
             return
+
         msg = ChatMessage(msg_type, msg_content)
         self.chat_list.controls.append(msg)
         self._update_ui()
         time.sleep(0.01)
         msg.appear()
+
+    def _append_history(self, msg_type: str, msg_content: str):
+        entry = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "type": msg_type,
+            "content": msg_content.replace("\r\n", "\n"),
+        }
+        with self.history_lock:
+            self.chat_history.append(entry)
+
+    def _update_save_button_state(self):
+        if not self.save_log_button:
+            return
+        with self.history_lock:
+            has_history = bool(self.chat_history)
+        self.save_log_button.disabled = not has_history
+
+    def _handle_save_log_click(self, e: Optional[ft.ControlEvent]):
+        try:
+            file_path = self._export_chat_history()
+        except ValueError as info_err:
+            self._add_message(ResponseType.INFO, str(info_err))
+            return
+        except Exception as ex:
+            print(f"Failed to export chat history: {ex}")
+            self._add_message(ResponseType.ERROR, f"会話ログの保存に失敗しました: {ex}")
+            return
+
+        self._add_message(ResponseType.INFO, f"会話ログを保存しました: {file_path}")
+
+    def _export_chat_history(self) -> Path:
+        with self.history_lock:
+            if not self.chat_history:
+                raise ValueError("保存できる会話がありません。")
+            entries = [entry.copy() for entry in self.chat_history]
+
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        export_time = datetime.now()
+        file_path = self.log_dir / f"conversation-{export_time.strftime('%Y%m%d-%H%M%S')}.md"
+
+        lines = [
+            "# Excel Co-pilot 会話ログ",
+            f"- エクスポート時刻: {export_time.isoformat(timespec='seconds')}",
+            f"- 対象ブック: {self.current_workbook_name or '不明'}",
+            f"- 対象シート: {self.current_sheet_name or '不明'}",
+            "",
+        ]
+
+        for entry in entries:
+            lines.append(f"## [{entry['timestamp']}] {entry['type']}")
+            lines.append(entry["content"])
+            lines.append("")
+
+        file_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        return file_path
+
+    def _load_last_sheet_preference(self, workbook_name: Optional[str]) -> Optional[str]:
+        if not workbook_name:
+            return None
+        with self.preference_lock:
+            if not self.preference_file.exists():
+                return None
+            try:
+                raw_text = self.preference_file.read_text(encoding="utf-8")
+                data = json.loads(raw_text) if raw_text else {}
+            except (OSError, json.JSONDecodeError) as err:
+                print(f"Failed to load sheet preference: {err}")
+                return None
+            value = data.get(workbook_name) if isinstance(data, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    def _save_last_sheet_preference(self, workbook_name: Optional[str], sheet_name: Optional[str]):
+        if not workbook_name or not sheet_name:
+            return
+        with self.preference_lock:
+            try:
+                if self.preference_file.exists():
+                    raw_text = self.preference_file.read_text(encoding="utf-8")
+                    loaded = json.loads(raw_text) if raw_text else {}
+                    if isinstance(loaded, dict):
+                        preferences = {k: v for k, v in loaded.items() if isinstance(k, str) and isinstance(v, str)}
+                    else:
+                        preferences = {}
+                else:
+                    preferences = {}
+            except (OSError, json.JSONDecodeError) as err:
+                print(f"Failed to read sheet preference: {err}")
+                preferences = {}
+
+            preferences[workbook_name] = sheet_name
+            trimmed_items = list(preferences.items())[-50:]
+            preferences = dict(trimmed_items)
+
+            try:
+                self.preference_file.parent.mkdir(parents=True, exist_ok=True)
+                self.preference_file.write_text(json.dumps(preferences, ensure_ascii=False, indent=2), encoding="utf-8")
+            except OSError as err:
+                print(f"Failed to write sheet preference: {err}")
 
     def _handle_refresh_click(self, e: Optional[ft.ControlEvent]):
         self._refresh_excel_context()
@@ -567,6 +697,16 @@ class CopilotApp:
             with ExcelManager() as manager:
                 info_dict = manager.get_active_workbook_and_sheet()
                 sheet_names = manager.list_sheet_names()
+
+                preferred_sheet = self._load_last_sheet_preference(info_dict["workbook_name"])
+                if preferred_sheet and preferred_sheet in sheet_names and preferred_sheet != info_dict["sheet_name"]:
+                    try:
+                        activated_name = manager.activate_sheet(preferred_sheet)
+                        info_dict["sheet_name"] = activated_name
+                    except Exception as activate_err:
+                        print(f"Failed to restore preferred sheet '{preferred_sheet}': {activate_err}")
+                        self._add_message(ResponseType.INFO, f"保存済みのシート '{preferred_sheet}' を開けませんでした: {activate_err}")
+
                 self.current_workbook_name = info_dict["workbook_name"]
                 self.current_sheet_name = info_dict["sheet_name"]
 
@@ -578,6 +718,9 @@ class CopilotApp:
                 self.sheet_selector.options = [ft.dropdown.Option(name) for name in sheet_names]
                 self.sheet_selector.value = info_dict["sheet_name"]
                 self.sheet_selector.disabled = False
+
+                if self.current_workbook_name and self.current_sheet_name:
+                    self._save_last_sheet_preference(self.current_workbook_name, self.current_sheet_name)
 
                 if not is_initial_start:
                     self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"sheet_name": info_dict["sheet_name"]}))
@@ -640,11 +783,13 @@ class CopilotApp:
             return
 
         self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"sheet_name": selected_sheet}))
+        self.current_sheet_name = selected_sheet
+        if self.current_workbook_name:
+            self._save_last_sheet_preference(self.current_workbook_name, selected_sheet)
         if self.excel_info_label:
             workbook = self.current_workbook_name or "不明"
             self.excel_info_label.value = f"ブック: {workbook}\nシート: {selected_sheet}"
         self._add_message(ResponseType.INFO, f"操作対象のシートを「{selected_sheet}」に設定しました。")
-        self.current_sheet_name = selected_sheet
         self._update_ui()
 
     def _process_response_queue_loop(self):
