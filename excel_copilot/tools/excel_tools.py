@@ -734,6 +734,8 @@ def translate_range_contents(
 
         messages: List[str] = []
         any_translation = False
+        output_dirty = False
+        source_dirty = False
 
         for row_start in range(0, source_rows, batch_size):
             row_end = min(row_start + batch_size, source_rows)
@@ -973,9 +975,15 @@ def translate_range_contents(
                     )
 
                 translation_value = translation_value.strip()
-                output_matrix[local_row][col_idx] = translation_value
+                existing_output_value = output_matrix[local_row][col_idx]
+                if translation_value != existing_output_value:
+                    output_matrix[local_row][col_idx] = translation_value
+                    output_dirty = True
                 if not writing_to_source_directly and overwrite_source:
-                    source_matrix[local_row][col_idx] = translation_value
+                    existing_source_value = source_matrix[local_row][col_idx]
+                    if translation_value != existing_source_value:
+                        source_matrix[local_row][col_idx] = translation_value
+                        source_dirty = True
 
                 any_translation = True
 
@@ -1045,6 +1053,21 @@ def translate_range_contents(
 
         if not any_translation:
             return f"No translatable text was found in range '{cell_range}'."
+
+        write_messages: List[str] = []
+
+        if output_dirty:
+            translation_message = actions.write_range(output_range, output_matrix, output_sheet)
+            write_messages.append(translation_message)
+
+        if overwrite_source and not writing_to_source_directly and source_dirty:
+            overwrite_message = actions.write_range(normalized_range, source_matrix, target_sheet)
+            write_messages.append(overwrite_message)
+
+        if not write_messages:
+            write_messages.append("翻訳結果は既存のセル内容と一致していたため、ブックへの書き込みは不要でした。")
+
+        messages = write_messages + messages
 
         return "\n".join(messages)
 
