@@ -134,25 +134,25 @@ CELL_REFERENCE_PATTERN = re.compile(r"([A-Za-z]+)(\d+)")
 LEGACY_DIFF_MARKER_PATTERN = re.compile(r"【(追加|削除)：(.*?)】")
 MODERN_DIFF_MARKER_PATTERN = re.compile(r"\?(?:追加|削除)\?\s*(.*?)\?")
 _BASE_DIFF_TOKEN_PATTERN = re.compile(r"\s+|[^\s]+")
-_SENTENCE_BOUNDARY_CHARS = set("!.?。！？")
-_CLOSING_PUNCTUATION = ")]}、。！？」』】》）］'\"”’"
+_SENTENCE_BOUNDARY_CHARS = set("!.?。？！")
+_CLOSING_PUNCTUATION = ")]},。、？！「」『』'\"》】〕〉"
 _MAX_DIFF_SEGMENT_TOKENS = 18
 _MAX_DIFF_SEGMENT_CHARS = 80
 
 REFUSAL_PATTERNS = (
-    "逕ｳ縺苓ｨｳ縺斐＊縺・EE縺帙ｓ縲ゅ％繧後↓縺､縺・EE繝√Ε繝・EE縺ｧ縺阪∪縺帙ｓ縲・",
-    "逕ｳ縺苓ｨｳ縺斐＊縺・EE縺帙ｓ縲ゅ％繧後↓縺､縺・EE繝√Ε繝・EE縺ｧ縺阪∪縺帙ｓ",
-    "逕ｳ縺苓ｨｳ縺斐＊縺・EE縺帙ｓ縲ゅメ繝｣繝・EE繧剃ｿ晏ｭ倥＠縺ｦ譁ｰ縺励＞繝√Ε繝・EE繧帝幕蟋九☆繧九↓縺ｯ縲ー譁ｰ縺励＞繝√Ε繝・EE] 繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・",
-    "繝√Ε繝・EE繧剃ｿ晏ｭ倥＠縺ｦ譁ｰ縺励＞繝√Ε繝・EE繧帝幕蟋九☆繧九↓縺ｯ縲ー譁ｰ縺励＞繝√Ε繝・EE] 繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・",
-    "縺顔ｭ斐∴縺ｧ縺阪∪縺帙ｓ縲・",
-    "縺顔ｭ斐∴縺ｧ縺阪∪縺帙ｓ",
+    "申し訳ございません。これには対応できません。",
+    "申し訳ございません。これには対応できません",
+    "申し訳ございません。チャットを保存して新しいチャットを開始するには、[新しいチャット] を選択してください。",
+    "チャットを保存して新しいチャットを開始するには、[新しいチャット] を選択してください。",
+    "お答えできません。",
+    "お答えできません",
     "I'm sorry, but I can't help with that.",
     "I cannot help with that request.",
-    "繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: 蠢懃ｭ泌ｽ｢蠑上′荳肴ｭ｣縺ｧ縺吶・Thought:' 縺ｾ縺滂ｿｽE 'Final Answer:' 縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縲・",
-    "蠢懃ｭ泌ｽ｢蠑上′荳肴ｭ｣縺ｧ縺吶・Thought:' 縺ｾ縺滂ｿｽE 'Final Answer:' 縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縲・",
+    "エラーが発生しました: 応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。",
+    "応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。",
 )
 
-JAPANESE_CHAR_PATTERN = re.compile(r'[縺-繝ｿ荳-鯀ｿ]')
+JAPANESE_CHAR_PATTERN = re.compile(r'[ぁ-んァ-ヶ一-龯]')
 
 
 
@@ -366,54 +366,54 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
 
 def writetocell(actions: ExcelActions, cell: str, value: Any, sheetname: Optional[str] = None) -> str:
     """
-    Excel繧ｷ繝ｼ繝茨ｿｽE迚ｹ螳夲ｿｽE繧ｻ繝ｫ縺ｫ蛟､繧呈嶌縺崎ｾｼ縺ｿ縺ｾ縺吶・
+    Excelシートの特定セルに値を書き込みます。
     """
     return actions.write_to_cell(cell, value, sheetname)
 
 def readcellvalue(actions: ExcelActions, cell: str, sheetname: Optional[str] = None) -> Any:
     """
-    Excel繧ｷ繝ｼ繝茨ｿｽE迚ｹ螳夲ｿｽE繧ｻ繝ｫ縺ｮ蛟､繧定ｪｭ縺ｿ蜿悶ｊ縺ｾ縺吶・
+    Excelシートの特定セルの値を読み取ります。
     """
     return actions.read_cell_value(cell, sheetname)
 
 def getallsheetnames(actions: ExcelActions) -> str:
     """
-    迴ｾ蝨ｨ髢九＞縺ｦ縺・EEExcel繝ｯ繝ｼ繧ｯ繝悶ャ繧ｯ蜀・EE縺吶∋縺ｦ縺ｮ繧ｷ繝ｼ繝亥錐繧貞叙蠕励＠縺ｾ縺吶・
+    現在開いている Excel ワークブック内のすべてのシート名を取得します。
     """
     names = actions.get_sheet_names()
-    return f"蛻ｩ逕ｨ蜿ｯ閭ｽ縺ｪ繧ｷ繝ｼ繝茨ｿｽE谺｡縺ｮ騾壹ｊ縺ｧ縺・ {', '.join(names)}"
+    return f"利用可能なシートは次の通りです: {', '.join(names)}"
 
 def copyrange(actions: ExcelActions, sourcerange: str, destinationrange: str, sheetname: Optional[str] = None) -> str:
     """
-    謖・EE縺励◆遽・EE繧貞挨縺ｮ蝣ｴ謇縺ｫ繧ｳ繝費ｿｽE縺励∪縺吶・
+    指定した範囲を別の場所にコピーします。
     """
     return actions.copy_range(sourcerange, destinationrange, sheetname)
 
 def executeexcelformula(actions: ExcelActions, cell: str, formula: str, sheetname: Optional[str] = None) -> str:
     """
-    謖・EE縺励◆繧ｻ繝ｫ縺ｫExcel縺ｮ謨ｰ蠑上ｒ險ｭ螳壹＠縺ｾ縺吶・
+    指定したセルに Excel の数式を設定します。
     """
     return actions.set_formula(cell, formula, sheetname)
 
 def readrangevalues(actions: ExcelActions, cellrange: str, sheetname: Optional[str] = None) -> str:
     """
-    謖・EE縺励◆遽・EE縺ｮ繧ｻ繝ｫ縺九ｉ蛟､繧定ｪｭ縺ｿ蜿悶ｊ縺ｾ縺吶・繧ｻ繝ｫ縺ｧ繧らｯ・EE縺ｨ縺励※謖・EE蜿ｯ閭ｽ縺ｧ縺吶・
+    指定した範囲のセルから値を読み取ります。単一セルにも対応します。
     """
     values = actions.read_range(cellrange, sheetname)
-    return f"遽・EE '{cellrange}' 縺ｮ蛟､縺ｯ谺｡縺ｮ騾壹ｊ縺ｧ縺・ {values}"
+    return f"範囲 '{cellrange}' の値は次の通りです: {values}"
 
 def writerangevalues(actions: ExcelActions, cellrange: str, data: List[List[Any]], sheetname: Optional[str] = None) -> str:
     """
-    謖・EE縺励◆遽・EE縺ｫ2谺｡蜈・EE繧ｹ繝茨ｿｽE繝・EE繧ｿ繧呈嶌縺崎ｾｼ縺ｿ縺ｾ縺吶・繧ｻ繝ｫ縺ｧ繧ょｯｾ蠢懷庄閭ｽ縺ｧ縺吶・
+    指定した範囲に 2 次元リストのデータを書き込みます。単一セルにも対応します。
     """
     return actions.write_range(cellrange, data, sheetname)
 
 def getactiveworkbookandsheet(actions: ExcelActions) -> str:
     """
-    迴ｾ蝨ｨ繧｢繧ｯ繝・EE繝悶↑Excel繝悶ャ繧ｯ縺ｨ繧ｷ繝ｼ繝亥錐繧貞叙蠕励＠縺ｾ縺吶・
+    現在アクティブな Excel ブックとシート名を取得します。
     """
     info_dict = actions.get_active_workbook_and_sheet()
-    return f"繝悶ャ繧ｯ: {info_dict['workbook_name']}, 繧ｷ繝ｼ繝・ {info_dict['sheet_name']}"
+    return f"ブック: {info_dict['workbook_name']}, シート: {info_dict['sheet_name']}"
 
 def formatrange(actions: ExcelActions,
                  cellrange: str,
@@ -429,7 +429,7 @@ def formatrange(actions: ExcelActions,
                  horizontalalignment: Optional[str] = None,
                  borderstyle: Optional[Dict[str, Any]] = None) -> str:
     """
-    謖・EE縺励◆遽・EE縺ｫ譖ｸ蠑剰ｨｭ螳壹ｒ驕ｩ逕ｨ縺励∪縺吶・
+    指定した範囲に書式設定を適用します。
     """
     return actions.format_range(
         cell_range=cellrange,
@@ -504,7 +504,7 @@ def translate_range_contents(
                 try:
                     ref_data = actions.read_range(ref_range, ref_sheet)
                 except ToolExecutionError as exc:
-                    raise ToolExecutionError(f"蜿ゑｿｽE譁・EE遽・EE '{raw_range}' 縺ｮ隱ｭ縺ｿ蜿悶ｊ縺ｫ螟ｱ謨励＠縺ｾ縺励◆: {exc}") from exc
+                    raise ToolExecutionError(f"指定した範囲 '{raw_range}' の検証中にエラーが発生しました: {exc}") from exc
 
                 reference_lines: List[str] = []
                 if isinstance(ref_data, list):
@@ -754,7 +754,7 @@ def translate_range_contents(
             for local_row in range(row_start, row_end):
                 for col_idx in range(source_cols):
                     cell_value = original_data[local_row][col_idx]
-                    if isinstance(cell_value, str) and re.search(r"[縺・繧薙ぃ-繝ｳ荳-鮴ｯ]", cell_value):
+                    if isinstance(cell_value, str) and re.search(r'[ぁ-んァ-ヶ一-龯]', cell_value):
                         chunk_texts.append(cell_value)
                         chunk_positions.append((local_row, col_idx))
 
@@ -1105,7 +1105,7 @@ def translate_range_contents(
     except ToolExecutionError:
         raise
     except Exception as exc:
-        raise ToolExecutionError(f"遽・EE '{cell_range}' 縺ｮ鄙ｻ險ｳ荳ｭ縺ｫ繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: {exc}") from exc
+        raise ToolExecutionError(f"範囲 '{cell_range}' の更新中にエラーが発生しました: {exc}") from exc
 
 def check_translation_quality(
     actions: ExcelActions,
@@ -1321,7 +1321,7 @@ def check_translation_quality(
                     "Use status 'OK' when the translation is acceptable (notes empty or a short remark). Only select 'OK' when you are certain there are no issues. "
                     "Use status 'REVISE' when changes are needed and write notes in Japanese as 'Issue: ... / Suggestion: ...'. If unsure, choose 'REVISE'. "
                     "Set 'corrected_text' to the fully corrected English sentence. Build 'highlighted_text' from corrected_text, "
-                    "marking additions as 縲占ｿｽ蜉EEEE..縲・and deletions as 縲仙炎髯､EEEE..縲・ "
+                    "marking additions as 【追加...】 and deletions as 【削除...】 "
                     "Return exactly one JSON array and nothing else."
                     f"\n\n{payload}\n"
                 ),
