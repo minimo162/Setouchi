@@ -113,7 +113,7 @@ class CopilotWorker:
         except Exception as e:
             print(f"Critical error in worker run method: {e}")
             traceback.print_exc()
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"Fatal runtime error: {e}"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"致命的な実行時エラー: {e}"))
         finally:
             self._cleanup()
 
@@ -136,13 +136,13 @@ class CopilotWorker:
 
     def _initialize(self):
         try:
-            print("Starting worker initialization...")
-            self._emit_response(ResponseMessage(ResponseType.STATUS, "Launching browser (Playwright)..."))
+            print("Workerの初期化を開始します...")
+            self._emit_response(ResponseMessage(ResponseType.STATUS, "ブラウザ (Playwright) を起動中..."))
             self.browser_manager = BrowserCopilotManager(user_data_dir=COPILOT_USER_DATA_DIR, headless=False)
             self.browser_manager.start()
-            print("BrowserManager is ready.")
+            print("BrowserManager の起動が完了しました。")
 
-            self._emit_response(ResponseMessage(ResponseType.STATUS, "Preparing AI agent..."))
+            self._emit_response(ResponseMessage(ResponseType.STATUS, "AIエージェントを準備中..."))
             self.tool_functions = [
                 func
                 for name, func in inspect.getmembers(excel_tools, inspect.isfunction)
@@ -150,27 +150,27 @@ class CopilotWorker:
             ]
             self.tool_schemas = [create_tool_schema(func) for func in self.tool_functions]
             self._build_agent()
-            print("AI agent is ready.")
+            print("AIエージェントの準備が完了しました。")
 
-            self._emit_response(ResponseMessage(ResponseType.INITIALIZATION_COMPLETE, "Initialization complete! Ready for instructions."))
-            print("Worker initialization complete.")
+            self._emit_response(ResponseMessage(ResponseType.INITIALIZATION_COMPLETE, "初期化が完了しました。指示をどうぞ。"))
+            print("Workerの初期化が完了しました。")
         except Exception as e:
-            print(f"Worker initialization error: {e}")
+            print(f"Workerの初期化中にエラーが発生しました: {e}")
             traceback.print_exc()
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"Initialization error: {e}"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"初期化エラー: {e}"))
 
     def _main_loop(self):
-        print("Starting main loop...")
+        print("メインループを開始します...")
         while True:
             raw_request = self.request_queue.get()
             try:
                 request = RequestMessage.from_raw(raw_request)
             except ValueError as exc:
-                self._emit_response(ResponseMessage(ResponseType.ERROR, f"Invalid request received: {exc}"))
+                self._emit_response(ResponseMessage(ResponseType.ERROR, f"無効なリクエストを受信しました: {exc}"))
                 continue
 
             if request.type is RequestType.QUIT:
-                print("Received quit request. Exiting main loop.")
+                print("終了リクエストを受信しました。メインループを終了します。")
                 break
             if request.type is RequestType.STOP:
                 self.stop_event.set()
@@ -178,7 +178,7 @@ class CopilotWorker:
                     try:
                         self.browser_manager.request_stop()
                     except Exception as stop_err:
-                        print(f"Stop request forwarding failed: {stop_err}")
+                        print(f"停止リクエストの転送に失敗しました: {stop_err}")
                 continue
 
             if request.type is RequestType.UPDATE_CONTEXT:
@@ -188,7 +188,7 @@ class CopilotWorker:
                 if isinstance(request.payload, str):
                     self._execute_task(request.payload)
                 else:
-                    self._emit_response(ResponseMessage(ResponseType.ERROR, "User input payload is invalid."))
+                    self._emit_response(ResponseMessage(ResponseType.ERROR, "ユーザー入力の形式が不正です。"))
 
     def _update_context(self, payload: Optional[Dict[str, Any]]):
         if not isinstance(payload, dict):
@@ -200,25 +200,25 @@ class CopilotWorker:
             if self.agent:
                 self.agent.sheet_name = new_sheet_name
             sheet_label = new_sheet_name or "\u672a\u9078\u629e"
-            self._emit_response(ResponseMessage(ResponseType.INFO, f"Active sheet changed to '{sheet_label}'."))
+            self._emit_response(ResponseMessage(ResponseType.INFO, f"操作対象のシートを「{sheet_label}」に変更しました。"))
 
         mode_value = payload.get("mode")
         if mode_value is not None:
             try:
                 new_mode = CopilotMode(mode_value)
             except ValueError:
-                self._emit_response(ResponseMessage(ResponseType.ERROR, f"Invalid mode value: {mode_value}"))
+                self._emit_response(ResponseMessage(ResponseType.ERROR, f"モード値が不正です: {mode_value}"))
             else:
                 if new_mode != self.mode:
                     self.mode = new_mode
                     self._build_agent()
-                    mode_label = "Translation" if new_mode is CopilotMode.TRANSLATION else "Translation check"
-                    self._emit_response(ResponseMessage(ResponseType.INFO, f"Mode switched to {mode_label}."))
+                    mode_label = "翻訳" if new_mode is CopilotMode.TRANSLATION else "翻訳チェック"
+                    self._emit_response(ResponseMessage(ResponseType.INFO, f"モードを{mode_label}に切り替えました。"))
 
     def _execute_task(self, user_input: str):
         self.stop_event.clear()
         if not self.agent:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, "The AI agent is not initialized."))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, "AIエージェントが初期化されていません。"))
             return
 
         try:
@@ -227,17 +227,17 @@ class CopilotWorker:
         except ExcelConnectionError as e:
             self._emit_response(ResponseMessage(ResponseType.ERROR, str(e)))
         except Exception as e:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"Task execution error: {e}"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"タスク実行エラー: {e}"))
         finally:
             if self.stop_event.is_set():
-                self._emit_response(ResponseMessage(ResponseType.INFO, "Task interrupted by user."))
+                self._emit_response(ResponseMessage(ResponseType.INFO, "ユーザーによってタスクが中断されました。"))
             self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
 
     def _cleanup(self):
-        print("Starting cleanup...")
+        print("クリーンアップを開始します...")
         if self.browser_manager:
             self.browser_manager.close()
-        print("Worker cleanup complete.")
+        print("Workerのクリーンアップが完了しました。")
 
 class ChatMessage(ft.ResponsiveRow):
     def __init__(self, msg_type: Union[ResponseType, str], msg_content: str):
@@ -418,11 +418,11 @@ class CopilotApp:
 
     def _build_layout(self):
         self.title_label = ft.Text("Excel\nCo-pilot", size=26, weight=ft.FontWeight.BOLD, color="#FFFFFF")
-        self.status_label = ft.Text("Initializing...", size=15, color=ft.Colors.GREY_500, animate_opacity=300, animate_scale=600)
+        self.status_label = ft.Text("初期化中...", size=15, color=ft.Colors.GREY_500, animate_opacity=300, animate_scale=600)
 
         self.excel_info_label = ft.Text("", size=14, color="#CFD8DC")
         self.refresh_button = ft.ElevatedButton(
-            text="Refresh",
+            text="更新",
             on_click=self._handle_refresh_click,
             bgcolor=ft.Colors.DEEP_PURPLE_500,
             color=ft.Colors.WHITE,
@@ -432,7 +432,7 @@ class CopilotApp:
         )
 
         self.save_log_button = ft.ElevatedButton(
-            text="Save conversation log",
+            text="会話ログを保存",
             icon=ft.Icons.SAVE_OUTLINED,
             on_click=self._handle_save_log_click,
             bgcolor="#2C2A3A",
@@ -447,7 +447,7 @@ class CopilotApp:
             options=[],
             width=180,
             on_change=self._on_sheet_change,
-            hint_text="Select sheet",
+            hint_text="シートを選択",
             border_radius=8,
             fill_color="#2C2A3A",
             text_style=ft.TextStyle(color=ft.Colors.WHITE),
@@ -502,8 +502,8 @@ class CopilotApp:
             on_change=self._on_mode_change,
             content=ft.Row(
                 controls=[
-                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="Translation"),
-                    ft.Radio(value=CopilotMode.REVIEW.value, label="Translation check"),
+                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="翻訳"),
+                    ft.Radio(value=CopilotMode.REVIEW.value, label="翻訳チェック"),
                 ],
                 alignment=ft.MainAxisAlignment.START,
                 spacing=16,
@@ -552,10 +552,10 @@ class CopilotApp:
         self.page.on_disconnect = self._on_page_disconnect
 
     def _make_send_button(self) -> ft.IconButton:
-        return ft.IconButton(icon=ft.Icons.SEND_ROUNDED, on_click=self._run_copilot, icon_color="#B39DDB", tooltip="Send")
+        return ft.IconButton(icon=ft.Icons.SEND_ROUNDED, on_click=self._run_copilot, icon_color="#B39DDB", tooltip="送信")
 
     def _make_stop_button(self) -> ft.IconButton:
-        return ft.IconButton(icon=ft.Icons.STOP_ROUNDED, on_click=self._stop_task, icon_color="#B39DDB", tooltip="Stop task")
+        return ft.IconButton(icon=ft.Icons.STOP_ROUNDED, on_click=self._stop_task, icon_color="#B39DDB", tooltip="処理を停止")
 
     def _handle_button_hover(self, e: ft.ControlEvent):
         if e.data == "true":
@@ -568,9 +568,9 @@ class CopilotApp:
         if not self.user_input:
             return
         if self.mode is CopilotMode.TRANSLATION:
-            self.user_input.hint_text = "Describe the translation you need. Example: Translate column B and write the results to columns C:E."
+            self.user_input.hint_text = "翻訳してほしい内容を入力してください。例: B列を翻訳し、結果をC:E列に書き込んでください。"
         else:
-            self.user_input.hint_text = "Describe the translation review you need. Example: Compare the translations in columns B and C, then summarize findings in columns D:G."
+            self.user_input.hint_text = "翻訳チェックの内容を入力してください。例: B列とC列の翻訳を比較し、結果をD:G列にまとめてください。"
 
     def _on_mode_change(self, e: Optional[ft.ControlEvent]):
         control = getattr(e, "control", None) if e else None
@@ -612,13 +612,13 @@ class CopilotApp:
             self.status_label.opacity = 1
             self.status_label.scale = 1
             if new_state is AppState.INITIALIZING:
-                self.status_label.value = "Initializing..."
+                self.status_label.value = "初期化中..."
                 self.status_label.color = ft.Colors.GREY_500
             elif is_ready:
-                self.status_label.value = "Ready"
+                self.status_label.value = "待機中"
                 self.status_label.color = ft.Colors.GREEN_300
             elif is_error:
-                self.status_label.value = "Error"
+                self.status_label.value = "エラー"
                 self.status_label.color = ft.Colors.RED_300
             else:
                 self.status_label.color = ft.Colors.GREY_500
@@ -626,7 +626,7 @@ class CopilotApp:
         if self.action_button:
             if is_task_in_progress:
                 if self.status_label:
-                    self.status_label.value = "Running task..."
+                    self.status_label.value = "処理を実行中..."
                     self.status_label.color = ft.Colors.DEEP_PURPLE_300
                     self.status_label.opacity = 0.5
                     self.status_label.scale = 0.95
@@ -634,7 +634,7 @@ class CopilotApp:
                 self.action_button.disabled = False
             elif is_stopping:
                 if self.status_label:
-                    self.status_label.value = "Stopping task..."
+                    self.status_label.value = "処理を停止しています..."
                     self.status_label.color = ft.Colors.DEEP_PURPLE_200
                 self.action_button.content = ft.ProgressRing(width=18, height=18, stroke_width=2)
                 self.action_button.disabled = True
@@ -648,7 +648,7 @@ class CopilotApp:
         try:
             self.page.update()
         except Exception as e:
-            print(f"UI update failed: {e}")
+            print(f"UIの更新に失敗しました: {e}")
 
     def _add_message(self, msg_type: Union[ResponseType, str], msg_content: str):
         if not msg_content:
@@ -690,16 +690,16 @@ class CopilotApp:
             self._add_message(ResponseType.INFO, str(info_err))
             return
         except Exception as ex:
-            print(f"Failed to export chat history: {ex}")
-            self._add_message(ResponseType.ERROR, f"Failed to save conversation log: {ex}")
+            print(f"会話ログの書き出しに失敗しました: {ex}")
+            self._add_message(ResponseType.ERROR, f"会話ログの保存に失敗しました: {ex}")
             return
 
-        self._add_message(ResponseType.INFO, f"Conversation log saved: {file_path}")
+        self._add_message(ResponseType.INFO, f"会話ログを保存しました: {file_path}")
 
     def _export_chat_history(self) -> Path:
         with self.history_lock:
             if not self.chat_history:
-                raise ValueError("There is no conversation history to save.")
+                raise ValueError("保存できる会話履歴がありません。")
             entries = [entry.copy() for entry in self.chat_history]
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -707,10 +707,10 @@ class CopilotApp:
         file_path = self.log_dir / f"conversation-{export_time.strftime('%Y%m%d-%H%M%S')}.md"
 
         lines = [
-            "# Excel Co-pilot conversation",
-            f"- Exported at: {export_time.isoformat(timespec='seconds')}",
-            f"- Workbook: {self.current_workbook_name or 'Unknown'}",
-            f"- Sheet: {self.current_sheet_name or 'Unknown'}",
+            "# Excel Co-pilot 会話ログ",
+            f"- エクスポート時刻: {export_time.isoformat(timespec='seconds')}",
+            f"- 対象ブック: {self.current_workbook_name or '不明'}",
+            f"- 対象シート: {self.current_sheet_name or '不明'}",
             "",
         ]
 
@@ -776,7 +776,7 @@ class CopilotApp:
 
         self.sheet_selector.disabled = True
         self.refresh_button.disabled = True
-        self.refresh_button.text = "Refreshing..."
+        self.refresh_button.text = "更新中..."
         self._update_ui()
 
         try:
@@ -790,14 +790,14 @@ class CopilotApp:
                         activated_name = manager.activate_sheet(preferred_sheet)
                         info_dict["sheet_name"] = activated_name
                     except Exception as activate_err:
-                        print(f"Failed to restore preferred sheet '{preferred_sheet}': {activate_err}")
-                        self._add_message(ResponseType.INFO, f"Failed to reopen saved sheet '{preferred_sheet}': {activate_err}")
+                        print(f"前回選択したシート '{preferred_sheet}' の復元に失敗しました: {activate_err}")
+                        self._add_message(ResponseType.INFO, f"保存済みシート『{preferred_sheet}』を開けませんでした: {activate_err}")
 
                 self.current_workbook_name = info_dict["workbook_name"]
                 self.current_sheet_name = info_dict["sheet_name"]
 
                 self.sheet_selection_updating = True
-                info_text = f"Workbook: {info_dict['workbook_name']}\nSheet: {info_dict['sheet_name']}"
+                info_text = f"対象ブック: {info_dict['workbook_name']}\n対象シート: {info_dict['sheet_name']}"
                 if self.excel_info_label:
                     self.excel_info_label.value = info_text
 
@@ -813,7 +813,7 @@ class CopilotApp:
 
                 return info_dict["sheet_name"]
         except Exception as ex:
-            error_message = f"Failed to retrieve Excel context: {ex}"
+            error_message = f"Excelの情報取得に失敗しました: {ex}"
             if self.excel_info_label:
                 self.excel_info_label.value = error_message
             self.sheet_selector.disabled = True
@@ -825,7 +825,7 @@ class CopilotApp:
         finally:
             self.sheet_selection_updating = False
             self.refresh_button.disabled = False
-            self.refresh_button.text = "Refresh"
+            self.refresh_button.text = "更新"
             self._update_ui()
 
     def _run_copilot(self, e: Optional[ft.ControlEvent]):
@@ -863,7 +863,7 @@ class CopilotApp:
             with ExcelManager() as manager:
                 manager.activate_sheet(selected_sheet)
         except Exception as ex:
-            error_message = f"Failed to switch sheets: {ex}"
+            error_message = f"シートの切り替えに失敗しました: {ex}"
             if self.excel_info_label:
                 self.excel_info_label.value = error_message
             self.sheet_selection_updating = True
@@ -881,7 +881,7 @@ class CopilotApp:
         workbook = self.current_workbook_name or "Unknown"
         if self.excel_info_label:
             self.excel_info_label.value = f"Workbook: {workbook}\nSheet: {selected_sheet}"
-        self._add_message(ResponseType.INFO, f"Active sheet set to '{selected_sheet}'.")
+        self._add_message(ResponseType.INFO, f"操作対象のシートを『{selected_sheet}』に設定しました。")
         self._update_ui()
 
     def _process_response_queue_loop(self):
@@ -891,13 +891,13 @@ class CopilotApp:
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"Error while processing response queue: {e}")
+                print(f"レスポンスキュー処理中にエラーが発生しました: {e}")
                 continue
 
             try:
                 response = ResponseMessage.from_raw(raw_message)
             except ValueError as exc:
-                print(f"Failed to parse response: {exc}")
+                print(f"レスポンスの解析に失敗しました: {exc}")
                 continue
 
             self._display_response(response)
