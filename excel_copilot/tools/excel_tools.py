@@ -452,52 +452,84 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
 
 
 def writetocell(actions: ExcelActions, cell: str, value: Any, sheetname: Optional[str] = None) -> str:
-    """
-    Excelシートの特定セルに値を書き込みます。
+    """Write a value into a single Excel cell.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        cell: A1-style reference for the destination cell.
+        value: Data to write into the cell.
+        sheetname: Optional sheet override; defaults to the active sheet.
     """
     return actions.write_to_cell(cell, value, sheetname)
 
 def readcellvalue(actions: ExcelActions, cell: str, sheetname: Optional[str] = None) -> Any:
-    """
-    Excelシートの特定セルの値を読み取ります。
+    """Read the value stored in a single cell.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        cell: A1-style reference to read.
+        sheetname: Optional sheet override; defaults to the active sheet.
     """
     return actions.read_cell_value(cell, sheetname)
 
 def getallsheetnames(actions: ExcelActions) -> str:
-    """
-    現在開いている Excel ワークブック内のすべてのシート名を取得します。
+    """Return all sheet names from the active workbook.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
     """
     names = actions.get_sheet_names()
     return f"利用可能なシートは次の通りです: {', '.join(names)}"
 
 def copyrange(actions: ExcelActions, sourcerange: str, destinationrange: str, sheetname: Optional[str] = None) -> str:
-    """
-    指定した範囲を別の場所にコピーします。
+    """Copy values and formatting from a source range into a destination range.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        sourcerange: A1-style range to copy from.
+        destinationrange: A1-style range to copy into.
+        sheetname: Optional sheet override; defaults to the active sheet.
     """
     return actions.copy_range(sourcerange, destinationrange, sheetname)
 
 def executeexcelformula(actions: ExcelActions, cell: str, formula: str, sheetname: Optional[str] = None) -> str:
-    """
-    指定したセルに Excel の数式を設定します。
+    """Set or replace an Excel formula on a cell.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        cell: A1-style cell reference where the formula is applied.
+        formula: Excel formula text.
+        sheetname: Optional sheet override; defaults to the active sheet.
     """
     return actions.set_formula(cell, formula, sheetname)
 
 def readrangevalues(actions: ExcelActions, cellrange: str, sheetname: Optional[str] = None) -> str:
-    """
-    指定した範囲のセルから値を読み取ります。単一セルにも対応します。
+    """Read values from a range and summarise the result.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        cellrange: A1-style range to read.
+        sheetname: Optional sheet override; defaults to the active sheet.
     """
     values = actions.read_range(cellrange, sheetname)
     return f"範囲 '{cellrange}' の値は次の通りです: {values}"
 
 def writerangevalues(actions: ExcelActions, cellrange: str, data: List[List[Any]], sheetname: Optional[str] = None) -> str:
-    """
-    指定した範囲に 2 次元リストのデータを書き込みます。単一セルにも対応します。
+    """Write a 2D list of values into a range, validating the shape first.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        cellrange: A1-style range that must match the data shape.
+        data: Two-dimensional list of values to write.
+        sheetname: Optional sheet override; defaults to the active sheet.
     """
     return actions.write_range(cellrange, data, sheetname)
 
 def getactiveworkbookandsheet(actions: ExcelActions) -> str:
-    """
-    現在アクティブな Excel ブックとシート名を取得します。
+    """Report the currently active workbook and sheet names.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
     """
     info_dict = actions.get_active_workbook_and_sheet()
     return f"ブック: {info_dict['workbook_name']}, シート: {info_dict['sheet_name']}"
@@ -515,8 +547,22 @@ def formatrange(actions: ExcelActions,
                  rowheight: Optional[float] = None,
                  horizontalalignment: Optional[str] = None,
                  borderstyle: Optional[Dict[str, Any]] = None) -> str:
-    """
-    指定した範囲に書式設定を適用します。
+    """Apply the provided formatting properties to a range.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        cellrange: A1-style range to format.
+        sheetname: Optional sheet override; defaults to the active sheet.
+        fontname: Optional font family to apply.
+        fontsize: Optional font size in points.
+        fontcolorhex: Optional font colour specified as #RRGGBB.
+        bold: Optional flag to toggle bold text.
+        italic: Optional flag to toggle italic text.
+        fillcolorhex: Optional fill colour specified as #RRGGBB.
+        columnwidth: Optional column width in Excel units.
+        rowheight: Optional row height in Excel units.
+        horizontalalignment: Optional horizontal alignment keyword.
+        borderstyle: Optional mapping describing border configuration.
     """
     return actions.format_range(
         cell_range=cellrange,
@@ -1172,17 +1218,20 @@ def check_translation_quality(
     sheet_name: Optional[str] = None,
     batch_size: int = 1,
 ) -> str:
-    """Compare source and translated ranges, then record review results.
-
-    Args:
-        source_range: Range containing original Japanese text.
-        translated_range: Range containing the English translation.
-        status_output_range: Range to store review status (e.g., OK / 隕∽ｿｮ豁｣).
-        issue_output_range: Range to store review notes.
-        corrected_output_range: Optional range to store the finalized corrected English sentences.
-        highlight_output_range: Optional range to store a highlighted translation string with diff markers.
-        sheet_name: Target sheet name. Uses active sheet if None.
-        batch_size: Number of items reviewed together per AI request.
+    """Translate text in a range and write the output plus optional context.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        browser_manager: Shared browser manager used for translation API calls.
+        cell_range: Range containing the source text.
+        target_language: Target language name, defaults to English.
+        sheet_name: Optional sheet override; defaults to the active sheet.
+        reference_ranges: Optional list of ranges containing reference material.
+        citation_output_range: Optional range used to store citation markers.
+        reference_urls: Optional list of reference URLs to include in the output.
+        translation_output_range: Optional range for translated rows (three columns per source column).
+        overwrite_source: Whether to overwrite the source range directly.
+        rows_per_batch: Optional maximum number of rows per translation request.
     """
     try:
 
@@ -1556,9 +1605,25 @@ def insert_shape(actions: ExcelActions,
                  sheet_name: Optional[str] = None,
                  fill_color_hex: Optional[str] = None,
                  line_color_hex: Optional[str] = None) -> str:
-    """Insert a drawing shape into the specified Excel range."""
+    """Insert a drawing shape anchored to the specified range.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        cell_range: Anchor range whose top-left corner is used for placement.
+        shape_type: Excel shape type name (for example Rectangle).
+        sheet_name: Optional sheet override; defaults to the active sheet.
+        fill_color_hex: Optional fill colour specified as #RRGGBB.
+        line_color_hex: Optional outline colour specified as #RRGGBB.
+    """
     return actions.insert_shape_in_range(cell_range, shape_type, sheet_name, fill_color_hex, line_color_hex)
 
 def format_shape(actions: ExcelActions, fill_color_hex: Optional[str] = None, line_color_hex: Optional[str] = None, sheet_name: Optional[str] = None) -> str:
-    """Reformat the most recently inserted shape (helper for insert_shape)."""
+    """Format the most recently inserted shape.
+    
+    Args:
+        actions: Excel automation helper injected by the agent runtime.
+        fill_color_hex: Optional fill colour specified as #RRGGBB.
+        line_color_hex: Optional outline colour specified as #RRGGBB.
+        sheet_name: Optional sheet override; defaults to the active sheet.
+    """
     return actions.format_last_shape(fill_color_hex, line_color_hex, sheet_name)

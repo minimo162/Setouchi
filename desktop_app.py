@@ -1,4 +1,4 @@
-# desktop_app.py
+﻿# desktop_app.py
 
 import flet as ft
 import threading
@@ -113,7 +113,7 @@ class CopilotWorker:
         except Exception as e:
             print(f"Critical error in worker run method: {e}")
             traceback.print_exc()
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"致命的な実行時エラー: {e}"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"閾ｴ蜻ｽ逧・↑螳溯｡梧凾繧ｨ繝ｩ繝ｼ: {e}"))
         finally:
             self._cleanup()
 
@@ -136,37 +136,41 @@ class CopilotWorker:
 
     def _initialize(self):
         try:
-            print("Worker初期化開始..")
-            self._emit_response(ResponseMessage(ResponseType.STATUS, "ブラウザ(Playwright)を起動中..."))
+            print("Worker蛻晄悄蛹夜幕蟋・.")
+            self._emit_response(ResponseMessage(ResponseType.STATUS, "繝悶Λ繧ｦ繧ｶ(Playwright)繧定ｵｷ蜍穂ｸｭ..."))
             self.browser_manager = BrowserCopilotManager(user_data_dir=COPILOT_USER_DATA_DIR, headless=False)
             self.browser_manager.start()
-            print("BrowserManagerの起動完了")
+            print("BrowserManager縺ｮ襍ｷ蜍募ｮ御ｺ・)
 
-            self._emit_response(ResponseMessage(ResponseType.STATUS, "AIエージェントを準備中..."))
-            self.tool_functions = [obj for _, obj in inspect.getmembers(excel_tools) if inspect.isfunction(obj)]
+            self._emit_response(ResponseMessage(ResponseType.STATUS, "AI繧ｨ繝ｼ繧ｸ繧ｧ繝ｳ繝医ｒ貅門ｙ荳ｭ..."))
+            self.tool_functions = [
+                func
+                for name, func in inspect.getmembers(excel_tools, inspect.isfunction)
+                if not name.startswith('_')
+            ]
             self.tool_schemas = [create_tool_schema(func) for func in self.tool_functions]
             self._build_agent()
-            print("AIエージェントの準備完了")
+            print("AI繧ｨ繝ｼ繧ｸ繧ｧ繝ｳ繝医・貅門ｙ螳御ｺ・)
 
-            self._emit_response(ResponseMessage(ResponseType.INITIALIZATION_COMPLETE, "準備完了。指示をどうぞ。"))
-            print("Worker初期化完了")
+            self._emit_response(ResponseMessage(ResponseType.INITIALIZATION_COMPLETE, "貅門ｙ螳御ｺ・よ欠遉ｺ繧偵←縺・◇縲・))
+            print("Worker蛻晄悄蛹門ｮ御ｺ・)
         except Exception as e:
-            print(f"Worker初期化中にエラーが発生しました: {e}")
+            print(f"Worker蛻晄悄蛹紋ｸｭ縺ｫ繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: {e}")
             traceback.print_exc()
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"初期化エラー: {e}"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"蛻晄悄蛹悶お繝ｩ繝ｼ: {e}"))
 
     def _main_loop(self):
-        print("メインループを開始します")
+        print("繝｡繧､繝ｳ繝ｫ繝ｼ繝励ｒ髢句ｧ九＠縺ｾ縺・)
         while True:
             raw_request = self.request_queue.get()
             try:
                 request = RequestMessage.from_raw(raw_request)
             except ValueError as exc:
-                self._emit_response(ResponseMessage(ResponseType.ERROR, f"無効なリクエストを受信しました: {exc}"))
+                self._emit_response(ResponseMessage(ResponseType.ERROR, f"辟｡蜉ｹ縺ｪ繝ｪ繧ｯ繧ｨ繧ｹ繝医ｒ蜿嶺ｿ｡縺励∪縺励◆: {exc}"))
                 continue
 
             if request.type is RequestType.QUIT:
-                print("終了リクエスト受信。メインループを終了します")
+                print("邨ゆｺ・Μ繧ｯ繧ｨ繧ｹ繝亥女菫｡縲ゅΓ繧､繝ｳ繝ｫ繝ｼ繝励ｒ邨ゆｺ・＠縺ｾ縺・)
                 break
             if request.type is RequestType.STOP:
                 self.stop_event.set()
@@ -184,7 +188,7 @@ class CopilotWorker:
                 if isinstance(request.payload, str):
                     self._execute_task(request.payload)
                 else:
-                    self._emit_response(ResponseMessage(ResponseType.ERROR, "ユーザー入力が不正です。"))
+                    self._emit_response(ResponseMessage(ResponseType.ERROR, "繝ｦ繝ｼ繧ｶ繝ｼ蜈･蜉帙′荳肴ｭ｣縺ｧ縺吶・))
 
     def _update_context(self, payload: Optional[Dict[str, Any]]):
         if not isinstance(payload, dict):
@@ -196,7 +200,7 @@ class CopilotWorker:
             if self.agent:
                 self.agent.sheet_name = new_sheet_name
             sheet_label = new_sheet_name or "\u672a\u9078\u629e"
-            self._emit_response(ResponseMessage(ResponseType.INFO, f"操作対象のシートを「{sheet_label}」に変更しました。"))
+            self._emit_response(ResponseMessage(ResponseType.INFO, f"謫堺ｽ懷ｯｾ雎｡縺ｮ繧ｷ繝ｼ繝医ｒ縲鶏sheet_label}縲阪↓螟画峩縺励∪縺励◆縲・))
 
         mode_value = payload.get("mode")
         if mode_value is not None:
@@ -209,12 +213,12 @@ class CopilotWorker:
                     self.mode = new_mode
                     self._build_agent()
                     mode_label = "\u7ffb\u8a33" if new_mode is CopilotMode.TRANSLATION else "\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af"
-                    self._emit_response(ResponseMessage(ResponseType.INFO, f"モードを{mode_label}に切り替えました。"))
+                    self._emit_response(ResponseMessage(ResponseType.INFO, f"繝｢繝ｼ繝峨ｒ{mode_label}縺ｫ蛻・ｊ譖ｿ縺医∪縺励◆縲・))
 
     def _execute_task(self, user_input: str):
         self.stop_event.clear()
         if not self.agent:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, "エージェントが初期化されていません。"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, "繧ｨ繝ｼ繧ｸ繧ｧ繝ｳ繝医′蛻晄悄蛹悶＆繧後※縺・∪縺帙ｓ縲・))
             return
 
         try:
@@ -223,17 +227,17 @@ class CopilotWorker:
         except ExcelConnectionError as e:
             self._emit_response(ResponseMessage(ResponseType.ERROR, str(e)))
         except Exception as e:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"タスク実行エラー: {e}"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"繧ｿ繧ｹ繧ｯ螳溯｡後お繝ｩ繝ｼ: {e}"))
         finally:
             if self.stop_event.is_set():
-                self._emit_response(ResponseMessage(ResponseType.INFO, "ユーザーの操作により処理を中断しました。"))
+                self._emit_response(ResponseMessage(ResponseType.INFO, "繝ｦ繝ｼ繧ｶ繝ｼ縺ｮ謫堺ｽ懊↓繧医ｊ蜃ｦ逅・ｒ荳ｭ譁ｭ縺励∪縺励◆縲・))
             self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
 
     def _cleanup(self):
-        print("クリーンアップ処理を開始します")
+        print("繧ｯ繝ｪ繝ｼ繝ｳ繧｢繝・・蜃ｦ逅・ｒ髢句ｧ九＠縺ｾ縺・)
         if self.browser_manager:
             self.browser_manager.close()
-        print("ワーカーをクリーンアップしました")
+        print("繝ｯ繝ｼ繧ｫ繝ｼ繧偵け繝ｪ繝ｼ繝ｳ繧｢繝・・縺励∪縺励◆")
 
 class ChatMessage(ft.ResponsiveRow):
     def __init__(self, msg_type: Union[ResponseType, str], msg_content: str):
@@ -414,11 +418,11 @@ class CopilotApp:
 
     def _build_layout(self):
         self.title_label = ft.Text("Excel\nCo-pilot", size=26, weight=ft.FontWeight.BOLD, color="#FFFFFF")
-        self.status_label = ft.Text("初期化中...", size=15, color=ft.Colors.GREY_500, animate_opacity=300, animate_scale=600)
+        self.status_label = ft.Text("蛻晄悄蛹紋ｸｭ...", size=15, color=ft.Colors.GREY_500, animate_opacity=300, animate_scale=600)
 
         self.excel_info_label = ft.Text("", size=14, color="#CFD8DC")
         self.refresh_button = ft.ElevatedButton(
-            text="更新",
+            text="譖ｴ譁ｰ",
             on_click=self._handle_refresh_click,
             bgcolor=ft.Colors.DEEP_PURPLE_500,
             color=ft.Colors.WHITE,
@@ -428,7 +432,7 @@ class CopilotApp:
         )
 
         self.save_log_button = ft.ElevatedButton(
-            text="会話ログ保存",
+            text="莨夊ｩｱ繝ｭ繧ｰ菫晏ｭ・,
             icon=ft.Icons.SAVE_OUTLINED,
             on_click=self._handle_save_log_click,
             bgcolor="#2C2A3A",
@@ -443,7 +447,7 @@ class CopilotApp:
             options=[],
             width=180,
             on_change=self._on_sheet_change,
-            hint_text="シートを選択",
+            hint_text="繧ｷ繝ｼ繝医ｒ驕ｸ謚・,
             border_radius=8,
             fill_color="#2C2A3A",
             text_style=ft.TextStyle(color=ft.Colors.WHITE),
@@ -498,8 +502,8 @@ class CopilotApp:
             on_change=self._on_mode_change,
             content=ft.Row(
                 controls=[
-                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="翻訳"),
-                    ft.Radio(value=CopilotMode.REVIEW.value, label="翻訳チェック"),
+                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="鄙ｻ險ｳ"),
+                    ft.Radio(value=CopilotMode.REVIEW.value, label="鄙ｻ險ｳ繝√ぉ繝・け"),
                 ],
                 alignment=ft.MainAxisAlignment.START,
                 spacing=16,
@@ -548,10 +552,10 @@ class CopilotApp:
         self.page.on_disconnect = self._on_page_disconnect
 
     def _make_send_button(self) -> ft.IconButton:
-        return ft.IconButton(icon=ft.Icons.SEND_ROUNDED, on_click=self._run_copilot, icon_color="#B39DDB", tooltip="送信")
+        return ft.IconButton(icon=ft.Icons.SEND_ROUNDED, on_click=self._run_copilot, icon_color="#B39DDB", tooltip="騾∽ｿ｡")
 
     def _make_stop_button(self) -> ft.IconButton:
-        return ft.IconButton(icon=ft.Icons.STOP_ROUNDED, on_click=self._stop_task, icon_color="#B39DDB", tooltip="処理を停止")
+        return ft.IconButton(icon=ft.Icons.STOP_ROUNDED, on_click=self._stop_task, icon_color="#B39DDB", tooltip="蜃ｦ逅・ｒ蛛懈ｭ｢")
 
     def _handle_button_hover(self, e: ft.ControlEvent):
         if e.data == "true":
@@ -564,9 +568,9 @@ class CopilotApp:
         if not self.user_input:
             return
         if self.mode is CopilotMode.TRANSLATION:
-            self.user_input.hint_text = "翻訳の指示を書き込んでください（例: B列を翻訳してC:E列に出力して）"
+            self.user_input.hint_text = "鄙ｻ險ｳ縺ｮ謖・､ｺ繧呈嶌縺崎ｾｼ繧薙〒縺上□縺輔＞・井ｾ・ B蛻励ｒ鄙ｻ險ｳ縺励※C:E蛻励↓蜃ｺ蜉帙＠縺ｦ・・
         else:
-            self.user_input.hint_text = "翻訳チェックの指示を書き込んでください（例: B列とC列の訳を比較してD:G列にまとめて）"
+            self.user_input.hint_text = "鄙ｻ險ｳ繝√ぉ繝・け縺ｮ謖・､ｺ繧呈嶌縺崎ｾｼ繧薙〒縺上□縺輔＞・井ｾ・ B蛻励→C蛻励・險ｳ繧呈ｯ碑ｼ・＠縺ｦD:G蛻励↓縺ｾ縺ｨ繧√※・・
 
     def _on_mode_change(self, e: Optional[ft.ControlEvent]):
         control = getattr(e, "control", None) if e else None
@@ -608,13 +612,13 @@ class CopilotApp:
             self.status_label.opacity = 1
             self.status_label.scale = 1
             if new_state is AppState.INITIALIZING:
-                self.status_label.value = "初期化中..."
+                self.status_label.value = "蛻晄悄蛹紋ｸｭ..."
                 self.status_label.color = ft.Colors.GREY_500
             elif is_ready:
-                self.status_label.value = "準備完了"
+                self.status_label.value = "貅門ｙ螳御ｺ・
                 self.status_label.color = ft.Colors.GREEN_300
             elif is_error:
-                self.status_label.value = "エラー発生"
+                self.status_label.value = "繧ｨ繝ｩ繝ｼ逋ｺ逕・
                 self.status_label.color = ft.Colors.RED_300
             else:
                 self.status_label.color = ft.Colors.GREY_500
@@ -622,7 +626,7 @@ class CopilotApp:
         if self.action_button:
             if is_task_in_progress:
                 if self.status_label:
-                    self.status_label.value = "処理を実行中..."
+                    self.status_label.value = "蜃ｦ逅・ｒ螳溯｡御ｸｭ..."
                     self.status_label.color = ft.Colors.DEEP_PURPLE_300
                     self.status_label.opacity = 0.5
                     self.status_label.scale = 0.95
@@ -630,7 +634,7 @@ class CopilotApp:
                 self.action_button.disabled = False
             elif is_stopping:
                 if self.status_label:
-                    self.status_label.value = "停止処理中..."
+                    self.status_label.value = "蛛懈ｭ｢蜃ｦ逅・ｸｭ..."
                     self.status_label.color = ft.Colors.DEEP_PURPLE_200
                 self.action_button.content = ft.ProgressRing(width=18, height=18, stroke_width=2)
                 self.action_button.disabled = True
@@ -644,7 +648,7 @@ class CopilotApp:
         try:
             self.page.update()
         except Exception as e:
-            print(f"UIの更新に失敗しました: {e}")
+            print(f"UI縺ｮ譖ｴ譁ｰ縺ｫ螟ｱ謨励＠縺ｾ縺励◆: {e}")
 
     def _add_message(self, msg_type: Union[ResponseType, str], msg_content: str):
         if not msg_content:
@@ -687,15 +691,15 @@ class CopilotApp:
             return
         except Exception as ex:
             print(f"Failed to export chat history: {ex}")
-            self._add_message(ResponseType.ERROR, f"会話ログの保存に失敗しました: {ex}")
+            self._add_message(ResponseType.ERROR, f"莨夊ｩｱ繝ｭ繧ｰ縺ｮ菫晏ｭ倥↓螟ｱ謨励＠縺ｾ縺励◆: {ex}")
             return
 
-        self._add_message(ResponseType.INFO, f"会話ログを保存しました: {file_path}")
+        self._add_message(ResponseType.INFO, f"莨夊ｩｱ繝ｭ繧ｰ繧剃ｿ晏ｭ倥＠縺ｾ縺励◆: {file_path}")
 
     def _export_chat_history(self) -> Path:
         with self.history_lock:
             if not self.chat_history:
-                raise ValueError("保存できる会話がありません。")
+                raise ValueError("菫晏ｭ倥〒縺阪ｋ莨夊ｩｱ縺後≠繧翫∪縺帙ｓ縲・)
             entries = [entry.copy() for entry in self.chat_history]
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -703,10 +707,10 @@ class CopilotApp:
         file_path = self.log_dir / f"conversation-{export_time.strftime('%Y%m%d-%H%M%S')}.md"
 
         lines = [
-            "# Excel Co-pilot 会話ログ",
-            f"- エクスポート時刻: {export_time.isoformat(timespec='seconds')}",
-            f"- 対象ブック: {self.current_workbook_name or '不明'}",
-            f"- 対象シート: {self.current_sheet_name or '不明'}",
+            "# Excel Co-pilot 莨夊ｩｱ繝ｭ繧ｰ",
+            f"- 繧ｨ繧ｯ繧ｹ繝昴・繝域凾蛻ｻ: {export_time.isoformat(timespec='seconds')}",
+            f"- 蟇ｾ雎｡繝悶ャ繧ｯ: {self.current_workbook_name or '荳肴・'}",
+            f"- 蟇ｾ雎｡繧ｷ繝ｼ繝・ {self.current_sheet_name or '荳肴・'}",
             "",
         ]
 
@@ -772,7 +776,7 @@ class CopilotApp:
 
         self.sheet_selector.disabled = True
         self.refresh_button.disabled = True
-        self.refresh_button.text = "更新中..."
+        self.refresh_button.text = "譖ｴ譁ｰ荳ｭ..."
         self._update_ui()
 
         try:
@@ -787,13 +791,13 @@ class CopilotApp:
                         info_dict["sheet_name"] = activated_name
                     except Exception as activate_err:
                         print(f"Failed to restore preferred sheet '{preferred_sheet}': {activate_err}")
-                        self._add_message(ResponseType.INFO, f"保存済みのシート '{preferred_sheet}' を開けませんでした: {activate_err}")
+                        self._add_message(ResponseType.INFO, f"菫晏ｭ俶ｸ医∩縺ｮ繧ｷ繝ｼ繝・'{preferred_sheet}' 繧帝幕縺代∪縺帙ｓ縺ｧ縺励◆: {activate_err}")
 
                 self.current_workbook_name = info_dict["workbook_name"]
                 self.current_sheet_name = info_dict["sheet_name"]
 
                 self.sheet_selection_updating = True
-                info_text = f"ブック: {info_dict['workbook_name']}\nシート: {info_dict['sheet_name']}"
+                info_text = f"繝悶ャ繧ｯ: {info_dict['workbook_name']}\n繧ｷ繝ｼ繝・ {info_dict['sheet_name']}"
                 if self.excel_info_label:
                     self.excel_info_label.value = info_text
 
@@ -809,7 +813,7 @@ class CopilotApp:
 
                 return info_dict["sheet_name"]
         except Exception as ex:
-            error_message = f"Excel情報の取得に失敗しました: {ex}"
+            error_message = f"Excel諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆: {ex}"
             if self.excel_info_label:
                 self.excel_info_label.value = error_message
             self.sheet_selector.disabled = True
@@ -821,7 +825,7 @@ class CopilotApp:
         finally:
             self.sheet_selection_updating = False
             self.refresh_button.disabled = False
-            self.refresh_button.text = "更新"
+            self.refresh_button.text = "譖ｴ譁ｰ"
             self._update_ui()
 
     def _run_copilot(self, e: Optional[ft.ControlEvent]):
@@ -859,7 +863,7 @@ class CopilotApp:
             with ExcelManager() as manager:
                 manager.activate_sheet(selected_sheet)
         except Exception as ex:
-            error_message = f"シート切り替えに失敗しました: {ex}"
+            error_message = f"繧ｷ繝ｼ繝亥・繧頑崛縺医↓螟ｱ謨励＠縺ｾ縺励◆: {ex}"
             if self.excel_info_label:
                 self.excel_info_label.value = error_message
             self.sheet_selection_updating = True
@@ -875,9 +879,9 @@ class CopilotApp:
         if self.current_workbook_name:
             self._save_last_sheet_preference(self.current_workbook_name, selected_sheet)
         if self.excel_info_label:
-            workbook = self.current_workbook_name or "不明"
-            self.excel_info_label.value = f"ブック: {workbook}\nシート: {selected_sheet}"
-        self._add_message(ResponseType.INFO, f"操作対象のシートを「{selected_sheet}」に設定しました。")
+            workbook = self.current_workbook_name or "荳肴・"
+            self.excel_info_label.value = f"繝悶ャ繧ｯ: {workbook}\n繧ｷ繝ｼ繝・ {selected_sheet}"
+        self._add_message(ResponseType.INFO, f"謫堺ｽ懷ｯｾ雎｡縺ｮ繧ｷ繝ｼ繝医ｒ縲鶏selected_sheet}縲阪↓險ｭ螳壹＠縺ｾ縺励◆縲・)
         self._update_ui()
 
     def _process_response_queue_loop(self):
@@ -887,13 +891,13 @@ class CopilotApp:
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"レスポンスキューの待機中にエラーが発生しました: {e}")
+                print(f"繝ｬ繧ｹ繝昴Φ繧ｹ繧ｭ繝･繝ｼ縺ｮ蠕・ｩ滉ｸｭ縺ｫ繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: {e}")
                 continue
 
             try:
                 response = ResponseMessage.from_raw(raw_message)
             except ValueError as exc:
-                print(f"レスポンスの解析に失敗しました: {exc}")
+                print(f"繝ｬ繧ｹ繝昴Φ繧ｹ縺ｮ隗｣譫舌↓螟ｱ謨励＠縺ｾ縺励◆: {exc}")
                 continue
 
             self._display_response(response)
@@ -1005,4 +1009,6 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.app(target=main)
+
+
 
