@@ -756,7 +756,13 @@ class CopilotApp:
         self._update_ui()
 
     def _stop_task(self, e: Optional[ft.ControlEvent]):
+        if self.app_state is not AppState.TASK_IN_PROGRESS:
+            return
+
         self._set_state(AppState.STOPPING)
+        if self.worker:
+            # Ensure the worker sees the stop request even while busy executing the task.
+            self.worker.stop_event.set()
         self.request_queue.put(RequestMessage(RequestType.STOP))
 
     def _on_sheet_change(self, e: ft.ControlEvent):
