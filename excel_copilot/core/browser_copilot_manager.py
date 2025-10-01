@@ -396,24 +396,41 @@ class BrowserCopilotManager:
     def _initialize_copilot_mode(self):
         """GPT-5 チャットモードを有効化し、入力欄を準備する"""
         try:
-            print("Copilot ページが表示されるのを待機しています...")
-            try:
-                target_pattern = re.compile(r"^https://m365\\.cloud\\.microsoft/chat.*auth=2")
-                self.page.wait_for_url(target_pattern, timeout=180000)
-                print("Copilot ページのロードを確認しました。")
-            except PlaywrightTimeoutError as wait_error:
-                current_url = self.page.url if self.page else ""
-                print(f"警告: Copilot ページのURLが期待値に到達していません (現在: {current_url})。引き続き初期化を試みます。詳細: {wait_error}")
+            copilot_url_patterns = [
+                re.compile(r"^https://m365\.cloud\.microsoft/(?:chat|copilot)(?:/|\?|$)", re.IGNORECASE),
+                re.compile(r"^https://copilot\.microsoft\.com/(?:chat)?(?:/|\?|$)", re.IGNORECASE),
+                re.compile(r"^https://www\.office\.com/launch/copilot", re.IGNORECASE),
+            ]
+
+            def _matches_copilot_url(url: str) -> bool:
+                if not url:
+                    return False
+                sanitized = url.split('#', 1)[0]
+                return any(pattern.search(sanitized) for pattern in copilot_url_patterns)
+
+            current_url = self.page.url if self.page else ""
+            if _matches_copilot_url(current_url):
+                print("Copilot ページのURLを確認しました。")
+            else:
+                print("Copilot ページが表示されるのを待機しています...")
+                try:
+                    self.page.wait_for_url(lambda url: _matches_copilot_url(url), timeout=120000)
+                    current_url = self.page.url if self.page else current_url
+                    print("Copilot ページのロードを確認しました。")
+                except PlaywrightTimeoutError as wait_error:
+                    current_url = self.page.url if self.page else current_url
+                    print(f"警告: Copilot ページのURLが既定のパターンに到達しません (現在: {current_url})。引き続き初期化を試みます。詳細: {wait_error}")
             self.page.wait_for_load_state('domcontentloaded')
             self.page.wait_for_timeout(500)
 
             gpt5_button_factories = [
                 ("button.fui-ToggleButton:has-text('GPT-5 を試す')", lambda: self.page.locator("button.fui-ToggleButton:has-text('GPT-5 を試す')")),
-                ("button#GPT-5 を試す", lambda: self.page.get_by_role("button", name="GPT-5 を試す")),
-                ("button#GPT-5 で質問", lambda: self.page.get_by_role("button", name="GPT-5 で質問")),
-                ("button#GPT-5 を使用", lambda: self.page.get_by_role("button", name="GPT-5 を使用")),
-                ("button#GPT-5", lambda: self.page.get_by_role("button", name="GPT-5")),
-                ("button#Copilot GPT-5", lambda: self.page.get_by_role("button", name="Copilot GPT-5")),
+                ("button role GPT-5 を試す", lambda: self.page.get_by_role("button", name="GPT-5 を試す")),
+                ("button role GPT-5 を試す (部分一致)", lambda: self.page.get_by_role("button", name="GPT-5 を試す", exact=False)),
+                ("button role GPT-5 で質問", lambda: self.page.get_by_role("button", name="GPT-5 で質問")),
+                ("button role GPT-5 を使用", lambda: self.page.get_by_role("button", name="GPT-5 を使用")),
+                ("button role GPT-5", lambda: self.page.get_by_role("button", name="GPT-5")),
+                ("button role Copilot GPT-5", lambda: self.page.get_by_role("button", name="Copilot GPT-5")),
                 ("button role regex GPT-5", lambda: self.page.get_by_role("button", name=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
                 ("menuitem regex GPT-5", lambda: self.page.get_by_role("menuitem", name=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
                 ("button:has-text GPT-5", lambda: self.page.locator("button", has_text=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
@@ -421,7 +438,11 @@ class BrowserCopilotManager:
                 ("aria-label contains GPT-5", lambda: self.page.locator('[aria-label*="GPT-5"]')),
                 ("data-testid=gpt5Button", lambda: self.page.locator('[data-testid="gpt5Button"]')),
                 ("data-testid=GPT5Button", lambda: self.page.locator('[data-testid="GPT5Button"]')),
+                ("text=GPT-5 を試す", lambda: self.page.get_by_text("GPT-5 を試す", exact=False)),
+                ("text=Try GPT-5", lambda: self.page.get_by_text("Try GPT-5", exact=False)),
             ]
+
+            gpt5_button = None
             try:
                 gpt5_button = self._wait_for_first_visible(
                     "GPT-5 モード切り替えボタン",
@@ -429,15 +450,44 @@ class BrowserCopilotManager:
                     timeout=20000,
                 )
             except RuntimeError as gpt5_error:
-                print("GPT-5 モードボタンが見つからなかったため、既定のモードで続行します。")
+                print("GPT-5 モードボタンが見つからなかったため、フォールバック探索を行います。")
                 print(gpt5_error)
-            else:
+                fallback_factories = [
+                    ("role=button GPT-5 を試す (再探索)", lambda: self.page.get_by_role("button", name="GPT-5 を試す", exact=False)),
+                    ("text=GPT-5 を試す", lambda: self.page.get_by_text("GPT-5 を試す", exact=False)),
+                    ("text=Try GPT-5", lambda: self.page.get_by_text("Try GPT-5", exact=False)),
+                ]
+                for description, factory in fallback_factories:
+                    try:
+                        candidate = factory()
+                        candidate.wait_for(state="visible", timeout=5000)
+                        gpt5_button = candidate.first
+                        print(f"GPT-5 モードボタンのフォールバック ({description}) に成功しました。")
+                        break
+                    except Exception as fallback_error:
+                        print(f"GPT-5 モードボタンのフォールバック ({description}) は失敗しました: {fallback_error}")
+            if gpt5_button:
                 print("GPT-5 モードボタンをクリックします...")
                 try:
-                    gpt5_button.click()
-                    self.page.wait_for_timeout(800)
-                except Exception as click_error:
-                    print(f"GPT-5 モードボタンのクリックに失敗しました: {click_error}")
+                    gpt5_button.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                click_attempts = [
+                    ("通常クリック", lambda: gpt5_button.click(timeout=5000)),
+                    ("force オプション", lambda: gpt5_button.click(force=True, timeout=5000)),
+                    ("evaluate click", lambda: gpt5_button.evaluate("el => el.click()")),
+                ]
+                for attempt_label, click_action in click_attempts:
+                    try:
+                        click_action()
+                        self.page.wait_for_timeout(800)
+                        break
+                    except Exception as click_error:
+                        print(f"GPT-5 モードボタンのクリック ({attempt_label}) に失敗しました: {click_error}")
+                else:
+                    print("GPT-5 モードボタンのクリックに失敗しました。直近のエラーをご確認ください。")
+            else:
+                print("GPT-5 モードボタンが見つからなかったため、既定のモードで続行します。")
 
             print("チャット入力欄の読み込みを待機しています。サインインが求められる場合はブラウザで完了してください。")
             try:
