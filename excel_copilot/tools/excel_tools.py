@@ -950,7 +950,7 @@ def translate_range_contents(
             chunk_cell_evidences: Dict[Tuple[int, int], str] = {}
             row_evidence_lines: Dict[int, List[str]] = {}
 
-            for item, (local_row, col_idx) in zip(parsed_payload, chunk_positions):
+            for item_index, (item, (local_row, col_idx)) in enumerate(zip(parsed_payload, chunk_positions)):
                 if use_references and not isinstance(item, dict):
                     raise ToolExecutionError(
                         "Expected translation response items to be objects when references are used."
@@ -998,26 +998,27 @@ def translate_range_contents(
                     elif isinstance(evidence_value, (str, int, float)):
                         explanation_jp = _sanitize_evidence_value(str(evidence_value))
 
-                    validated_quotes: List[str] = []
-                    if quotes:
-                        for quote in quotes:
-                            if not quote:
+                    candidate_quotes: List[str] = []
+                    seen_candidates: Set[str] = set()
+                    def _append_candidates(items):
+                        if not items:
+                            return
+                        for candidate in items:
+                            if not isinstance(candidate, str):
                                 continue
-                            normalized_quote = _normalize_for_match(quote)
-                            if not normalized_quote:
+                            cleaned = candidate.strip()
+                            if not cleaned or cleaned in seen_candidates:
                                 continue
-                            if normalized_reference_text_pool and not any(
-                                normalized_quote in ref_text for ref_text in normalized_reference_text_pool
-                            ):
-                                raise ToolExecutionError(
-                                    f"Quote '{quote}' was not found in the provided references or URLs."
-                                )
-                            validated_quotes.append(quote)
-                    if reference_text_pool and not validated_quotes:
-                        raise ToolExecutionError(
-                            "Expected at least one supporting quote when references are supplied."
-                        )
-
+                            seen_candidates.add(cleaned)
+                            candidate_quotes.append(candidate)
+                    _append_candidates(quotes)
+                    if item_index < len(normalized_quotes_per_item):
+                        _append_candidates(normalized_quotes_per_item[item_index])
+                    final_quotes: List[str] = []
+                    if candidate_quotes:
+                        final_quotes = [q for q in candidate_quotes if q.strip()]
+                    elif item_index < len(normalized_quotes_per_item):
+                        final_quotes = [q for q in normalized_quotes_per_item[item_index] if q.strip()]
                     evidence_lines: List[str] = []
                     explanation_text = None
                     if explanation_jp:
@@ -1026,9 +1027,9 @@ def translate_range_contents(
                         explanation_text = explanation_jp.strip()
                     if explanation_text:
                         evidence_lines.append(f"説明: {explanation_text}")
-                    if validated_quotes:
-                        multiple_quotes = len(validated_quotes) > 1
-                        for idx_quote, quote in enumerate(validated_quotes, start=1):
+                    if final_quotes:
+                        multiple_quotes = len(final_quotes) > 1
+                        for idx_quote, quote in enumerate(final_quotes, start=1):
                             label = f"引用{idx_quote}" if multiple_quotes else "引用"
                             evidence_lines.append(f"{label}: {quote}")
                     combined = "\n".join(evidence_lines).strip()
