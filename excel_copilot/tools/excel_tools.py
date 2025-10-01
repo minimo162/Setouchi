@@ -1019,16 +1019,18 @@ def translate_range_contents(
                         )
 
                     evidence_lines: List[str] = []
+                    explanation_text = None
                     if explanation_jp:
                         if not JAPANESE_CHAR_PATTERN.search(explanation_jp):
                             raise ToolExecutionError("根拠の説明は日本語で記述してください。")
-                        normalized_explanation = explanation_jp
-                    else:
-                        normalized_explanation = "引用をご確認ください。"
-                    evidence_lines.append(f"説明: {normalized_explanation}")
+                        explanation_text = explanation_jp.strip()
+                    if explanation_text:
+                        evidence_lines.append(f"説明: {explanation_text}")
                     if validated_quotes:
-                        for quote in validated_quotes:
-                            evidence_lines.append(f"蠑慕畑: {quote}")
+                        multiple_quotes = len(validated_quotes) > 1
+                        for idx_quote, quote in enumerate(validated_quotes, start=1):
+                            label = f"引用{idx_quote}" if multiple_quotes else "引用"
+                            evidence_lines.append(f"{label}: {quote}")
                     combined = "\n".join(evidence_lines).strip()
 
                     if cite_cols == source_cols:
