@@ -19,6 +19,15 @@ if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
 
 
 
+try:
+    _ITEMS_PER_TRANSLATION_REQUEST = max(
+        1, int(os.getenv('EXCEL_COPILOT_TRANSLATION_ITEMS_PER_REQUEST', '1'))
+    )
+except ValueError:
+    _ITEMS_PER_TRANSLATION_REQUEST = 1
+
+
+
 def _diff_debug(message: str) -> None:
     if _DIFF_DEBUG_ENABLED:
         _logger.debug(message)
@@ -68,8 +77,7 @@ def _generate_keyword_variants(base: str) -> List[str]:
     _add(space_normalised.replace(' ', '-'))
     _add(dash_normalised.replace('-', ' '))
 
-    separators = r'[\\s/\\&+・×-]'
-    raw_tokens = [tok for tok in re.split(separators, space_normalised) if tok]
+    raw_tokens = [tok for tok in re.split(r'[\s/&+\u30fb\uFF65\u301C\uFF5E~]+', space_normalised) if tok]
 
     def _add_word_forms(token: str) -> None:
         if not token:
@@ -452,84 +460,132 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
 
 
 def writetocell(actions: ExcelActions, cell: str, value: Any, sheetname: Optional[str] = None) -> str:
-    """Write a value into a single Excel cell.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        cell: A1-style reference for the destination cell.
-        value: Data to write into the cell.
-        sheetname: Optional sheet override; defaults to the active sheet.
+    """Write a value into a single Excel cell.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        cell: A1-style reference for the destination cell.
+
+        value: Data to write into the cell.
+
+        sheetname: Optional sheet override; defaults to the active sheet.
+
     """
     return actions.write_to_cell(cell, value, sheetname)
 
 def readcellvalue(actions: ExcelActions, cell: str, sheetname: Optional[str] = None) -> Any:
-    """Read the value stored in a single cell.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        cell: A1-style reference to read.
-        sheetname: Optional sheet override; defaults to the active sheet.
+    """Read the value stored in a single cell.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        cell: A1-style reference to read.
+
+        sheetname: Optional sheet override; defaults to the active sheet.
+
     """
     return actions.read_cell_value(cell, sheetname)
 
 def getallsheetnames(actions: ExcelActions) -> str:
-    """Return all sheet names from the active workbook.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
+    """Return all sheet names from the active workbook.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
     """
     names = actions.get_sheet_names()
     return f"利用可能なシートは次の通りです: {', '.join(names)}"
 
 def copyrange(actions: ExcelActions, sourcerange: str, destinationrange: str, sheetname: Optional[str] = None) -> str:
-    """Copy values and formatting from a source range into a destination range.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        sourcerange: A1-style range to copy from.
-        destinationrange: A1-style range to copy into.
-        sheetname: Optional sheet override; defaults to the active sheet.
+    """Copy values and formatting from a source range into a destination range.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        sourcerange: A1-style range to copy from.
+
+        destinationrange: A1-style range to copy into.
+
+        sheetname: Optional sheet override; defaults to the active sheet.
+
     """
     return actions.copy_range(sourcerange, destinationrange, sheetname)
 
 def executeexcelformula(actions: ExcelActions, cell: str, formula: str, sheetname: Optional[str] = None) -> str:
-    """Set or replace an Excel formula on a cell.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        cell: A1-style cell reference where the formula is applied.
-        formula: Excel formula text.
-        sheetname: Optional sheet override; defaults to the active sheet.
+    """Set or replace an Excel formula on a cell.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        cell: A1-style cell reference where the formula is applied.
+
+        formula: Excel formula text.
+
+        sheetname: Optional sheet override; defaults to the active sheet.
+
     """
     return actions.set_formula(cell, formula, sheetname)
 
 def readrangevalues(actions: ExcelActions, cellrange: str, sheetname: Optional[str] = None) -> str:
-    """Read values from a range and summarise the result.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        cellrange: A1-style range to read.
-        sheetname: Optional sheet override; defaults to the active sheet.
+    """Read values from a range and summarise the result.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        cellrange: A1-style range to read.
+
+        sheetname: Optional sheet override; defaults to the active sheet.
+
     """
     values = actions.read_range(cellrange, sheetname)
     return f"範囲 '{cellrange}' の値は次の通りです: {values}"
 
 def writerangevalues(actions: ExcelActions, cellrange: str, data: List[List[Any]], sheetname: Optional[str] = None) -> str:
-    """Write a 2D list of values into a range, validating the shape first.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        cellrange: A1-style range that must match the data shape.
-        data: Two-dimensional list of values to write.
-        sheetname: Optional sheet override; defaults to the active sheet.
+    """Write a 2D list of values into a range, validating the shape first.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        cellrange: A1-style range that must match the data shape.
+
+        data: Two-dimensional list of values to write.
+
+        sheetname: Optional sheet override; defaults to the active sheet.
+
     """
     return actions.write_range(cellrange, data, sheetname)
 
 def getactiveworkbookandsheet(actions: ExcelActions) -> str:
-    """Report the currently active workbook and sheet names.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
+    """Report the currently active workbook and sheet names.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
     """
     info_dict = actions.get_active_workbook_and_sheet()
     return f"ブック: {info_dict['workbook_name']}, シート: {info_dict['sheet_name']}"
@@ -547,22 +603,38 @@ def formatrange(actions: ExcelActions,
                  rowheight: Optional[float] = None,
                  horizontalalignment: Optional[str] = None,
                  borderstyle: Optional[Dict[str, Any]] = None) -> str:
-    """Apply the provided formatting properties to a range.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        cellrange: A1-style range to format.
-        sheetname: Optional sheet override; defaults to the active sheet.
-        fontname: Optional font family to apply.
-        fontsize: Optional font size in points.
-        fontcolorhex: Optional font colour specified as #RRGGBB.
-        bold: Optional flag to toggle bold text.
-        italic: Optional flag to toggle italic text.
-        fillcolorhex: Optional fill colour specified as #RRGGBB.
-        columnwidth: Optional column width in Excel units.
-        rowheight: Optional row height in Excel units.
-        horizontalalignment: Optional horizontal alignment keyword.
-        borderstyle: Optional mapping describing border configuration.
+    """Apply the provided formatting properties to a range.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        cellrange: A1-style range to format.
+
+        sheetname: Optional sheet override; defaults to the active sheet.
+
+        fontname: Optional font family to apply.
+
+        fontsize: Optional font size in points.
+
+        fontcolorhex: Optional font colour specified as #RRGGBB.
+
+        bold: Optional flag to toggle bold text.
+
+        italic: Optional flag to toggle italic text.
+
+        fillcolorhex: Optional fill colour specified as #RRGGBB.
+
+        columnwidth: Optional column width in Excel units.
+
+        rowheight: Optional row height in Excel units.
+
+        horizontalalignment: Optional horizontal alignment keyword.
+
+        borderstyle: Optional mapping describing border configuration.
+
     """
     return actions.format_range(
         cell_range=cellrange,
@@ -807,264 +879,342 @@ def translate_range_contents(
         output_dirty = False
         source_dirty = False
 
+        items_per_request = _ITEMS_PER_TRANSLATION_REQUEST
+
         for row_start in range(0, source_rows, batch_size):
             row_end = min(row_start + batch_size, source_rows)
             chunk_texts: List[str] = []
-            chunk_positions: List[Tuple[int, int]] = []
+            chunk_positions: List[Tuple[int, int, Optional[int]]] = []
+            multi_line_segments: Dict[Tuple[int, int], Dict[str, Any]] = {}
 
             for local_row in range(row_start, row_end):
                 for col_idx in range(source_cols):
                     cell_value = original_data[local_row][col_idx]
-                    if isinstance(cell_value, str) and re.search(r'[ぁ-んァ-ヶ一-龯]', cell_value):
+                    if not isinstance(cell_value, str):
+                        continue
+
+                    cell_key = (local_row, col_idx)
+                    normalized_cell = cell_value.replace('\r\n', '\n').replace('\r', '\n')
+                    if '\n' in normalized_cell:
+                        segments = normalized_cell.split('\n')
+                        pending_indexes: Set[int] = set()
+                        translated_segments: List[Optional[str]] = []
+                        for seg_index, segment_text in enumerate(segments):
+                            if JAPANESE_CHAR_PATTERN.search(segment_text):
+                                chunk_texts.append(segment_text)
+                                chunk_positions.append((local_row, col_idx, seg_index))
+                                pending_indexes.add(seg_index)
+                                translated_segments.append(None)
+                            else:
+                                translated_segments.append(segment_text)
+                        if pending_indexes:
+                            multi_line_segments[cell_key] = {
+                                "segments": segments,
+                                "translated_segments": translated_segments,
+                                "pending_indexes": pending_indexes,
+                                "explanations": {},
+                                "quotes": {},
+                            }
+                            continue
+
+                    if JAPANESE_CHAR_PATTERN.search(cell_value):
                         chunk_texts.append(cell_value)
-                        chunk_positions.append((local_row, col_idx))
+                        chunk_positions.append((local_row, col_idx, None))
 
             if not chunk_texts:
                 continue
 
-
-
-            texts_json = json.dumps(chunk_texts, ensure_ascii=False)
-
-            keyword_prompt = (
-                "For each Japanese item in the JSON array below, supply 5-8 concise English search phrases.\n"
-                "Include key entities, actions, numbers, and dates, and avoid inventing unsupported ideas.\n"
-                "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
-                f"{texts_json}"
-            )
-            keyword_response = browser_manager.ask(keyword_prompt)
-            try:
-                match = re.search(r'{.*}|\[.*\]', keyword_response, re.DOTALL)
-                keyword_payload = match.group(0) if match else keyword_response
-                keyword_items = json.loads(keyword_payload)
-            except json.JSONDecodeError as exc:
-                raise ToolExecutionError(
-                    f"Failed to parse keyword generation response as JSON: {keyword_response}"
-                ) from exc
-            if not isinstance(keyword_items, list) or len(keyword_items) != len(chunk_texts):
-                raise ToolExecutionError(
-                    "Keyword response must be a list with one entry per source text."
-                )
-
-            normalized_keywords: List[List[str]] = []
-            for item in keyword_items:
-                if isinstance(item, dict):
-                    raw_keywords = item.get("keywords")
-                elif isinstance(item, list):
-                    raw_keywords = item
-                else:
-                    raw_keywords = None
-                if not raw_keywords or not isinstance(raw_keywords, list):
-                    raise ToolExecutionError(
-                        "Each keyword entry must contain a 'keywords' list."
-                    )
-                keyword_list = []
-                for keyword in raw_keywords:
-                    if isinstance(keyword, str):
-                        cleaned = keyword.strip()
-                        if cleaned:
-                            keyword_list.append(cleaned)
-                if not keyword_list:
-                    raise ToolExecutionError(
-                        "Each keyword entry must include at least one non-empty keyword."
-                    )
-                normalized_keywords.append(keyword_list)
-
-            expanded_keywords: List[List[str]] = []
-            max_keyword_variants = 12 if use_references else 8
-            for base_keywords in normalized_keywords:
-                expanded = _expand_keyword_variants(base_keywords, max_keyword_variants)
-                if not expanded:
-                    expanded = base_keywords[:max_keyword_variants]
-                expanded_keywords.append(expanded)
-
-            keyword_plan_lines: List[str] = []
-            for index, (source_text, keywords) in enumerate(zip(chunk_texts, expanded_keywords), start=1):
-                keyword_plan_lines.append(f"Item {index}:")
-                keyword_plan_lines.append(f"- Japanese: {source_text}")
-                keyword_plan_lines.append("- Search keywords:")
-                for keyword in keywords:
-                    keyword_plan_lines.append(f"  * {keyword}")
-            keyword_plan_text = "\n".join(keyword_plan_lines)
-
-            reference_passage_text = ""
-            if reference_entries:
-                passage_lines: List[str] = []
-                for entry in reference_entries:
-                    label_parts = [entry.get("id")]
-                    sheet_name = entry.get("sheet")
-                    if sheet_name:
-                        label_parts.append(f"sheet {sheet_name}")
-                    source_range = entry.get("source_range")
-                    if source_range:
-                        label_parts.append(f"range {source_range}")
-                    header = " ".join(part for part in label_parts if part) or "Reference"
-                    passage_lines.append(f"{header}:")
-                    for content_line in entry.get("content", []):
-                        passage_lines.append(f"  - {content_line}")
-                reference_passage_text = "\n".join(passage_lines)
-
-            reference_urls_text = ""
-            if reference_url_entries:
-                reference_urls_text = "\n".join(
-                    entry["url"] for entry in reference_url_entries if entry.get("url")
-                )
-
-            if use_references:
-                evidence_prompt_sections: List[str] = [
-                    "Use the keywords to pull English sentences from the provided materials that support each Japanese item.",
-                    "Copy sentences verbatim (punctuation, casing, numerals) and aim for 3-6 varied quotes; use an empty array if nothing fits.",
-                    "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
-                    "",
-                    "Japanese texts with search keywords:",
-                    keyword_plan_text,
-                    "",
-                ]
-                if reference_passage_text:
-                    evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
-                if reference_urls_text:
-                    evidence_prompt_sections.extend(["Reference URLs:", reference_urls_text, ""])
-            else:
-                evidence_prompt_sections = [
-                    "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
-                    "Return a JSON array matching the order. Each element must include a 'quotes' array and an 'explanation_jp' string (>=2 Japanese sentences).",
-                    "",
-                    "Japanese texts with search keywords:",
-                    keyword_plan_text,
-                    "",
-                ]
-            evidence_prompt = "\n".join(evidence_prompt_sections)
-            evidence_response = browser_manager.ask(evidence_prompt)
-            try:
-                match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
-                evidence_payload = match.group(0) if match else evidence_response
-                evidence_items = json.loads(evidence_payload)
-            except json.JSONDecodeError as exc:
-                raise ToolExecutionError(
-                    f"Failed to parse evidence response as JSON: {evidence_response}"
-                ) from exc
-            if not isinstance(evidence_items, list) or len(evidence_items) != len(chunk_texts):
-                raise ToolExecutionError(
-                    "Evidence response must be a list with one entry per source text."
-                )
-
-            normalized_quotes_per_item: List[List[str]] = []
-            for quotes_entry in evidence_items:
-                if isinstance(quotes_entry, dict):
-                    raw_quotes = quotes_entry.get("quotes")
-                    if raw_quotes is None:
-                        translated_candidate = quotes_entry.get("translated_text")
-                        if isinstance(translated_candidate, str) and translated_candidate.strip():
-                            raw_quotes = [translated_candidate]
-                elif isinstance(quotes_entry, list):
-                    raw_quotes = quotes_entry
-                else:
-                    raw_quotes = None
-                quotes_list: List[str] = []
-                if isinstance(raw_quotes, list):
-                    for quote in raw_quotes:
-                        if isinstance(quote, str):
-                            cleaned_quote = quote.strip()
-                            if cleaned_quote:
-                                quotes_list.append(cleaned_quote)
-                normalized_quotes_per_item.append(quotes_list)
-
-            translation_context = [
-                {
-                    "source_text": text,
-                    "keywords": keywords,
-                    "quotes": normalized_quotes_per_item[index] if index < len(normalized_quotes_per_item) else []
-                }
-                for index, (text, keywords) in enumerate(zip(chunk_texts, expanded_keywords))
-            ]
-            translation_context_json = json.dumps(translation_context, ensure_ascii=False)
-
-            final_prompt = (
-                f"{prompt_preamble}{texts_json}"
-                "Write natural English translations that stay faithful to each Japanese sentence.\n"
-                "Use the supporting expressions only when they fit; do not add or omit facts.\n"
-                "Return a JSON array where every element has 'translated_text' and 'explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
-                f"Supporting expressions (JSON): {translation_context_json}\n"
-            )
-            response = browser_manager.ask(final_prompt)
-
-            try:
-                match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
-                json_payload = match.group(0) if match else response
-                parsed_payload = json.loads(json_payload)
-            except json.JSONDecodeError as exc:
-                raise ToolExecutionError(
-                    f"Failed to parse translation response as JSON: {response}"
-                ) from exc
-
-            if not isinstance(parsed_payload, list) or len(parsed_payload) != len(chunk_texts):
-                raise ToolExecutionError(
-                    "Translation response must be a list with one entry per source text."
-                )
-
             chunk_cell_evidences: Dict[Tuple[int, int], Dict[str, Any]] = {}
             row_evidence_details: Dict[int, List[Dict[str, Any]]] = {}
 
-            for item_index, (item, (local_row, col_idx)) in enumerate(zip(parsed_payload, chunk_positions)):
-                translation_value: Optional[str] = None
-                explanation_jp = ""
+            chunk_entries = list(zip(chunk_texts, chunk_positions))
+            for entry_start in range(0, len(chunk_entries), items_per_request):
+                entry_slice = chunk_entries[entry_start:entry_start + items_per_request]
+                current_texts = [text for text, _ in entry_slice]
+                current_positions = [pos for _, pos in entry_slice]
 
-                if isinstance(item, dict):
-                    translation_value = (
-                        item.get("translated_text")
-                        or item.get("translation")
-                        or item.get("output")
-                    )
-                    raw_explanation = (
-                        item.get("explanation_jp")
-                        or item.get("explanation")
-                    )
-                    if raw_explanation is None:
-                        evidence_value = item.get("evidence")
-                        if isinstance(evidence_value, dict):
-                            raw_explanation = (
-                                evidence_value.get("explanation_jp")
-                                or evidence_value.get("explanation")
-                            )
-                    if isinstance(raw_explanation, (str, int, float)):
-                        explanation_jp = _sanitize_evidence_value(str(raw_explanation))
-                elif isinstance(item, str):
-                    translation_value = item
+                texts_json = json.dumps(current_texts, ensure_ascii=False)
 
-                if not isinstance(translation_value, str):
+                keyword_prompt = (
+                    "For each Japanese item in the JSON array below, supply 5-8 concise English search phrases.\n"
+                    "Include key entities, actions, numbers, and dates, and avoid inventing unsupported ideas.\n"
+                    "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
+                    f"{texts_json}"
+                )
+                keyword_response = browser_manager.ask(keyword_prompt)
+                try:
+                    match = re.search(r'{.*}|\[.*\]', keyword_response, re.DOTALL)
+                    keyword_payload = match.group(0) if match else keyword_response
+                    keyword_items = json.loads(keyword_payload)
+                except json.JSONDecodeError as exc:
                     raise ToolExecutionError(
-                        "Translation response must include a 'translated_text' string for each item."
+                        f"Failed to parse keyword generation response as JSON: {keyword_response}"
+                    ) from exc
+                if not isinstance(keyword_items, list) or len(keyword_items) != len(current_texts):
+                    raise ToolExecutionError(
+                        "Keyword response must be a list with one entry per source text."
                     )
 
-                translation_value = translation_value.strip()
-                if not translation_value:
-                    raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+                normalized_keywords: List[List[str]] = []
+                for item in keyword_items:
+                    if isinstance(item, dict):
+                        raw_keywords = item.get("keywords")
+                    elif isinstance(item, list):
+                        raw_keywords = item
+                    else:
+                        raw_keywords = None
+                    if not raw_keywords or not isinstance(raw_keywords, list):
+                        raise ToolExecutionError(
+                            "Each keyword entry must contain a 'keywords' list."
+                        )
+                    keyword_list = []
+                    for keyword in raw_keywords:
+                        if isinstance(keyword, str):
+                            cleaned = keyword.strip()
+                            if cleaned:
+                                keyword_list.append(cleaned)
+                    if not keyword_list:
+                        raise ToolExecutionError(
+                            "Each keyword entry must include at least one non-empty keyword."
+                        )
+                    normalized_keywords.append(keyword_list)
 
-                if writing_to_source_directly:
-                    translation_col_index = col_idx
-                    quotes_col_index = None
-                    explanation_col_index = None
+                expanded_keywords: List[List[str]] = []
+                max_keyword_variants = 12 if use_references else 8
+                for base_keywords in normalized_keywords:
+                    expanded = _expand_keyword_variants(base_keywords, max_keyword_variants)
+                    if not expanded:
+                        expanded = base_keywords[:max_keyword_variants]
+                    expanded_keywords.append(expanded)
+
+                keyword_plan_lines: List[str] = []
+                for index, (source_text, keywords) in enumerate(zip(current_texts, expanded_keywords), start=1):
+                    keyword_plan_lines.append(f"Item {index}:")
+                    keyword_plan_lines.append(f"- Japanese: {source_text}")
+                    keyword_plan_lines.append("- Search keywords:")
+                    for keyword in keywords:
+                        keyword_plan_lines.append(f"  * {keyword}")
+                keyword_plan_text = "\n".join(keyword_plan_lines)
+
+                reference_passage_text = ""
+                if reference_entries:
+                    passage_lines: List[str] = []
+                    for entry in reference_entries:
+                        label_parts = [entry.get("id")]
+                        sheet_name = entry.get("sheet")
+                        if sheet_name:
+                            label_parts.append(f"sheet {sheet_name}")
+                        source_range = entry.get("source_range")
+                        if source_range:
+                            label_parts.append(f"range {source_range}")
+                        header = " ".join(part for part in label_parts if part) or "Reference"
+                        passage_lines.append(f"{header}:")
+                        for content_line in entry.get("content", []):
+                            passage_lines.append(f"  - {content_line}")
+                    reference_passage_text = "\n".join(passage_lines)
+
+                reference_urls_text = ""
+                if reference_url_entries:
+                    reference_urls_text = "\n".join(
+                        entry["url"] for entry in reference_url_entries if entry.get("url")
+                    )
+
+                if use_references:
+                    evidence_prompt_sections: List[str] = [
+                        "Use the keywords to pull English sentences from the provided materials that support each Japanese item.",
+                        "Copy sentences verbatim (punctuation, casing, numerals) and aim for 3-6 varied quotes; use an empty array if nothing fits.",
+                        "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
+                        "",
+                        "Japanese texts with search keywords:",
+                        keyword_plan_text,
+                        "",
+                    ]
+                    if reference_passage_text:
+                        evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
+                    if reference_urls_text:
+                        evidence_prompt_sections.extend(["Reference URLs:", reference_urls_text, ""])
                 else:
-                    translation_col_index = col_idx * 3
-                    quotes_col_index = translation_col_index + 1
-                    explanation_col_index = translation_col_index + 2
+                    evidence_prompt_sections = [
+                        "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
+                        "Return a JSON array matching the order. Each element must include a 'quotes' array and an 'explanation_jp' string (>=2 Japanese sentences).",
+                        "",
+                        "Japanese texts with search keywords:",
+                        keyword_plan_text,
+                        "",
+                    ]
+                evidence_prompt = "\n".join(evidence_prompt_sections)
+                evidence_response = browser_manager.ask(evidence_prompt)
+                try:
+                    match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
+                    evidence_payload = match.group(0) if match else evidence_response
+                    evidence_items = json.loads(evidence_payload)
+                except json.JSONDecodeError as exc:
+                    raise ToolExecutionError(
+                        f"Failed to parse evidence response as JSON: {evidence_response}"
+                    ) from exc
+                if not isinstance(evidence_items, list) or len(evidence_items) != len(current_texts):
+                    raise ToolExecutionError(
+                        "Evidence response must be a list with one entry per source text."
+                    )
 
-                existing_output_value = output_matrix[local_row][translation_col_index]
-                if translation_value != existing_output_value:
-                    output_matrix[local_row][translation_col_index] = translation_value
-                    output_dirty = True
-                if not writing_to_source_directly and overwrite_source:
-                    existing_source_value = source_matrix[local_row][col_idx]
-                    if translation_value != existing_source_value:
-                        source_matrix[local_row][col_idx] = translation_value
-                        source_dirty = True
+                normalized_quotes_per_item: List[List[str]] = []
+                for quotes_entry in evidence_items:
+                    if isinstance(quotes_entry, dict):
+                        raw_quotes = quotes_entry.get("quotes")
+                        if raw_quotes is None:
+                            translated_candidate = quotes_entry.get("translated_text")
+                            if isinstance(translated_candidate, str) and translated_candidate.strip():
+                                raw_quotes = [translated_candidate]
+                    elif isinstance(quotes_entry, list):
+                        raw_quotes = quotes_entry
+                    else:
+                        raw_quotes = None
+                    quotes_list: List[str] = []
+                    if isinstance(raw_quotes, list):
+                        for quote in raw_quotes:
+                            if isinstance(quote, str):
+                                cleaned_quote = quote.strip()
+                                if cleaned_quote:
+                                    quotes_list.append(cleaned_quote)
+                    normalized_quotes_per_item.append(quotes_list)
 
-                any_translation = True
+                translation_context = [
+                    {
+                        "source_text": text,
+                        "keywords": keywords,
+                        "quotes": normalized_quotes_per_item[index] if index < len(normalized_quotes_per_item) else []
+                    }
+                    for index, (text, keywords) in enumerate(zip(current_texts, expanded_keywords))
+                ]
+                translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
-                final_quotes: List[str] = []
-                if item_index < len(normalized_quotes_per_item):
+                final_prompt = (
+                    f"{prompt_preamble}{texts_json}"
+                    "Write natural English translations that stay faithful to each Japanese sentence.\n"
+                    "Use the supporting expressions only when they fit; do not add or omit facts.\n"
+                    "Return a JSON array where every element has 'translated_text' and 'explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
+                    f"Supporting expressions (JSON): {translation_context_json}\n"
+                )
+                response = browser_manager.ask(final_prompt)
+
+                try:
+                    match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
+                    json_payload = match.group(0) if match else response
+                    parsed_payload = json.loads(json_payload)
+                except json.JSONDecodeError as exc:
+                    raise ToolExecutionError(
+                        f"Failed to parse translation response as JSON: {response}"
+                    ) from exc
+
+                if not isinstance(parsed_payload, list) or len(parsed_payload) != len(current_texts):
+                    raise ToolExecutionError(
+                        "Translation response must be a list with one entry per source text."
+                    )
+
+                for item_index, (item, position) in enumerate(zip(parsed_payload, current_positions)):
+                    translation_value: Optional[str] = None
+                    explanation_jp = ""
+
+                    if isinstance(item, dict):
+                        translation_value = (
+                            item.get("translated_text")
+                            or item.get("translation")
+                            or item.get("output")
+                        )
+                        raw_explanation = (
+                            item.get("explanation_jp")
+                            or item.get("explanation")
+                        )
+                        if raw_explanation is None:
+                            evidence_value = item.get("evidence")
+                            if isinstance(evidence_value, dict):
+                                raw_explanation = (
+                                    evidence_value.get("explanation_jp")
+                                    or evidence_value.get("explanation")
+                                )
+                        if isinstance(raw_explanation, (str, int, float)):
+                            explanation_jp = _sanitize_evidence_value(str(raw_explanation))
+                    elif isinstance(item, str):
+                        translation_value = item
+
+                    if not isinstance(translation_value, str):
+                        raise ToolExecutionError(
+                            "Translation response must include a 'translated_text' string for each item."
+                        )
+
+                    translation_value = translation_value.strip()
+                    if not translation_value:
+                        raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+
+                    if len(position) == 3:
+                        local_row, col_idx, segment_index = position
+                    else:
+                        local_row, col_idx = position
+                        segment_index = None
+
+                    if writing_to_source_directly:
+                        translation_col_index = col_idx
+                        quotes_col_index = None
+                        explanation_col_index = None
+                    else:
+                        translation_col_index = col_idx * 3
+                        quotes_col_index = translation_col_index + 1
+                        explanation_col_index = translation_col_index + 2
+
+                    explanation_text = explanation_jp.strip()
+                    quote_candidates = []
+                    if item_index < len(normalized_quotes_per_item):
+                        raw_candidates = normalized_quotes_per_item[item_index]
+                        if isinstance(raw_candidates, list):
+                            quote_candidates = raw_candidates
+
+                    cell_key = (local_row, col_idx)
+                    multi_segment_state = multi_line_segments.get(cell_key)
+                    if multi_segment_state and segment_index is not None:
+                        multi_segment_state['translated_segments'][segment_index] = translation_value
+                        if explanation_text:
+                            multi_segment_state.setdefault('explanations', {})[segment_index] = explanation_text
+                        if quote_candidates:
+                            multi_segment_state.setdefault('quotes', {})[segment_index] = quote_candidates
+                        pending = multi_segment_state.get('pending_indexes')
+                        if pending is not None:
+                            pending.discard(segment_index)
+                            if pending:
+                                continue
+                        translated_segments = []
+                        for idx, segment in enumerate(multi_segment_state.get('translated_segments', [])):
+                            if segment is None:
+                                translated_segments.append(multi_segment_state['segments'][idx])
+                            else:
+                                translated_segments.append(segment)
+                        translation_value = "\n".join(translated_segments)
+                        ordered_explanations = [
+                            multi_segment_state.get('explanations', {}).get(idx, '')
+                            for idx in range(len(multi_segment_state.get('segments', [])))
+                        ]
+                        explanation_text = "\n".join([entry for entry in ordered_explanations if entry]).strip()
+                        aggregated_quotes = []
+                        for idx in range(len(multi_segment_state.get('segments', []))):
+                            aggregated_quotes.extend(
+                                multi_segment_state.get('quotes', {}).get(idx, [])
+                            )
+                        quote_candidates = aggregated_quotes
+
+                    existing_output_value = output_matrix[local_row][translation_col_index]
+                    if translation_value != existing_output_value:
+                        output_matrix[local_row][translation_col_index] = translation_value
+                        output_dirty = True
+                    if not writing_to_source_directly and overwrite_source:
+                        existing_source_value = source_matrix[local_row][col_idx]
+                        if translation_value != existing_source_value:
+                            source_matrix[local_row][col_idx] = translation_value
+                            source_dirty = True
+
+                    any_translation = True
+
+                    final_quotes: List[str] = []
                     seen_quotes: Set[str] = set()
-                    for candidate in normalized_quotes_per_item[item_index]:
+                    for candidate in quote_candidates or []:
                         if not isinstance(candidate, str):
                             continue
                         cleaned_candidate = candidate.strip()
@@ -1073,76 +1223,74 @@ def translate_range_contents(
                         seen_quotes.add(cleaned_candidate)
                         final_quotes.append(cleaned_candidate)
 
-                explanation_text = explanation_jp.strip()
-                fallback_reason: Optional[str] = None
-                if use_references:
-                    default_explanation = "参照資料の内容を踏まえ、原文の意味と語調を保つように訳語を選定しました。"
-                    if not explanation_text:
-                        explanation_text = default_explanation
-                        fallback_reason = "explanation_jp が欠落していたため既定の説明文を補いました。"
-                    elif not JAPANESE_CHAR_PATTERN.search(explanation_text):
-                        explanation_text = default_explanation
-                        fallback_reason = "explanation_jp に日本語が含まれていなかったため既定の説明文を補いました。"
-                    elif len(explanation_text) < 20:
-                        explanation_text = (
-                            explanation_text + "。原文の語調と用語整合性を確認して訳語を決定しました。"
-                        ).strip()
-                        if len(explanation_text) < 20 or not JAPANESE_CHAR_PATTERN.search(explanation_text):
+                    fallback_reason: Optional[str] = None
+                    if use_references:
+                        default_explanation = "参照資料の内容を踏まえ、原文の意味と語調を保つように訳語を選定しました。"
+                        if not explanation_text:
                             explanation_text = default_explanation
-                            fallback_reason = "explanation_jp が短すぎたため既定の説明文を補いました。"
-                        else:
-                            fallback_reason = "explanation_jp が短かったため補足説明を追加しました。"
+                            fallback_reason = "explanation_jp が欠落していたため既定の説明文を補いました。"
+                        elif not JAPANESE_CHAR_PATTERN.search(explanation_text):
+                            explanation_text = default_explanation
+                            fallback_reason = "explanation_jp に日本語が含まれていなかったため既定の説明文を補いました。"
+                        elif len(explanation_text) < 20:
+                            explanation_text = (
+                                explanation_text + "。原文の語調と用語整合性を確認して訳語を決定しました。"
+                            ).strip()
+                            if len(explanation_text) < 20 or not JAPANESE_CHAR_PATTERN.search(explanation_text):
+                                explanation_text = default_explanation
+                                fallback_reason = "explanation_jp が短すぎたため既定の説明文を補いました。"
+                            else:
+                                fallback_reason = "explanation_jp が短かったため補足説明を追加しました。"
 
-                    if fallback_reason:
-                        absolute_row = source_start_row + local_row
-                        absolute_col = source_start_col + col_idx
-                        cell_ref = _build_range_reference(
-                            absolute_row,
-                            absolute_row,
-                            absolute_col,
-                            absolute_col,
-                        )
-                        if target_sheet:
-                            cell_ref = f"{target_sheet}!{cell_ref}"
-                        explanation_fallback_notes.append(f"{cell_ref}: {fallback_reason}")
+                        if fallback_reason:
+                            absolute_row = source_start_row + local_row
+                            absolute_col = source_start_col + col_idx
+                            cell_ref = _build_range_reference(
+                                absolute_row,
+                                absolute_row,
+                                absolute_col,
+                                absolute_col,
+                            )
+                            if target_sheet:
+                                cell_ref = f"{target_sheet}!{cell_ref}"
+                            explanation_fallback_notes.append(f"{cell_ref}: {fallback_reason}")
 
-                if quotes_col_index is not None and explanation_col_index is not None:
-                    quotes_text = "\n".join(final_quotes)
-                    if output_matrix[local_row][quotes_col_index] != quotes_text:
-                        output_matrix[local_row][quotes_col_index] = quotes_text
-                        output_dirty = True
-                    if output_matrix[local_row][explanation_col_index] != explanation_text:
-                        output_matrix[local_row][explanation_col_index] = explanation_text
-                        output_dirty = True
+                    if quotes_col_index is not None and explanation_col_index is not None:
+                        quotes_text = "\n".join(final_quotes)
+                        if output_matrix[local_row][quotes_col_index] != quotes_text:
+                            output_matrix[local_row][quotes_col_index] = quotes_text
+                            output_dirty = True
+                        if output_matrix[local_row][explanation_col_index] != explanation_text:
+                            output_matrix[local_row][explanation_col_index] = explanation_text
+                            output_dirty = True
 
-                if use_references:
-                    if not explanation_text:
-                        raise ToolExecutionError("Translation response must include an 'explanation_jp' string for each item.")
-                    if not JAPANESE_CHAR_PATTERN.search(explanation_text):
-                        raise ToolExecutionError("explanation_jp の記載は必ず日本語で行ってください。")
-                    if len(explanation_text) < 20:
-                        raise ToolExecutionError("explanation_jp には翻訳判断を具体的に説明してください (20文字以上)。")
+                    if use_references:
+                        if not explanation_text:
+                            raise ToolExecutionError("Translation response must include an 'explanation_jp' string for each item.")
+                        if not JAPANESE_CHAR_PATTERN.search(explanation_text):
+                            raise ToolExecutionError("explanation_jp の記載は必ず日本語で行ってください。")
+                        if len(explanation_text) < 20:
+                            raise ToolExecutionError("explanation_jp には翻訳判断を具体的に説明してください (20文字以上)。")
 
-                quotes_lines: List[str] = []
-                if final_quotes:
-                    multiple_quotes = len(final_quotes) > 1
-                    for idx_quote, quote in enumerate(final_quotes, start=1):
-                        label = f"引用{idx_quote}" if multiple_quotes else "引用"
-                        quotes_lines.append(f"{label}: {quote}")
+                    quotes_lines: List[str] = []
+                    if final_quotes:
+                        multiple_quotes = len(final_quotes) > 1
+                        for idx_quote, quote in enumerate(final_quotes, start=1):
+                            label = f"引用{idx_quote}" if multiple_quotes else "引用"
+                            quotes_lines.append(f"{label}: {quote}")
 
-                evidence_record = {
-                    "explanation": explanation_text,
-                    "quotes_lines": quotes_lines,
-                }
+                    evidence_record = {
+                        "explanation": explanation_text,
+                        "quotes_lines": quotes_lines,
+                    }
 
-                if use_references:
-                    if citation_mode == "paired_columns":
-                        chunk_cell_evidences[(local_row, col_idx)] = evidence_record
-                    elif citation_mode == "per_cell":
-                        chunk_cell_evidences[(local_row, col_idx)] = evidence_record
-                    elif citation_mode == "single_column":
-                        row_evidence_details.setdefault(local_row, []).append(evidence_record)
-
+                    if use_references:
+                        if citation_mode == "paired_columns":
+                            chunk_cell_evidences[(local_row, col_idx)] = evidence_record
+                        elif citation_mode == "per_cell":
+                            chunk_cell_evidences[(local_row, col_idx)] = evidence_record
+                        elif citation_mode == "single_column":
+                            row_evidence_details.setdefault(local_row, []).append(evidence_record)
             if use_references and citation_matrix is not None:
                 if citation_mode == "paired_columns":
                     for local_row in range(row_start, row_end):
@@ -1260,20 +1408,34 @@ def check_translation_quality(
     sheet_name: Optional[str] = None,
     batch_size: int = 1,
 ) -> str:
-    """Translate text in a range and write the output plus optional context.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        browser_manager: Shared browser manager used for translation API calls.
-        cell_range: Range containing the source text.
-        target_language: Target language name, defaults to English.
-        sheet_name: Optional sheet override; defaults to the active sheet.
-        reference_ranges: Optional list of ranges containing reference material.
-        citation_output_range: Optional range used to store citation markers.
-        reference_urls: Optional list of reference URLs to include in the output.
-        translation_output_range: Optional range for translated rows (three columns per source column).
-        overwrite_source: Whether to overwrite the source range directly.
-        rows_per_batch: Optional maximum number of rows per translation request.
+    """Translate text in a range and write the output plus optional context.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        browser_manager: Shared browser manager used for translation API calls.
+
+        cell_range: Range containing the source text.
+
+        target_language: Target language name, defaults to English.
+
+        sheet_name: Optional sheet override; defaults to the active sheet.
+
+        reference_ranges: Optional list of ranges containing reference material.
+
+        citation_output_range: Optional range used to store citation markers.
+
+        reference_urls: Optional list of reference URLs to include in the output.
+
+        translation_output_range: Optional range for translated rows (three columns per source column).
+
+        overwrite_source: Whether to overwrite the source range directly.
+
+        rows_per_batch: Optional maximum number of rows per translation request.
+
     """
     try:
 
@@ -1647,25 +1809,41 @@ def insert_shape(actions: ExcelActions,
                  sheet_name: Optional[str] = None,
                  fill_color_hex: Optional[str] = None,
                  line_color_hex: Optional[str] = None) -> str:
-    """Insert a drawing shape anchored to the specified range.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        cell_range: Anchor range whose top-left corner is used for placement.
-        shape_type: Excel shape type name (for example Rectangle).
-        sheet_name: Optional sheet override; defaults to the active sheet.
-        fill_color_hex: Optional fill colour specified as #RRGGBB.
-        line_color_hex: Optional outline colour specified as #RRGGBB.
+    """Insert a drawing shape anchored to the specified range.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        cell_range: Anchor range whose top-left corner is used for placement.
+
+        shape_type: Excel shape type name (for example Rectangle).
+
+        sheet_name: Optional sheet override; defaults to the active sheet.
+
+        fill_color_hex: Optional fill colour specified as #RRGGBB.
+
+        line_color_hex: Optional outline colour specified as #RRGGBB.
+
     """
     return actions.insert_shape_in_range(cell_range, shape_type, sheet_name, fill_color_hex, line_color_hex)
 
 def format_shape(actions: ExcelActions, fill_color_hex: Optional[str] = None, line_color_hex: Optional[str] = None, sheet_name: Optional[str] = None) -> str:
-    """Format the most recently inserted shape.
-    
-    Args:
-        actions: Excel automation helper injected by the agent runtime.
-        fill_color_hex: Optional fill colour specified as #RRGGBB.
-        line_color_hex: Optional outline colour specified as #RRGGBB.
-        sheet_name: Optional sheet override; defaults to the active sheet.
+    """Format the most recently inserted shape.
+
+    
+
+    Args:
+
+        actions: Excel automation helper injected by the agent runtime.
+
+        fill_color_hex: Optional fill colour specified as #RRGGBB.
+
+        line_color_hex: Optional outline colour specified as #RRGGBB.
+
+        sheet_name: Optional sheet override; defaults to the active sheet.
+
     """
     return actions.format_last_shape(fill_color_hex, line_color_hex, sheet_name)
