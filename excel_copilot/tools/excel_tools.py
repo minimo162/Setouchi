@@ -1397,6 +1397,67 @@ def translate_range_contents(
     except Exception as exc:
         raise ToolExecutionError(f"範囲 '{cell_range}' の更新中にエラーが発生しました: {exc}") from exc
 
+def translate_range_without_references(
+    actions: ExcelActions,
+    browser_manager: BrowserCopilotManager,
+    cell_range: str,
+    target_language: str = "English",
+    sheet_name: Optional[str] = None,
+    translation_output_range: Optional[str] = None,
+    overwrite_source: bool = False,
+    rows_per_batch: Optional[int] = None,
+) -> str:
+    """Translate ranges without using external reference material."""
+    if rows_per_batch is not None and rows_per_batch < 1:
+        raise ToolExecutionError("rows_per_batch must be at least 1 when provided.")
+
+    return translate_range_contents(
+        actions=actions,
+        browser_manager=browser_manager,
+        cell_range=cell_range,
+        target_language=target_language,
+        sheet_name=sheet_name,
+        reference_ranges=None,
+        citation_output_range=None,
+        reference_urls=None,
+        translation_output_range=translation_output_range,
+        overwrite_source=overwrite_source,
+        rows_per_batch=rows_per_batch,
+    )
+
+
+def translate_range_with_references(
+    actions: ExcelActions,
+    browser_manager: BrowserCopilotManager,
+    cell_range: str,
+    target_language: str = "English",
+    sheet_name: Optional[str] = None,
+    reference_ranges: Optional[List[str]] = None,
+    reference_urls: Optional[List[str]] = None,
+    translation_output_range: Optional[str] = None,
+    citation_output_range: Optional[str] = None,
+    overwrite_source: bool = False,
+) -> str:
+    """Translate ranges while consulting the supplied references per cell."""
+    if not reference_ranges and not reference_urls:
+        raise ToolExecutionError(
+            "Either reference_ranges or reference_urls must be provided when using translate_range_with_references."
+        )
+
+    return translate_range_contents(
+        actions=actions,
+        browser_manager=browser_manager,
+        cell_range=cell_range,
+        target_language=target_language,
+        sheet_name=sheet_name,
+        reference_ranges=reference_ranges,
+        citation_output_range=citation_output_range,
+        reference_urls=reference_urls,
+        translation_output_range=translation_output_range,
+        overwrite_source=overwrite_source,
+        rows_per_batch=1,
+    )
+
 def check_translation_quality(
     actions: ExcelActions,
     browser_manager: BrowserCopilotManager,
@@ -1848,3 +1909,4 @@ def format_shape(actions: ExcelActions, fill_color_hex: Optional[str] = None, li
 
     """
     return actions.format_last_shape(fill_color_hex, line_color_hex, sheet_name)
+

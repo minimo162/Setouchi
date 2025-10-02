@@ -138,9 +138,17 @@ class CopilotWorker:
         trimmed_input = (user_input or "").strip()
         if self.mode is CopilotMode.TRANSLATION:
             prefix_lines = [
-                "[Translation Mode Request]",
-                "- Solve this by calling `translate_range_contents` with explicit ranges (source, output, citations as needed).",
+                "[Translation (No References) Mode Request]",
+                "- Solve this by calling `translate_range_without_references` with explicit source and output ranges.",
                 "- Keep translation, quote, and explanation columns aligned with the specified output range.",
+                "- Do not request workbook uploads; Excel is already connected.",
+            ]
+        elif self.mode is CopilotMode.TRANSLATION_WITH_REFERENCES:
+            prefix_lines = [
+                "[Translation (With References) Mode Request]",
+                "- Solve this by calling `translate_range_with_references` and include the reference ranges or URLs provided by the user.",
+                "- Work one cell at a time without `rows_per_batch`; split multi-row ranges across multiple calls.",
+                "- Provide citation output when evidence is expected and keep translation, quote, and explanation columns aligned.",
                 "- Do not request workbook uploads; Excel is already connected.",
             ]
         else:
@@ -155,10 +163,12 @@ class CopilotWorker:
             return prefix
         return f"{prefix}\n\nUser instruction:\n{trimmed_input}"
 
+
     def _load_tools(self, mode: Optional[CopilotMode] = None):
         target_mode = mode or self.mode
         allowed_by_mode: Dict[CopilotMode, List[str]] = {
-            CopilotMode.TRANSLATION: ["translate_range_contents"],
+            CopilotMode.TRANSLATION: ["translate_range_without_references"],
+            CopilotMode.TRANSLATION_WITH_REFERENCES: ["translate_range_with_references"],
             CopilotMode.REVIEW: ["check_translation_quality"],
         }
         allowed_tool_names = allowed_by_mode.get(target_mode, [])
@@ -256,8 +266,13 @@ class CopilotWorker:
                         self._emit_response(ResponseMessage(ResponseType.ERROR, f"利用可能なツールが見つかりません: {tool_err}"))
                         return
                     self._build_agent()
-                    mode_label = "翻訳" if new_mode is CopilotMode.TRANSLATION else "翻訳チェック"
-                    self._emit_response(ResponseMessage(ResponseType.INFO, f"モードを{mode_label}に切り替えました。"))
+                    mode_label_map = {
+                    CopilotMode.TRANSLATION: "翻訳（参照なし）",
+                    CopilotMode.TRANSLATION_WITH_REFERENCES: "翻訳（参照あり）",
+                    CopilotMode.REVIEW: "翻訳チェック",
+                }
+                    mode_label = mode_label_map.get(new_mode, new_mode.value)
+                    self._emit_response(ResponseMessage(ResponseType.INFO, f"���[�h��{mode_label}�ɐ؂�ւ��܂����B"))
 
     def _execute_task(self, user_input: str):
         self.stop_event.clear()
@@ -580,7 +595,8 @@ class CopilotApp:
             on_change=self._on_mode_change,
             content=ft.Row(
                 controls=[
-                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="翻訳"),
+                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="翻訳（参照なし）"),
+                    ft.Radio(value=CopilotMode.TRANSLATION_WITH_REFERENCES.value, label="翻訳（参照あり）"),
                     ft.Radio(value=CopilotMode.REVIEW.value, label="翻訳チェック"),
                 ],
                 alignment=ft.MainAxisAlignment.START,
@@ -646,9 +662,11 @@ class CopilotApp:
         if not self.user_input:
             return
         if self.mode is CopilotMode.TRANSLATION:
-            self.user_input.hint_text = "翻訳してほしい内容を入力してください。例: B列を翻訳し、結果をC:E列に書き込んでください。"
+            self.user_input.hint_text = "翻訳（参照なし）用の指示を入力してください。例: B列を翻訳し、結果をC:E列に書き込んでください。"
+        elif self.mode is CopilotMode.TRANSLATION_WITH_REFERENCES:
+            self.user_input.hint_text = "翻訳（参照あり）用の指示を入力してください。例: B列を翻訳し、指定した参照URLを使ってC:E列に翻訳・引用・解説を書き込んでください。"
         else:
-            self.user_input.hint_text = "翻訳チェックの内容を入力してください。例: B列とC列の翻訳を比較し、結果をD:G列にまとめてください。"
+            self.user_input.hint_text = "翻訳チェックの指示を入力してください。例: B列とC列の翻訳を比較し、結果をD:G列にまとめてください。"
 
     def _on_mode_change(self, e: Optional[ft.ControlEvent]):
         control = getattr(e, "control", None) if e else None
