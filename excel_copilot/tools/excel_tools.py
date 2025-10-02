@@ -1660,9 +1660,8 @@ def check_translation_quality(
                     actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
             return "No review entries were generated; nothing to audit."
 
-        normalized_batch_size = 1
-
-        for batch in (review_entries[i:i + normalized_batch_size] for i in range(0, len(review_entries), normalized_batch_size)):
+        for entry in review_entries:
+            batch = [entry]
             payload = json.dumps(batch, ensure_ascii=False)
             _diff_debug(f"check_translation_quality payload={_shorten_debug(payload)}")
             analysis_prompt = (
