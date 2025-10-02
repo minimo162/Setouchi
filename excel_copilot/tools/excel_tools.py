@@ -979,16 +979,13 @@ def translate_range_contents(
                         )
                     normalized_keywords.append(keyword_list)
 
-                expanded_keywords: List[List[str]] = []
-                max_keyword_variants = 12 if use_references else 8
-                for base_keywords in normalized_keywords:
-                    expanded = _expand_keyword_variants(base_keywords, max_keyword_variants)
-                    if not expanded:
-                        expanded = base_keywords[:max_keyword_variants]
-                    expanded_keywords.append(expanded)
+                search_keywords_per_item: List[List[str]] = [
+                    list(base_keywords)
+                    for base_keywords in normalized_keywords
+                ]
 
                 keyword_plan_lines: List[str] = []
-                for index, (source_text, keywords) in enumerate(zip(current_texts, expanded_keywords), start=1):
+                for index, (source_text, keywords) in enumerate(zip(current_texts, search_keywords_per_item), start=1):
                     keyword_plan_lines.append(f"Item {index}:")
                     keyword_plan_lines.append(f"- Japanese: {source_text}")
                     keyword_plan_lines.append("- Search keywords:")
@@ -1084,7 +1081,7 @@ def translate_range_contents(
                         "keywords": keywords,
                         "quotes": normalized_quotes_per_item[index] if index < len(normalized_quotes_per_item) else []
                     }
-                    for index, (text, keywords) in enumerate(zip(current_texts, expanded_keywords))
+                    for index, (text, keywords) in enumerate(zip(current_texts, search_keywords_per_item))
                 ]
                 translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
