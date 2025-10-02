@@ -832,6 +832,8 @@ def translate_range_contents(
                 "Return a JSON array of the same length, with no commentary or markdown.\n"
             )
         batch_size = rows_per_batch if rows_per_batch is not None else 1
+        if use_references:
+            batch_size = 1
         if batch_size < 1:
             raise ToolExecutionError("rows_per_batch must be at least 1.")
 
@@ -879,7 +881,7 @@ def translate_range_contents(
         output_dirty = False
         source_dirty = False
 
-        items_per_request = _ITEMS_PER_TRANSLATION_REQUEST
+        items_per_request = 1 if use_references else _ITEMS_PER_TRANSLATION_REQUEST
 
         for row_start in range(0, source_rows, batch_size):
             row_end = min(row_start + batch_size, source_rows)
