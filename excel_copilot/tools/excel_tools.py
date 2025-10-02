@@ -865,9 +865,11 @@ def translate_range_contents(
                     citation_mode = "per_cell"
                 elif cite_cols == source_cols * 2:
                     citation_mode = "paired_columns"
+                elif cite_cols == source_cols * 3:
+                    citation_mode = "translation_triplets"
                 else:
                     raise ToolExecutionError(
-                        "citation_output_range must have either one column, match the source column count, or provide two columns per source column for explanation and quotes."
+                        "citation_output_range must have either one column, match the source column count, or provide two or three columns per source column (for explanation/quotes or the translation output layout)."
                     )
                 cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
                 existing_citation = actions.read_range(citation_range, citation_sheet)
@@ -1286,7 +1288,7 @@ def translate_range_contents(
                     }
 
                     if use_references:
-                        if citation_mode == "paired_columns":
+                        if citation_mode in {"paired_columns", "translation_triplets"}:
                             chunk_cell_evidences[(local_row, col_idx)] = evidence_record
                         elif citation_mode == "per_cell":
                             chunk_cell_evidences[(local_row, col_idx)] = evidence_record
@@ -1305,6 +1307,32 @@ def translate_range_contents(
                         quotes_text = "\n".join(data.get("quotes_lines", []))
                         citation_matrix[local_row][base_col] = explanation_text
                         citation_matrix[local_row][base_col + 1] = quotes_text
+                    chunk_citation_data = [
+                        list(citation_matrix[local_row][0:cite_cols])
+                        for local_row in range(row_start, row_end)
+                    ]
+                    chunk_citation_range = _build_range_reference(
+                        cite_start_row + row_start,
+                        cite_start_row + row_end - 1,
+                        cite_start_col,
+                        cite_start_col + cite_cols - 1,
+                    )
+                elif citation_mode == "translation_triplets":
+                    for local_row in range(row_start, row_end):
+                        for col_idx in range(source_cols):
+                            base_col = col_idx * 3
+                            if base_col + 2 >= cite_cols:
+                                continue
+                            citation_matrix[local_row][base_col + 1] = ""
+                            citation_matrix[local_row][base_col + 2] = ""
+                    for (local_row, col_idx), data in chunk_cell_evidences.items():
+                        base_col = col_idx * 3
+                        if base_col + 2 >= cite_cols:
+                            continue
+                        explanation_text = (data.get("explanation") or "").strip()
+                        quotes_text = "\n".join(data.get("quotes_lines", []))
+                        citation_matrix[local_row][base_col + 1] = quotes_text
+                        citation_matrix[local_row][base_col + 2] = explanation_text
                     chunk_citation_data = [
                         list(citation_matrix[local_row][0:cite_cols])
                         for local_row in range(row_start, row_end)

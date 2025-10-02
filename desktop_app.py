@@ -101,7 +101,7 @@ class CopilotWorker:
         self.agent: Optional[ReActAgent] = None
         self.stop_event = threading.Event()
         self.sheet_name = sheet_name
-        self.mode = CopilotMode.TRANSLATION
+        self.mode = CopilotMode.TRANSLATION_WITH_REFERENCES
         self.tool_functions: List[callable] = []
         self.tool_schemas: List[Dict[str, Any]] = []
 
@@ -462,7 +462,7 @@ class CopilotApp:
         self.current_sheet_name: Optional[str] = None
         self.sheet_selection_updating = False
 
-        self.mode = CopilotMode.TRANSLATION
+        self.mode = CopilotMode.TRANSLATION_WITH_REFERENCES
         self.mode_selector: Optional[ft.RadioGroup] = None
 
         self.title_label: Optional[ft.Text] = None
@@ -595,8 +595,8 @@ class CopilotApp:
             on_change=self._on_mode_change,
             content=ft.Row(
                 controls=[
-                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="翻訳（参照なし）"),
                     ft.Radio(value=CopilotMode.TRANSLATION_WITH_REFERENCES.value, label="翻訳（参照あり）"),
+                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="翻訳（参照なし）"),
                     ft.Radio(value=CopilotMode.REVIEW.value, label="翻訳チェック"),
                 ],
                 alignment=ft.MainAxisAlignment.START,
