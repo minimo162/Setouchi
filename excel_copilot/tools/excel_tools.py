@@ -785,6 +785,7 @@ def translate_range_contents(
                     "url": url,
                 })
 
+        references_requested = bool(reference_ranges) or bool(reference_urls)
         use_references = bool(reference_entries or reference_url_entries)
         reference_text_pool = [text for text in reference_text_pool if text]
 
@@ -831,9 +832,9 @@ def translate_range_contents(
                 f"Translate each Japanese entry below into {target_language} while preserving order and meaning.\n"
                 "Return a JSON array of the same length, with no commentary or markdown.\n"
             )
+        if references_requested or use_references:
+            rows_per_batch = 1
         batch_size = rows_per_batch if rows_per_batch is not None else 1
-        if use_references:
-            batch_size = 1
         if batch_size < 1:
             raise ToolExecutionError("rows_per_batch must be at least 1.")
 
@@ -881,7 +882,8 @@ def translate_range_contents(
         output_dirty = False
         source_dirty = False
 
-        items_per_request = 1 if use_references else _ITEMS_PER_TRANSLATION_REQUEST
+        limit_to_single = references_requested or use_references
+        items_per_request = 1 if limit_to_single else _ITEMS_PER_TRANSLATION_REQUEST
 
         for row_start in range(0, source_rows, batch_size):
             row_end = min(row_start + batch_size, source_rows)
@@ -1222,6 +1224,11 @@ def translate_range_contents(
                         seen_quotes.add(cleaned_candidate)
                         final_quotes.append(cleaned_candidate)
 
+                    formatted_quotes: List[str] = [
+                        f"引用{idx}: {quote}"
+                        for idx, quote in enumerate(final_quotes, start=1)
+                    ]
+
                     fallback_reason: Optional[str] = None
                     if use_references:
                         default_explanation = "参照資料の内容を踏まえ、原文の意味と語調を保つように訳語を選定しました。"
@@ -1255,7 +1262,7 @@ def translate_range_contents(
                             explanation_fallback_notes.append(f"{cell_ref}: {fallback_reason}")
 
                     if quotes_col_index is not None and explanation_col_index is not None:
-                        quotes_text = "\n".join(final_quotes)
+                        quotes_text = "\n".join(formatted_quotes)
                         if output_matrix[local_row][quotes_col_index] != quotes_text:
                             output_matrix[local_row][quotes_col_index] = quotes_text
                             output_dirty = True
@@ -1271,12 +1278,7 @@ def translate_range_contents(
                         if len(explanation_text) < 20:
                             raise ToolExecutionError("explanation_jp には翻訳判断を具体的に説明してください (20文字以上)。")
 
-                    quotes_lines: List[str] = []
-                    if final_quotes:
-                        multiple_quotes = len(final_quotes) > 1
-                        for idx_quote, quote in enumerate(final_quotes, start=1):
-                            label = f"引用{idx_quote}" if multiple_quotes else "引用"
-                            quotes_lines.append(f"{label}: {quote}")
+                    quotes_lines: List[str] = list(formatted_quotes)
 
                     evidence_record = {
                         "explanation": explanation_text,
