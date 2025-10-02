@@ -71,10 +71,11 @@ class ReActAgent:
         final_answer = None
 
         # Final Answerが単独で存在する場合を先に処理
-        final_answer_match = re.search(r"Final Answer:", response, re.IGNORECASE)
+        colon_pattern = r"\s*[:：]"
+        final_answer_match = re.search(rf"Final Answer{colon_pattern}", response, re.IGNORECASE)
         if final_answer_match:
             # Final Answerより前の部分にThoughtがあるか確認
-            thought_match = re.search(r"Thought:", response[:final_answer_match.start()], re.IGNORECASE)
+            thought_match = re.search(rf"Thought{colon_pattern}", response[:final_answer_match.start()], re.IGNORECASE)
             if thought_match:
                 thought = response[thought_match.end():final_answer_match.start()].strip()
             
@@ -83,11 +84,11 @@ class ReActAgent:
             return thought, None, final_answer
 
         # ThoughtとActionのペアを処理
-        thought_match = re.search(r"Thought:", response, re.IGNORECASE)
+        thought_match = re.search(rf"Thought{colon_pattern}", response, re.IGNORECASE)
         if not thought_match:
             raise LLMResponseError("応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。")
 
-        action_match = re.search(r"Action:", response, re.IGNORECASE)
+        action_match = re.search(rf"Action{colon_pattern}", response, re.IGNORECASE)
         if not action_match:
             # ThoughtのみでActionがない場合は、Thoughtを抽出し、ActionはNoneとする
             thought = response[thought_match.end():].strip()
