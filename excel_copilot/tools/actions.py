@@ -3,7 +3,7 @@ import sys
 import subprocess
 import logging
 import os
-from typing import Any, List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict, Tuple, Callable
 from ..core.exceptions import ToolExecutionError
 from ..core.excel_manager import ExcelManager
 
@@ -31,10 +31,30 @@ class ExcelActions:
     具体的なExcel操作を実行するメソッドを集約したクラス。
     """
 
-    def __init__(self, manager: ExcelManager):
+    def __init__(self, manager: ExcelManager, progress_callback: Optional[Callable[[str], None]] = None):
         if not manager or not manager.get_active_workbook():
             raise ValueError("有効なExcelManagerインスタンスが必要です。")
         self.book = manager.get_active_workbook()
+        self._progress_callback = progress_callback
+        self._progress_buffer: List[str] = []
+
+    def set_progress_callback(self, callback: Optional[Callable[[str], None]]) -> None:
+        self._progress_callback = callback
+
+    def log_progress(self, message: str) -> None:
+        if message is None:
+            return
+        self._progress_buffer.append(message)
+        if self._progress_callback:
+            try:
+                self._progress_callback(message)
+            except Exception as callback_error:
+                _ACTIONS_LOGGER.debug(f"log_progress callback error: {callback_error}")
+
+    def consume_progress_messages(self) -> List[str]:
+        messages = self._progress_buffer[:]
+        self._progress_buffer.clear()
+        return messages
 
     def _get_sheet(self, sheet_name: Optional[str] = None) -> xw.Sheet:
         try:

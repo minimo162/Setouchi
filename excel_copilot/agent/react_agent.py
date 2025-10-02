@@ -2,7 +2,7 @@ import json
 import inspect
 import re
 import threading
-from typing import Generator, List, Dict, Any, Optional, Tuple
+from typing import Generator, List, Dict, Any, Optional, Tuple, Callable
 
 from excel_copilot.config import MAX_ITERATIONS, HISTORY_MAX_MESSAGES
 from excel_copilot.core.exceptions import LLMResponseError, ToolExecutionError, UserStopRequested
@@ -20,7 +20,7 @@ class ReActAgent:
     ReAct (Reasoning and Acting) フレームワークに基づいたAIエージェント。
     UIからの停止要求(stop_event)に対応し、構造化された辞書をyieldします。
     """
-    def __init__(self, tools: List[callable], tool_schemas: List[Dict], browser_manager: BrowserCopilotManager, sheet_name: Optional[str] = None, mode: CopilotMode = CopilotMode.TRANSLATION):
+    def __init__(self, tools: List[callable], tool_schemas: List[Dict], browser_manager: BrowserCopilotManager, sheet_name: Optional[str] = None, mode: CopilotMode = CopilotMode.TRANSLATION, progress_callback: Optional[Callable[[str], None]] = None):
         self.browser_manager = browser_manager
         self.sheet_name = sheet_name
         self.mode = mode
@@ -28,6 +28,7 @@ class ReActAgent:
         self.tool_schemas_str = json.dumps(tool_schemas, indent=2, ensure_ascii=False)
         self.system_prompt = build_system_prompt(self.mode, self.tool_schemas_str)
         self.messages: List[Dict[str, str]] = []
+        self.progress_callback = progress_callback
 
     def reset(self):
         """Reset the conversation history for a fresh run."""
@@ -126,7 +127,10 @@ class ReActAgent:
             arguments['sheetname'] = self.sheet_name
 
         try:
-            return tool_function(**arguments)
+            result = tool_function(**arguments)
+            if hasattr(excel_actions, 'consume_progress_messages'):
+                excel_actions.consume_progress_messages()
+            return result
         except Exception as e:
             # エラーのスタックトレースも表示するとデバッグに役立つ
             import traceback
@@ -139,7 +143,7 @@ class ReActAgent:
 
         try:
             with ExcelManager() as manager:
-                excel_actions = ExcelActions(manager)
+                excel_actions = ExcelActions(manager, progress_callback=self.progress_callback)
                 for i in range(MAX_ITERATIONS):
                     if stop_event.is_set():
                         yield {"type": "info", "content": "処理が中断されました。"}

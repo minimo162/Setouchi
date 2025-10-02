@@ -667,6 +667,7 @@ def translate_range_contents(
     rows_per_batch: Optional[int] = None,
 ) -> str:
     '''Translate Japanese text for a range with optional references and controlled output.'''
+
     try:
         target_sheet, normalized_range = _split_sheet_and_range(cell_range, sheet_name)
         source_rows, source_cols = _parse_range_dimensions(normalized_range)
@@ -1496,7 +1497,6 @@ def check_translation_quality(
     corrected_output_range: Optional[str] = None,
     highlight_output_range: Optional[str] = None,
     sheet_name: Optional[str] = None,
-    batch_size: int = 1,
 ) -> str:
     """Translate text in a range and write the output plus optional context.
 
@@ -1524,8 +1524,6 @@ def check_translation_quality(
 
         overwrite_source: Whether to overwrite the source range directly.
 
-        rows_per_batch: Optional maximum number of rows per translation request.
-
     """
     try:
 
@@ -1548,6 +1546,21 @@ def check_translation_quality(
             raise ToolExecutionError("Corrected output range must match the source range size.")
         if highlight_output_range and (src_rows, src_cols) != (highlight_rows, highlight_cols):
             raise ToolExecutionError("Highlight output range must match the source range size.")
+
+        status_sheet_name, status_inner_range = _split_sheet_and_range(status_output_range, sheet_name)
+        status_start_row, status_start_col, _, _ = _parse_range_bounds(status_inner_range)
+        issue_sheet_name, issue_inner_range = _split_sheet_and_range(issue_output_range, sheet_name)
+        issue_start_row, issue_start_col, _, _ = _parse_range_bounds(issue_inner_range)
+        corrected_sheet_name: Optional[str] = None
+        corrected_start_row = corrected_start_col = None
+        if corrected_output_range:
+            corrected_sheet_name, corrected_inner_range = _split_sheet_and_range(corrected_output_range, sheet_name)
+            corrected_start_row, corrected_start_col, _, _ = _parse_range_bounds(corrected_inner_range)
+        highlight_sheet_name: Optional[str] = None
+        highlight_start_row = highlight_start_col = None
+        if highlight_output_range:
+            highlight_sheet_name, highlight_inner_range = _split_sheet_and_range(highlight_output_range, sheet_name)
+            highlight_start_row, highlight_start_col, _, _ = _parse_range_bounds(highlight_inner_range)
 
         source_data = _reshape_to_dimensions(actions.read_range(source_range, sheet_name), src_rows, src_cols)
         translated_data = _reshape_to_dimensions(actions.read_range(translated_range, sheet_name), src_rows, src_cols)
@@ -1577,6 +1590,65 @@ def check_translation_quality(
                     highlight_matrix.append(highlight_row)
                 if styles_row is not None:
                     highlight_styles.append(styles_row)
+
+        def _cell_reference(base_row: int, base_col: int, local_row: int, local_col: int) -> str:
+            return _build_range_reference(
+                base_row + local_row,
+                base_row + local_row,
+                base_col + local_col,
+                base_col + local_col,
+            )
+
+        def _row_reference(base_row: int, base_col: int, row_idx: int, width: int) -> str:
+            start_col = base_col
+            end_col = base_col + width - 1
+            return _build_range_reference(
+                base_row + row_idx,
+                base_row + row_idx,
+                start_col,
+                end_col,
+            )
+
+        incremental_updates = False
+
+        def _write_single_entry(row_idx: int, col_idx: int) -> None:
+            nonlocal incremental_updates
+            incremental_updates = True
+            row_width = src_cols
+            status_row_ref = _row_reference(status_start_row, status_start_col, row_idx, row_width)
+            actions.write_range(status_row_ref, [status_matrix[row_idx]], status_sheet_name)
+            issue_row_ref = _row_reference(issue_start_row, issue_start_col, row_idx, row_width)
+            actions.write_range(issue_row_ref, [issue_matrix[row_idx]], issue_sheet_name)
+            if corrected_matrix is not None and corrected_start_row is not None and corrected_start_col is not None:
+                corrected_row_ref = _row_reference(corrected_start_row, corrected_start_col, row_idx, row_width)
+                actions.write_range(corrected_row_ref, [corrected_matrix[row_idx]], corrected_sheet_name)
+            if highlight_matrix is not None and highlight_start_row is not None and highlight_start_col is not None:
+                highlight_row_ref = _row_reference(highlight_start_row, highlight_start_col, row_idx, row_width)
+                actions.write_range(highlight_row_ref, [highlight_matrix[row_idx]], highlight_sheet_name)
+                if highlight_styles is not None:
+                    actions.apply_diff_highlight_colors(
+                        highlight_row_ref,
+                        [highlight_styles[row_idx]],
+                        highlight_sheet_name,
+                    )
+            if col_idx == src_cols - 1:
+                row_number = status_start_row + row_idx + 1
+                status_summaries: List[str] = []
+                issue_summaries: List[str] = []
+                for summary_col in range(src_cols):
+                    status_cell = _cell_reference(status_start_row, status_start_col, row_idx, summary_col)
+                    issue_cell = _cell_reference(issue_start_row, issue_start_col, row_idx, summary_col)
+                    status_value = status_matrix[row_idx][summary_col] or ""
+                    issue_value = issue_matrix[row_idx][summary_col] or ""
+                    status_summaries.append(f"{status_cell}:{status_value}")
+                    if issue_value:
+                        issue_summaries.append(f"{issue_cell}:{issue_value}")
+                status_summary = ", ".join(status_summaries)
+                issue_summary = ", ".join(issue_summaries) if issue_summaries else "(no notes)"
+                progress_message = (
+                    f"Row {row_number} review complete. Status -> {status_summary}. Issues -> {issue_summary}"
+                )
+                actions.log_progress(progress_message)
 
         def _infer_corrected_text(base_text: str, item: Dict[str, Any]) -> str:
             base = base_text if isinstance(base_text, str) else ('' if base_text is None else str(base_text))
@@ -1639,6 +1711,7 @@ def check_translation_quality(
                             highlight_matrix[r][c] = normalized_translation
                         if highlight_styles is not None:
                             highlight_styles[r][c] = []
+                        _write_single_entry(r, c)
                 else:
                     status_matrix[r][c] = ""
                     issue_matrix[r][c] = ""
@@ -1648,6 +1721,7 @@ def check_translation_quality(
                         if highlight_styles is not None:
                             highlight_styles[r][c] = []
                         highlight_matrix[r][c] = normalized_translation
+                    _write_single_entry(r, c)
 
         if not review_entries:
             actions.write_range(status_output_range, status_matrix, sheet_name)
@@ -1663,11 +1737,27 @@ def check_translation_quality(
         for entry in review_entries:
             batch = [entry]
             payload = json.dumps(batch, ensure_ascii=False)
+            preview_sections: List[str] = []
+            for preview_index, preview_item in enumerate(batch, start=1):
+                original_preview = preview_item.get("original_text") or ""
+                translated_preview = preview_item.get("translated_text") or ""
+                item_label = f"Item {preview_index}"
+                preview_sections.append(f"{item_label} Original (Japanese):")
+                preview_sections.append(original_preview)
+                preview_sections.append("")
+                preview_sections.append(f"{item_label} Translation (English):")
+                preview_sections.append(translated_preview)
+                preview_sections.append("")
+            preview_text = "\n".join(preview_sections).strip()
+            preview_block = f"\n\nOriginal / Translation Preview:\n{preview_text}" if preview_text else ""
             _diff_debug(f"check_translation_quality payload={_shorten_debug(payload)}")
             analysis_prompt = (
                 "You are reviewing Japanese financial disclosure translations.\n"
-                "Each review item includes 'id', 'original_text', and 'translated_text'.\n"
-                "Respond with a single JSON array. Every element must provide 'id', 'status', 'notes', 'highlighted_text', 'corrected_text', 'before_text', and 'after_text'.\n"
+                "Exactly one review item is provided at a time. Focus only on that single item.\n"
+                "Do not attempt to operate Excel or any other applications; only analyze the text and respond in JSON.\n"
+                "Each review item includes 'id', 'original_text' (Japanese source text), and 'translated_text' (English translation under review).\n"
+                "Treat 'original_text' as the authoritative Japanese source and 'translated_text' as the English draft under review.\n"
+                "Respond with a single JSON array containing exactly one object. That object must provide 'id', 'status', 'notes', 'highlighted_text', 'corrected_text', 'before_text', and 'after_text'.\n"
                 "Use status 'OK' only when the translation is acceptable (notes may be empty or a brief comment).\n"
                 "When any issue exists or you are unsure, choose status 'REVISE' and write notes in Japanese using the format 'Issue: ... / Suggestion: ...'.\n"
                 "Set 'corrected_text' to the fully corrected English sentence.\n"
@@ -1697,45 +1787,68 @@ def check_translation_quality(
                         _diff_debug("check_translation_quality stripped markdown code fences before parsing")
 
                 decoder = json.JSONDecoder()
-                potential_starts = [idx for idx, ch in enumerate(cleaned) if ch in {'[', '{'}]
-                if not potential_starts:
-                    _diff_debug('check_translation_quality no JSON delimiters found')
-                    return None
-                for start_idx in potential_starts:
-                    if cleaned[:start_idx].strip():
-                        _diff_debug('check_translation_quality leading non-JSON content detected before payload')
+                marker = "Review item (JSON):"
+                candidate_texts = [cleaned]
+                if marker in cleaned:
+                    after_marker = cleaned.split(marker, 1)[1].strip()
+                    if after_marker:
+                        candidate_texts.insert(0, after_marker)
+                for candidate in candidate_texts:
+                    potential_starts = [idx for idx, ch in enumerate(candidate) if ch in {'[', '{'}]
+                    if not potential_starts:
                         continue
-                    try:
-                        parsed, end_idx = decoder.raw_decode(cleaned[start_idx:])
-                    except json.JSONDecodeError as decode_error:
-                        _diff_debug(f"check_translation_quality decode error start={start_idx} err={decode_error}")
-                        continue
-                    trailing = cleaned[start_idx + end_idx:].strip()
-                    if trailing:
-                        _diff_debug('check_translation_quality extra content after JSON payload detected')
-                        continue
-                    if isinstance(parsed, dict):
-                        parsed = [parsed]
-                    if isinstance(parsed, list):
-                        _diff_debug(f"check_translation_quality parsed list length={len(parsed)}")
-                        return parsed
+                    for start_idx in potential_starts:
+                        if candidate[:start_idx].strip():
+                            _diff_debug('check_translation_quality leading non-JSON content detected before payload')
+                            continue
+                        try:
+                            parsed, end_idx = decoder.raw_decode(candidate[start_idx:])
+                        except json.JSONDecodeError as decode_error:
+                            _diff_debug(f"check_translation_quality decode error start={start_idx} err={decode_error}")
+                            continue
+                        trailing = candidate[start_idx + end_idx:].strip()
+                        if trailing:
+                            _diff_debug('check_translation_quality extra content after JSON payload detected')
+                            continue
+                        if isinstance(parsed, dict):
+                            parsed = [parsed]
+                        if isinstance(parsed, list):
+                            _diff_debug(f"check_translation_quality parsed list length={len(parsed)}")
+                            return parsed
                 _diff_debug('check_translation_quality no valid JSON payload isolated')
                 return None
 
 
             prompt_variants = [
-                analysis_prompt,
-                analysis_prompt + "\n\nSTRICT OUTPUT REMINDER: Return exactly one JSON array immediately. Do not include Final Answer, Thought, extra commentary, or multiple JSON payloads.",
+                (
+                    analysis_prompt
+                    + preview_block
+                    + "\n\nReview item (JSON):\n"
+                    + payload
+                    + "\n"
+                ),
+                (
+                    analysis_prompt
+                    + "\n\nSTRICT OUTPUT REMINDER: Return exactly one JSON array immediately. Do not include Final Answer, Thought, extra commentary, or multiple JSON payloads."
+                    + preview_block
+                    + "\n\nReview item (JSON):\n"
+                    + payload
+                    + "\n"
+                ),
                 (
                     "You are reviewing translations of corporate financial disclosures. "
-                    "Reply with a single JSON array. Each element must contain 'id', 'status', 'notes', "
+                    "Exactly one review item is supplied at a time; focus only on that single item. "
+                    "Do not attempt to control Excel or describe UI steps; respond only with JSON. "
+                    "Treat 'original_text' as the Japanese source and 'translated_text' as the English translation under review. "
+                    "Reply with a single JSON array containing exactly one object. Each object must contain 'id', 'status', 'notes', "
                     "'highlighted_text', 'corrected_text', 'before_text', and 'after_text'. "
                     "Use status 'OK' when the translation is acceptable (notes empty or a short remark). Only select 'OK' when you are certain there are no issues. "
                     "Use status 'REVISE' when changes are needed and write notes in Japanese as 'Issue: ... / Suggestion: ...'. If unsure, choose 'REVISE'. "
                     "Set 'corrected_text' to the fully corrected English sentence. Build 'highlighted_text' from corrected_text, "
-                    "marking additions as 【追加...】 and deletions as 【削除...】 "
+                    "marking additions as [ADD ...] and deletions as [DEL ...]. "
                     "Return exactly one JSON array and nothing else."
-                    f"\n\n{payload}\n"
+                    + preview_block
+                    + f"\n\nReview item (JSON):\n{payload}\n"
                 ),
             ]
 
@@ -1761,6 +1874,10 @@ def check_translation_quality(
                 raise ToolExecutionError(
                     "Translation quality response must be returned as a JSON array."
                 )
+
+            if len(batch_results) > 1:
+                _diff_debug("check_translation_quality trimming extra responses to the first item")
+                batch_results = batch_results[:1]
 
             ok_statuses = {"OK", "PASS", "GOOD"}
             revise_statuses = {"REVISE", "NG", "FAIL", "ISSUE"}
@@ -1832,8 +1949,11 @@ def check_translation_quality(
                     issue_matrix[row_idx][col_idx] = notes_value or "Provide reviewer notes in Japanese."
                     needs_revision_count += 1
 
-        actions.write_range(status_output_range, status_matrix, sheet_name)
-        actions.write_range(issue_output_range, issue_matrix, sheet_name)
+                _write_single_entry(row_idx, col_idx)
+
+        if not incremental_updates:
+            actions.write_range(status_output_range, status_matrix, sheet_name)
+            actions.write_range(issue_output_range, issue_matrix, sheet_name)
 
         processed_items = len(review_entries)
         message = (
@@ -1841,12 +1961,14 @@ def check_translation_quality(
             f"Wrote status to '{status_output_range}' and issues to '{issue_output_range}'."
         )
         if corrected_matrix is not None and corrected_output_range:
-            actions.write_range(corrected_output_range, corrected_matrix, sheet_name)
+            if not incremental_updates:
+                actions.write_range(corrected_output_range, corrected_matrix, sheet_name)
             message += f" Corrected text written to '{corrected_output_range}'."
         if highlight_matrix is not None and highlight_output_range:
-            actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
-            if highlight_styles is not None:
-                actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
+            if not incremental_updates:
+                actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
+                if highlight_styles is not None:
+                    actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
             message += f" Highlight output written to '{highlight_output_range}'."
         return message
 
