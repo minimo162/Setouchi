@@ -1679,21 +1679,38 @@ def check_translation_quality(
                 stripped = response_text.strip()
                 if not stripped:
                     return None
+
+                cleaned = stripped
+                if cleaned.startswith("```"):
+                    lines = cleaned.splitlines()
+                    removed = False
+                    while lines and lines[0].strip().startswith("```"):
+                        lines.pop(0)
+                        removed = True
+                    while lines and lines[-1].strip().startswith("```"):
+                        lines.pop()
+                        removed = True
+                    cleaned = "\n".join(lines).strip()
+                    if not cleaned:
+                        return None
+                    if removed:
+                        _diff_debug("check_translation_quality stripped markdown code fences before parsing")
+
                 decoder = json.JSONDecoder()
-                potential_starts = [idx for idx, ch in enumerate(stripped) if ch in {'[', '{'}]
+                potential_starts = [idx for idx, ch in enumerate(cleaned) if ch in {'[', '{'}]
                 if not potential_starts:
                     _diff_debug('check_translation_quality no JSON delimiters found')
                     return None
                 for start_idx in potential_starts:
-                    if stripped[:start_idx].strip():
+                    if cleaned[:start_idx].strip():
                         _diff_debug('check_translation_quality leading non-JSON content detected before payload')
                         continue
                     try:
-                        parsed, end_idx = decoder.raw_decode(stripped[start_idx:])
+                        parsed, end_idx = decoder.raw_decode(cleaned[start_idx:])
                     except json.JSONDecodeError as decode_error:
                         _diff_debug(f"check_translation_quality decode error start={start_idx} err={decode_error}")
                         continue
-                    trailing = stripped[start_idx + end_idx:].strip()
+                    trailing = cleaned[start_idx + end_idx:].strip()
                     if trailing:
                         _diff_debug('check_translation_quality extra content after JSON payload detected')
                         continue
@@ -1747,17 +1764,31 @@ def check_translation_quality(
 
             ok_statuses = {"OK", "PASS", "GOOD"}
             revise_statuses = {"REVISE", "NG", "FAIL", "ISSUE"}
+            batch_entry_ids = [entry.get("id") for entry in batch if isinstance(entry.get("id"), str)]
+            pending_ids: List[str] = [entry_id for entry_id in batch_entry_ids if entry_id in id_to_position]
+            assigned_ids: Set[str] = set()
             for item in batch_results:
                 if not isinstance(item, dict):
                     raise ToolExecutionError(
                         "Each translation quality entry must be a JSON object."
                     )
-                item_id = item.get("id")
-                if item_id not in id_to_position:
-                    _diff_debug(f"check_translation_quality unknown id={item_id} known={list(id_to_position.keys())}")
-                    raise ToolExecutionError(
-                        "Translation quality entry referenced an unknown id."
-                    )
+                raw_item_id = item.get("id")
+                candidate_id = str(raw_item_id).strip() if raw_item_id is not None else ""
+                resolved_id: Optional[str] = None
+                if candidate_id and candidate_id in id_to_position and candidate_id not in assigned_ids:
+                    resolved_id = candidate_id
+                else:
+                    while pending_ids and pending_ids[0] in assigned_ids:
+                        pending_ids.pop(0)
+                    if pending_ids:
+                        resolved_id = pending_ids.pop(0)
+                        if candidate_id != resolved_id:
+                            _diff_debug(f"check_translation_quality applying fallback id={candidate_id} -> {resolved_id}")
+                if resolved_id is None:
+                    _diff_debug(f"check_translation_quality skipping entry with unknown id={candidate_id}")
+                    continue
+                assigned_ids.add(resolved_id)
+                item_id = resolved_id
                 status_value = str(item.get("status", "")).strip().upper()
                 notes_value = str(item.get("notes", "")).strip()
                 before_text = item.get("before_text")
