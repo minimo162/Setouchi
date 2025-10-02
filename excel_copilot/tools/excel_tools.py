@@ -39,6 +39,55 @@ def _shorten_debug(value: str, limit: int = 120) -> str:
     text = str(value).replace('\r', '\r').replace('\n', '\n')
     return text if len(text) <= limit else text[:limit] + '窶ｦ'
 
+
+
+_MOJIBAKE_MARKERS: Set[str] = frozenset('縺繧繝邨蜑螟蠖蛻蝣鬟荳菫譁蜿遘遉遞迚邱遽驟髣髴髢霑蜉')
+
+def _mojibake_penalty(text: str) -> int:
+    penalty = 0
+    for ch in text:
+        code_point = ord(ch)
+        if ch in _MOJIBAKE_MARKERS:
+            penalty += 2
+        elif 0xE000 <= code_point <= 0xF8FF:
+            penalty += 3
+        elif ch == '\uFFFD':
+            penalty += 4
+    return penalty
+
+
+def _count_japanese_characters(text: str) -> int:
+    count = 0
+    for ch in text:
+        code_point = ord(ch)
+        if (
+            0x3040 <= code_point <= 0x30FF
+            or 0x3400 <= code_point <= 0x4DBF
+            or 0x4E00 <= code_point <= 0x9FFF
+            or 0xF900 <= code_point <= 0xFAFF
+            or 0xFF66 <= code_point <= 0xFF9D
+        ):
+            count += 1
+    return count
+
+
+def _maybe_fix_mojibake(text: str) -> str:
+    if not isinstance(text, str) or not text:
+        return text
+    try:
+        candidate = text.encode('cp932', errors='strict').decode('utf-8', errors='strict')
+    except UnicodeError:
+        return text
+    if candidate == text:
+        return text
+    original_penalty = _mojibake_penalty(text)
+    candidate_penalty = _mojibake_penalty(candidate)
+    original_japanese = _count_japanese_characters(text)
+    candidate_japanese = _count_japanese_characters(candidate)
+    if candidate_penalty > original_penalty and candidate_japanese <= original_japanese:
+        return text
+    return candidate
+
 def _generate_keyword_variants(base: str) -> List[str]:
     """Produce diverse keyword variants to widen reference searches."""
     variants: List[str] = []
@@ -1690,6 +1739,7 @@ def check_translation_quality(
                 original_text = source_data[r][c]
                 translated_text = translated_data[r][c]
                 normalized_translation = _normalize_cell_value(translated_text)
+                normalized_translation = _maybe_fix_mojibake(normalized_translation)
                 if isinstance(original_text, str) and original_text.strip():
                     if isinstance(translated_text, str) and translated_text.strip():
                         entry_id = f"{r}:{c}"
@@ -1889,6 +1939,13 @@ def check_translation_quality(
                     raise ToolExecutionError(
                         "Each translation quality entry must be a JSON object."
                     )
+                for key, value in list(item.items()):
+                    if isinstance(value, str):
+                        fixed_value = _maybe_fix_mojibake(value)
+                        if fixed_value != value:
+                            item[key] = fixed_value
+
+
                 raw_item_id = item.get("id")
                 candidate_id = str(raw_item_id).strip() if raw_item_id is not None else ""
                 resolved_id: Optional[str] = None
@@ -1906,31 +1963,52 @@ def check_translation_quality(
                     continue
                 assigned_ids.add(resolved_id)
                 item_id = resolved_id
-                status_value = str(item.get("status", "")).strip().upper()
-                notes_value = str(item.get("notes", "")).strip()
+
+                status_raw = item.get("status", "")
+                if isinstance(status_raw, str):
+                    status_raw = _maybe_fix_mojibake(status_raw)
+                    item["status"] = status_raw
+                status_value = str(status_raw).strip().upper()
+
+                notes_raw = item.get("notes", "")
+                if isinstance(notes_raw, str):
+                    notes_raw = _maybe_fix_mojibake(notes_raw)
+                    item["notes"] = notes_raw
+                notes_value = str(notes_raw).strip()
+
                 before_text = item.get("before_text")
+                if isinstance(before_text, str):
+                    before_text = _maybe_fix_mojibake(before_text)
+                    item["before_text"] = before_text
+
                 after_text = item.get("after_text")
+                if isinstance(after_text, str):
+                    after_text = _maybe_fix_mojibake(after_text)
+                    item["after_text"] = after_text
 
 
                 row_idx, col_idx = id_to_position[item_id]
                 base_translation = translated_data[row_idx][col_idx]
                 base_text = _normalize_cell_value(base_translation)
+                sanitized_base_text = _maybe_fix_mojibake(base_text)
                 corrected_text = _infer_corrected_text(base_text, item)
                 corrected_text_str = _normalize_cell_value(corrected_text)
+                corrected_text_str = _maybe_fix_mojibake(corrected_text_str)
                 is_ok_status = status_value in ok_statuses
                 if is_ok_status or not corrected_text_str.strip():
-                    corrected_text_str = base_text
+                    corrected_text_str = sanitized_base_text
 
                 if corrected_matrix is not None:
                     corrected_matrix[row_idx][col_idx] = corrected_text_str
 
                 if highlight_matrix is not None:
                     if is_ok_status:
-                        highlight_matrix[row_idx][col_idx] = base_text
+                        highlight_matrix[row_idx][col_idx] = sanitized_base_text
                         if highlight_styles is not None:
                             highlight_styles[row_idx][col_idx] = []
                     else:
-                        highlight_text, highlight_spans = _build_diff_highlight(base_text, corrected_text_str)
+                        highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
+                        highlight_text = _maybe_fix_mojibake(highlight_text)
                         highlight_matrix[row_idx][col_idx] = highlight_text
                         if highlight_styles is not None:
                             highlight_styles[row_idx][col_idx] = highlight_spans
@@ -2089,4 +2167,5 @@ def format_shape(actions: ExcelActions, fill_color_hex: Optional[str] = None, li
 
     """
     return actions.format_last_shape(fill_color_hex, line_color_hex, sheet_name)
+
 
