@@ -117,6 +117,35 @@ class ReActAgent:
             # Thoughtラベルが無くActionのみのケースを許容する
             thought = response[:action_match.start()].strip()
         else:
+            lower_response = response.lower()
+            completion_markers = (
+                "完了",
+                "出力",
+                "書き込み",
+                "反映",
+                "更新",
+                "記入",
+            )
+            completion_markers_en = (
+                "translation",
+                "translated",
+                "written",
+                "wrote",
+                "output",
+                "applied",
+                "completed",
+                "done",
+                "updated",
+            )
+            has_completion_marker = any(marker in response for marker in completion_markers) or any(
+                marker in lower_response for marker in completion_markers_en
+            )
+            mentions_translation = "翻訳" in response or "translate" in lower_response or "translation" in lower_response
+            mentions_cells = bool(re.search(r"[A-Za-z]{1,3}\d+", response))
+
+            if has_completion_marker or (mentions_translation and mentions_cells):
+                return "", None, response
+
             raise LLMResponseError("応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。")
 
         if action_match:
