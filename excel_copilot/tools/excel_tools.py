@@ -184,182 +184,24 @@ def _extract_primary_quoted_phrase(text: str) -> Optional[str]:
 
 
 def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keywords: int = 18) -> List[str]:
-    """Add broader coverage keywords so evidence searches hit more diverse sources."""
-    enriched: List[str] = []
-    seen: Set[str] = set()
+    """Return the AI-supplied keywords with light deduplication and trimming."""
+    del source_text  # retained for signature compatibility
 
-    def _add(keyword: str) -> bool:
+    cleaned_keywords: List[str] = []
+    seen: Set[str] = set()
+    for keyword in base_keywords:
         cleaned = (keyword or "").strip()
         if not cleaned:
-            return False
+            continue
         lowered = cleaned.lower()
         if lowered in seen:
-            return False
+            continue
         seen.add(lowered)
-        enriched.append(cleaned)
-        return True
-
-    base_added: List[str] = []
-    for keyword in base_keywords:
-        if _add(keyword):
-            base_added.append(keyword)
-
-    lowered_source = source_text.lower()
-    has_mazda = "マツダ" in source_text or "mazda" in lowered_source
-    has_gran_turismo = bool(re.search(r"グランツーリスモ", source_text)) or "gran turismo" in lowered_source
-    has_experience = bool(re.search(r"体感|体験", source_text))
-    has_customers = bool(re.search(r"お客様|ユーザー|プレイヤー", source_text))
-    has_inclusion = bool(re.search(r"収録|採用|収載|登場", source_text))
-    has_supervision = bool(re.search(r"監修|監督|指導|見守", source_text))
-    has_employees = bool(re.search(r"社員|従業員|担当", source_text))
-    has_development = bool(re.search(r"開発", source_text))
-    has_performance = bool(re.search(r"走行性能|走り|パフォーマンス", source_text))
-    has_sound = bool(re.search(r"サウンド|音", source_text))
-    has_design = bool(re.search(r"デザイン", source_text))
-    has_realism = bool(re.search(r"実車|リアル|限りなく近い", source_text))
-
-    quoted_phrase = _extract_primary_quoted_phrase(source_text)
-    car_name = quoted_phrase if quoted_phrase and re.search(r"[A-Za-z0-9]", quoted_phrase) else None
-
-    if has_mazda:
-        _add("Mazda official announcement")
-        _add("Mazda customer engagement")
-        _add("Mazda motorsports program")
-
-    if car_name:
-        _add(car_name)
-        base_car = re.sub(r"\s+\d+[A-Za-z]?\b", "", car_name).strip()
-        if base_car and base_car.lower() != car_name.lower():
-            _add(base_car)
-        _add(f"{car_name} driving experience")
-        _add(f"{car_name} development team")
-        _add("Mazda sports car")
-        _add("racing roadster")
-
-    if has_gran_turismo:
-        _add("Gran Turismo 7 racing simulator")
-        _add("Gran Turismo collaboration")
-        if car_name:
-            _add(f"{car_name} Gran Turismo inclusion")
-
-    if has_inclusion:
-        _add("video game inclusion decision")
-        if has_gran_turismo:
-            _add("decision to feature car in Gran Turismo")
-        _add("racing video game collaboration")
-
-    if has_experience or has_customers:
-        _add("player driving experience")
-        _add("customers experiencing the car")
-        _add("immersive driving experience")
-        _add("virtual driving experience")
-        _add("let players feel the car's performance")
-        _add("experience the car's appeal")
-
-    if has_supervision and has_employees:
-        _add("Mazda employees supervised project")
-        _add("engineers oversaw development")
-    if has_supervision and has_development:
-        _add("development team supervision")
-    if has_supervision and has_realism:
-        _add("supervised for realistic experience")
-    if has_supervision:
-        _add("close oversight by engineers")
-        _add("engineers reviewed performance sound design")
-
-    if has_performance:
-        _add("driving performance tuning")
-        _add("performance engineering oversight")
-    if has_sound:
-        _add("sound design oversight")
-        _add("audio tuning by engineers")
-    if has_design:
-        _add("vehicle design review")
-        _add("design refinement process")
-
-    if has_employees:
-        _add("in-house team involvement")
-        _add("company engineers collaboration")
-        _add("development team involvement")
-
-    if has_realism:
-        _add("deliver near real car experience")
-        _add("authentic driving simulation")
-        _add("bring real-world driving feel into the game")
-        _add("near-real vehicle experience for players")
-
-    def _categorize(keyword: str) -> str:
-        lowered = keyword.lower()
-        if "mazda" in lowered or (car_name and car_name.lower() in lowered):
-            return "brand"
-        if "gran turismo" in lowered or "video game" in lowered or "simulator" in lowered:
-            return "game"
-        if any(term in lowered for term in ["experience", "customer", "player", "feel", "appeal", "immersive", "virtual"]):
-            return "experience"
-        if any(term in lowered for term in ["engineer", "employee", "team", "supervised", "oversaw", "development", "involvement"]):
-            return "supervision"
-        if any(term in lowered for term in ["real", "authentic", "simulation", "near", "world"]):
-            return "realism"
-        if any(term in lowered for term in ["performance", "sound", "audio", "design", "tuning", "driving"]):
-            return "components"
-        return "general"
-
-    categories: Dict[str, List[str]] = {
-        "brand": [],
-        "game": [],
-        "experience": [],
-        "supervision": [],
-        "realism": [],
-        "components": [],
-        "general": [],
-    }
-
-    for keyword in enriched:
-        category = _categorize(keyword)
-        categories[category].append(keyword)
-
-    final_keywords: List[str] = []
-
-    def _take(category: str, limit: int) -> None:
-        for keyword in categories.get(category, []):
-            if len(final_keywords) >= max_keywords:
-                return
-            if keyword in final_keywords:
-                continue
-            final_keywords.append(keyword)
-            if sum(1 for item in final_keywords if _categorize(item) == category) >= limit:
-                return
-
-    category_plan = [
-        ("experience", 3),
-        ("supervision", 3),
-        ("realism", 2),
-        ("components", 2),
-        ("general", 3),
-        ("game", 2),
-        ("brand", 3),
-    ]
-
-    for category, limit in category_plan:
-        _take(category, limit)
-        if len(final_keywords) >= max_keywords:
+        cleaned_keywords.append(cleaned)
+        if len(cleaned_keywords) >= max_keywords:
             break
 
-    if len(final_keywords) < max_keywords:
-        for keyword in enriched:
-            if keyword not in final_keywords:
-                final_keywords.append(keyword)
-            if len(final_keywords) >= max_keywords:
-                break
-
-    if car_name:
-        has_car_keyword = any((car_name.lower() in kw.lower()) for kw in final_keywords)
-        if not has_car_keyword and categories["brand"]:
-            final_keywords.insert(0, categories["brand"][0])
-            if len(final_keywords) > max_keywords:
-                final_keywords = final_keywords[:max_keywords]
-
-    return final_keywords
+    return cleaned_keywords
 
 
 
@@ -1179,8 +1021,9 @@ def translate_range_contents(
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
 
                 keyword_prompt = (
-                    "For each Japanese item in the JSON array below, supply 5-8 concise English search phrases.\n"
-                    "Include key entities, actions, numbers, and dates, and avoid inventing unsupported ideas.\n"
+                    "For each Japanese item in the JSON array below, supply 7-10 concise, varied English search phrases.\n"
+                    "Cover the item from multiple angles (entities, actions, context, outcomes) using synonyms or paraphrases grounded in the text.\n"
+                    "Do not introduce facts that are absent from the item.\n"
                     "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
                     f"{texts_json}"
                 )
