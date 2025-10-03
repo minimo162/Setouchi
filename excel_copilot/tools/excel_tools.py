@@ -1108,7 +1108,8 @@ def translate_range_contents(
                 if use_references:
                     evidence_prompt_sections: List[str] = [
                         "Use the keywords to pull English sentences from the provided materials that support each Japanese item.",
-                        "Copy sentences verbatim (punctuation, casing, numerals) and aim for 3-6 varied quotes; use an empty array if nothing fits.",
+                        "When exact matches are scarce, include sentences that share overlapping entities, themes, or context even if the linkage is loose.",
+                        "Copy sentences verbatim (punctuation, casing, numerals) and aim for 3-6 varied quotes; only return an empty array if genuinely nothing relevant appears.",
                         "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
                         "",
                         "Japanese texts with search keywords:",

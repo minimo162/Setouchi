@@ -8,14 +8,16 @@ from playwright.sync_api import (
     TimeoutError as PlaywrightTimeoutError,
     Locator,
 )
+import logging
 import time
 import pyperclip
 import sys
 import re
+from pathlib import Path
 from typing import Optional, Callable, List, Tuple, Union
 from threading import Event
 
-from ..config import COPILOT_USER_DATA_DIR
+from ..config import COPILOT_BROWSER_CHANNELS, COPILOT_SLOW_MO_MS, COPILOT_PAGE_GOTO_TIMEOUT_MS
 from .exceptions import UserStopRequested
 
 class BrowserCopilotManager:
@@ -23,12 +25,23 @@ class BrowserCopilotManager:
     Playwrightを使い、M365 Copilotのチャット画面を操作するクラス。
     初期化、プロンプトの送信、応答の取得を責務に持つ。
     """
-    def __init__(self, user_data_dir: str, headless: bool = False):
+    def __init__(
+        self,
+        user_data_dir: str,
+        headless: bool = False,
+        browser_channels: Optional[List[str]] = None,
+        goto_timeout_ms: Optional[int] = None,
+        slow_mo_ms: Optional[int] = None,
+    ):
         self.user_data_dir = user_data_dir
         self.headless = headless
+        self.browser_channels = list(dict.fromkeys(browser_channels or COPILOT_BROWSER_CHANNELS))
+        self.goto_timeout_ms = goto_timeout_ms or COPILOT_PAGE_GOTO_TIMEOUT_MS
+        self.slow_mo_ms = slow_mo_ms if slow_mo_ms is not None else COPILOT_SLOW_MO_MS
         self.playwright: Optional[Playwright] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        self._logger = logging.getLogger(__name__)
 
     def __enter__(self):
         self.start()
@@ -40,27 +53,81 @@ class BrowserCopilotManager:
     def start(self):
         """Playwrightを起動し、Copilotページに接続・初期化する"""
         try:
+            user_data_path = Path(self.user_data_dir).expanduser()
+            user_data_path.mkdir(parents=True, exist_ok=True)
+            self._logger.debug("Using browser profile directory at %s", user_data_path)
+
             self.playwright = sync_playwright().start()
-            self.context = self.playwright.chromium.launch_persistent_context(
-                self.user_data_dir,
-                headless=self.headless,
-                slow_mo=50,
-                channel="msedge" # Edgeを指定
-            )
-            self.page = self.context.new_page()
-            print("Copilotページに移動します...")
-            self.page.goto("https://m365.cloud.microsoft/chat/", timeout=90000)
-            print("ページに接続しました。初期化を開始します...")
+            self.context = self._launch_persistent_context(user_data_path)
+
+            if self.context.pages:
+                self.page = self.context.pages[0]
+            else:
+                self.page = self.context.new_page()
+
+            if not self.page:
+                raise RuntimeError("ブラウザページの初期化に失敗しました。")
+
+            try:
+                self.page.set_default_timeout(self.goto_timeout_ms)
+            except Exception:
+                pass
+
+            self._logger.info("Copilotページに移動します...")
+            self.page.goto("https://m365.cloud.microsoft/chat/", timeout=self.goto_timeout_ms)
+            self._logger.info("ページに接続しました。初期化を開始します...")
             self._initialize_copilot_mode()
 
         except PlaywrightTimeoutError as e:
-            print(f"エラー: Copilotページへの接続がタイムアウトしました。URLやネットワークを確認してください。: {e}")
+            message = (
+                f"エラー: Copilotページへの接続がタイムアウトしました。URLやネットワークを確認してください。: {e}"
+            )
+            self._logger.error(message)
+            print(message)
             self.close()
             raise
         except Exception as e:
-            print(f"エラー: ブラウザの起動中に予期せぬエラーが発生しました。: {e}")
+            message = f"エラー: ブラウザの起動中に予期せぬエラーが発生しました。: {e}"
+            self._logger.error(message)
+            print(message)
             self.close()
             raise
+
+    def _launch_persistent_context(self, user_data_path: Path) -> BrowserContext:
+        if not self.playwright:
+            raise RuntimeError("Playwrightが初期化されていません。")
+
+        attempted_channels: List[Optional[str]] = []
+        for channel in self.browser_channels:
+            if channel not in attempted_channels:
+                attempted_channels.append(channel)
+        if None not in attempted_channels:
+            attempted_channels.append(None)
+
+        last_exception: Optional[Exception] = None
+        for channel in attempted_channels:
+            launch_kwargs = {
+                "headless": self.headless,
+                "slow_mo": max(0, int(self.slow_mo_ms)),
+            }
+            if channel:
+                launch_kwargs["channel"] = channel
+                self._logger.info("Chromium persistent context を起動します (channel=%s, headless=%s)", channel, self.headless)
+            else:
+                self._logger.info("Chromium persistent context を起動します (channel=auto, headless=%s)", self.headless)
+            try:
+                context = self.playwright.chromium.launch_persistent_context(
+                    str(user_data_path),
+                    **launch_kwargs,
+                )
+                self._logger.info("Chromium の起動に成功しました (channel=%s)", channel or "auto")
+                return context
+            except Exception as exc:
+                last_exception = exc
+                self._logger.warning("Channel=%s でのブラウザ起動に失敗しました: %s", channel or "auto", exc)
+                continue
+
+        raise RuntimeError("利用可能なブラウザチャネルでの起動に失敗しました。") from last_exception
 
     def _wait_for_first_visible(self, description: str, locator_factories: List[Union[Callable[[], Locator], Tuple[str, Callable[[], Locator]]]], timeout: float) -> Locator:
         """指定されたロケーター群の中から最初に可視状態になった要素を取得する"""
@@ -773,15 +840,15 @@ class BrowserCopilotManager:
         if self.context:
             try:
                 self.context.close()
-                print("ブラウザコンテキストを閉じました。")
+                self._logger.info("ブラウザコンテキストを閉じました。")
             except Exception as e:
-                print(f"ブラウザコンテキストを閉じる際にエラーが発生しました: {e}")
+                self._logger.warning("ブラウザコンテキストを閉じる際にエラーが発生しました: %s", e)
         if self.playwright:
             try:
                 self.playwright.stop()
-                print("Playwrightを停止しました。")
+                self._logger.info("Playwrightを停止しました。")
             except Exception as e:
-                print(f"Playwrightを停止する際にエラーが発生しました: {e}")
+                self._logger.warning("Playwrightを停止する際にエラーが発生しました: %s", e)
         self.page = None
         self.context = None
         self.playwright = None

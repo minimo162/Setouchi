@@ -8,6 +8,7 @@ import json
 import time
 import traceback
 import os
+import logging
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -20,7 +21,19 @@ from excel_copilot.agent.prompts import CopilotMode
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.tools import excel_tools
 from excel_copilot.tools.schema_builder import create_tool_schema
-from excel_copilot.config import COPILOT_USER_DATA_DIR
+from excel_copilot.config import (
+    COPILOT_USER_DATA_DIR,
+    COPILOT_HEADLESS,
+    COPILOT_BROWSER_CHANNELS,
+    COPILOT_PAGE_GOTO_TIMEOUT_MS,
+    COPILOT_SLOW_MO_MS,
+)
+
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 class AppState(Enum):
     INITIALIZING = auto()
@@ -191,7 +204,13 @@ class CopilotWorker:
         try:
             print("Worker\u306e\u521d\u671f\u5316\u3092\u958b\u59cb\u3057\u307e\u3059...")
             self._emit_response(ResponseMessage(ResponseType.STATUS, "\u30d6\u30e9\u30a6\u30b6 (Playwright) \u3092\u8d77\u52d5\u4e2d..."))
-            self.browser_manager = BrowserCopilotManager(user_data_dir=COPILOT_USER_DATA_DIR, headless=False)
+            self.browser_manager = BrowserCopilotManager(
+                user_data_dir=COPILOT_USER_DATA_DIR,
+                headless=COPILOT_HEADLESS,
+                browser_channels=COPILOT_BROWSER_CHANNELS,
+                goto_timeout_ms=COPILOT_PAGE_GOTO_TIMEOUT_MS,
+                slow_mo_ms=COPILOT_SLOW_MO_MS,
+            )
             self.browser_manager.start()
             print("BrowserManager \u306e\u8d77\u52d5\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
 
@@ -1109,4 +1128,3 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.app(target=main)
-
