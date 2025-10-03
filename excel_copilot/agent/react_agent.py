@@ -15,6 +15,58 @@ from excel_copilot.tools.actions import ExcelActions
 # これを超えると、AgentはAIに分割処理を促すフィードバックを返す。
 MAX_PROCESSING_TEXT_LENGTH = 4000
 
+_COMPLETION_TOKENS_JA = (
+    "完了",
+    "出力",
+    "書き込み",
+    "反映",
+    "更新",
+    "記入",
+)
+
+_COMPLETION_TOKENS_EN = (
+    "translation",
+    "translated",
+    "written",
+    "wrote",
+    "output",
+    "applied",
+    "completed",
+    "done",
+    "updated",
+)
+
+_TRAILING_ERROR_PREFIXES = ("Error:", "エラー:")
+
+
+def _interpret_completion_response(response: str) -> Optional[str]:
+    """Return a cleaned completion message when tags are missing."""
+
+    sanitized = (response or "").strip()
+    if not sanitized:
+        return None
+
+    lowered = sanitized.lower()
+    has_completion_marker = any(token in sanitized for token in _COMPLETION_TOKENS_JA) or any(
+        token in lowered for token in _COMPLETION_TOKENS_EN
+    )
+    mentions_translation = "翻訳" in sanitized or "translate" in lowered or "translation" in lowered
+    mentions_cells = bool(re.search(r"[A-Za-z]{1,3}\d+", sanitized))
+
+    if not has_completion_marker and not (mentions_translation and mentions_cells):
+        return None
+
+    cleaned = sanitized
+    for prefix in _TRAILING_ERROR_PREFIXES:
+        marker_index = cleaned.find(prefix)
+        if marker_index != -1:
+            candidate = cleaned[:marker_index].strip()
+            if candidate:
+                cleaned = candidate
+            break
+
+    return cleaned or None
+
 class ReActAgent:
     """
     ReAct (Reasoning and Acting) フレームワークに基づいたAIエージェント。
@@ -117,34 +169,9 @@ class ReActAgent:
             # Thoughtラベルが無くActionのみのケースを許容する
             thought = response[:action_match.start()].strip()
         else:
-            lower_response = response.lower()
-            completion_markers = (
-                "完了",
-                "出力",
-                "書き込み",
-                "反映",
-                "更新",
-                "記入",
-            )
-            completion_markers_en = (
-                "translation",
-                "translated",
-                "written",
-                "wrote",
-                "output",
-                "applied",
-                "completed",
-                "done",
-                "updated",
-            )
-            has_completion_marker = any(marker in response for marker in completion_markers) or any(
-                marker in lower_response for marker in completion_markers_en
-            )
-            mentions_translation = "翻訳" in response or "translate" in lower_response or "translation" in lower_response
-            mentions_cells = bool(re.search(r"[A-Za-z]{1,3}\d+", response))
-
-            if has_completion_marker or (mentions_translation and mentions_cells):
-                return "", None, response
+            final_answer_candidate = _interpret_completion_response(response)
+            if final_answer_candidate is not None:
+                return "", None, final_answer_candidate
 
             raise LLMResponseError("応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。")
 
