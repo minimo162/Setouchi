@@ -1042,10 +1042,10 @@ def translate_range_contents(
 
                 keyword_prompt = (
                     "For each Japanese item in the JSON array below, craft exactly ten distinct English search phrases.\n"
-                    "Cover multiple angles: entity names or product lines, the announcement or decision, experiential aspects, performance or technical qualities, involved people or organisations, platforms or venues, broader audience or market framing, and downstream benefits or impact.\n"
-                    "Mix shorter three-to-four word queries with longer six-to-nine word phrasing, and rotate leading vocabulary so no two phrases share the same first two words.\n"
-                    "Use synonyms grounded in the item; never add claims that are absent from the text.\n"
-                    "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
+                    "Cover every key element from the item—who/what, actions or decisions, intentions, effects, stakeholders, audiences, and context—while avoiding repetitive framing.\n"
+                    "Use synonyms and descriptive stand‑ins so that proper nouns appear only when essential, and alternate with role- or category-based wording (e.g., 'the automaker', 'the sports car') so no single substantive word appears in every phrase.\n"
+                    "Mix shorter three-to-four word queries with longer six-to-nine word phrasing, and ensure no two phrases share the same first two words.\n"
+                    "Do not invent information beyond the item, and return a JSON array matching the input order where each element exposes only a 'keywords' list.\n"
                     f"{texts_json}"
                 )
                 keyword_response = browser_manager.ask(keyword_prompt)
