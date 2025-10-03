@@ -3,6 +3,7 @@ import difflib
 import logging
 import os
 import string
+from collections import Counter
 from typing import List, Any, Optional, Dict, Tuple, Set
 
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
@@ -187,21 +188,73 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
     """Return the AI-supplied keywords with light deduplication and trimming."""
     del source_text  # retained for signature compatibility
 
-    cleaned_keywords: List[str] = []
-    seen: Set[str] = set()
+    unique_keywords: List[str] = []
+    seen_lower: Set[str] = set()
     for keyword in base_keywords:
         cleaned = (keyword or "").strip()
         if not cleaned:
             continue
         lowered = cleaned.lower()
-        if lowered in seen:
+        if lowered in seen_lower:
             continue
-        seen.add(lowered)
-        cleaned_keywords.append(cleaned)
-        if len(cleaned_keywords) >= max_keywords:
+        seen_lower.add(lowered)
+        unique_keywords.append(cleaned)
+        if len(unique_keywords) >= max_keywords:
             break
 
-    return cleaned_keywords
+    if len(unique_keywords) <= 1:
+        return unique_keywords
+
+    def _normalize_leading_token(token: str) -> str:
+        return token.strip(string.punctuation).lower()
+
+    leading_counts: Counter[str] = Counter()
+    tokenized_entries: List[Tuple[int, List[str]]] = []
+    for index, keyword in enumerate(unique_keywords):
+        tokens = keyword.split()
+        if not tokens:
+            continue
+        normalized = _normalize_leading_token(tokens[0])
+        if not normalized:
+            continue
+        leading_counts[normalized] += 1
+        tokenized_entries.append((index, tokens))
+
+    if not leading_counts:
+        return unique_keywords
+
+    shared_token, frequency = leading_counts.most_common(1)[0]
+    threshold = max(3, int(len(unique_keywords) * 0.6))
+    if frequency < threshold:
+        return unique_keywords
+
+    if not any(len(tokens) > 1 and _normalize_leading_token(tokens[0]) == shared_token for _, tokens in tokenized_entries):
+        return unique_keywords
+
+    # Keep the first appearance with the leading token, but drop the repeated prefix on later entries.
+    final_keywords: List[str] = []
+    final_seen: Set[str] = set()
+    for index, keyword in enumerate(unique_keywords):
+        tokens = keyword.split()
+        candidate = keyword
+        if (
+            index != 0
+            and tokens
+            and _normalize_leading_token(tokens[0]) == shared_token
+            and len(tokens) > 1
+        ):
+            candidate = " ".join(tokens[1:]).strip()
+            if not candidate:
+                candidate = keyword
+        lowered = candidate.lower()
+        if lowered in final_seen:
+            continue
+        final_seen.add(lowered)
+        final_keywords.append(candidate)
+        if len(final_keywords) >= max_keywords:
+            break
+
+    return final_keywords
 
 
 
