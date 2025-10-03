@@ -244,6 +244,28 @@ class BrowserCopilotManager:
         if not current_text:
             raise RuntimeError("Failed to populate the chat input with the prompt.")
 
+    def _submit_chat_input_via_keyboard(self, chat_input: Locator) -> bool:
+        """Fallback submission when the explicit send button is unavailable."""
+        if not self.page:
+            return False
+
+        modifier = "Meta" if sys.platform == "darwin" else "Control"
+        key_sequences = [f"{modifier}+Enter", "Enter"]
+
+        for sequence in key_sequences:
+            for target in (chat_input, None):
+                try:
+                    if target is None:
+                        self.page.keyboard.press(sequence)
+                    else:
+                        target.press(sequence)
+                    print(f"キーボードショートカット '{sequence}' で送信を試みました。")
+                    return True
+                except Exception as press_error:
+                    print(f"キーボード送信 '{sequence}' に失敗: {press_error}")
+                    continue
+        return False
+
     def _chat_input_locator_factories(self) -> List[Tuple[str, Callable[[], Locator]]]:
         if not self.page:
             raise RuntimeError("ページが初期化されていません。")
@@ -596,21 +618,32 @@ class BrowserCopilotManager:
                 time.sleep(0.35)
 
             _ensure_not_stopped()
-            send_button = self._wait_for_first_visible(
-                "送信ボタン",
-                [
-                    ("label=送信", lambda: self.page.get_by_label("送信")),
-                    ("label=送信 (Ctrl+Enter)", lambda: self.page.get_by_label("送信 (Ctrl+Enter)")),
-                    ("button name=送信", lambda: self.page.get_by_role("button", name="送信")),
-                    ("button name=送信 (Ctrl+Enter)", lambda: self.page.get_by_role("button", name="送信 (Ctrl+Enter)")),
-                    ("button name=Send", lambda: self.page.get_by_role("button", name="Send")),
-                    ("label=Send", lambda: self.page.get_by_label("Send")),
-                    ("test-id=SendButtonTestId", lambda: self.page.get_by_test_id("SendButtonTestId")),
-                ],
-                timeout=15000,
-            )
-            _ensure_not_stopped()
-            send_button.click()
+            try:
+                send_button = self._wait_for_first_visible(
+                    "送信ボタン",
+                    [
+                        ("label=送信", lambda: self.page.get_by_label("送信")),
+                        ("label=送信 (Ctrl+Enter)", lambda: self.page.get_by_label("送信 (Ctrl+Enter)")),
+                        ("button name=送信", lambda: self.page.get_by_role("button", name="送信")),
+                        ("button name=送信 (Ctrl+Enter)", lambda: self.page.get_by_role("button", name="送信 (Ctrl+Enter)")),
+                        ("button name=Send", lambda: self.page.get_by_role("button", name="Send")),
+                        ("label=Send", lambda: self.page.get_by_label("Send")),
+                        ("test-id=SendButtonTestId", lambda: self.page.get_by_test_id("SendButtonTestId")),
+                        ("data-testid^=send", lambda: self.page.locator('[data-testid^="send" i]')),
+                        ("data-testid^=chat-send", lambda: self.page.locator('[data-testid^="chat-send" i]')),
+                        ("role=button name~=Send", lambda: self.page.get_by_role("button", name=re.compile("send", re.IGNORECASE))),
+                        ("aria-label~=送信", lambda: self.page.locator('[aria-label*="送信" i]')),
+                        ("type=submit", lambda: self.page.locator('button[type="submit"]')),
+                    ],
+                    timeout=15000,
+                )
+                _ensure_not_stopped()
+                send_button.click()
+            except Exception as send_error:
+                print(f"送信ボタンをクリックできませんでした: {send_error}. キーボード送信を試みます。")
+                _ensure_not_stopped()
+                if not self._submit_chat_input_via_keyboard(chat_input):
+                    raise RuntimeError("送信ボタンが見つからず、キーボード送信にも失敗しました。") from send_error
 
             _ensure_not_stopped()
             # 新しいコピーボタン（＝ユーザー入力・応答）が出現するのを待つ

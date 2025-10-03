@@ -66,41 +66,65 @@ class ReActAgent:
 
     def _parse_llm_output(self, response: str) -> Tuple[str, Optional[str], Optional[str]]:
         """LLMの出力を Thought, Action, Final Answer に分割する。"""
-        thought = ""
-        action_str = None
-        final_answer = None
 
-        # Final Answerが単独で存在する場合を先に処理
+        def _extract_json_payload(text: str) -> Optional[str]:
+            """Return the first JSON payload in text, or None if not found."""
+            if not text:
+                return None
+            leading_trimmed = text.lstrip()
+            if not leading_trimmed or leading_trimmed[0] not in "[{":
+                return None
+            try:
+                decoder = json.JSONDecoder()
+                _, end_idx = decoder.raw_decode(leading_trimmed)
+            except json.JSONDecodeError:
+                return None
+            return leading_trimmed[:end_idx]
+
+        response = (response or "").strip()
+        if not response:
+            raise LLMResponseError("LLMから空の応答が返されました。")
+
+        # JSONのみで構成されたレスポンス（Thought/Actionラベル省略）に対応
+        json_only_payload = _extract_json_payload(response)
+        if json_only_payload and json_only_payload == response:
+            return "", json_only_payload, None
+
+        thought = ""
+        action_str: Optional[str] = None
+        final_answer: Optional[str] = None
+
         colon_pattern = r"\s*[:：]"
         final_answer_match = re.search(rf"Final Answer{colon_pattern}", response, re.IGNORECASE)
         if final_answer_match:
-            # Final Answerより前の部分にThoughtがあるか確認
-            thought_match = re.search(rf"Thought{colon_pattern}", response[:final_answer_match.start()], re.IGNORECASE)
+            thought_match = re.search(
+                rf"Thought{colon_pattern}",
+                response[:final_answer_match.start()],
+                re.IGNORECASE,
+            )
             if thought_match:
                 thought = response[thought_match.end():final_answer_match.start()].strip()
-            
             final_answer = response[final_answer_match.end():].strip()
-            # Final Answerがあれば、Actionは不要
             return thought, None, final_answer
 
-        # ThoughtとActionのペアを処理
+        action_match = re.search(rf"Action{colon_pattern}", response, re.IGNORECASE)
         thought_match = re.search(rf"Thought{colon_pattern}", response, re.IGNORECASE)
-        if not thought_match:
+
+        if thought_match:
+            thought_end = action_match.start() if action_match else len(response)
+            thought = response[thought_match.end():thought_end].strip()
+        elif action_match:
+            # Thoughtラベルが無くActionのみのケースを許容する
+            thought = response[:action_match.start()].strip()
+        else:
             raise LLMResponseError("応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。")
 
-        action_match = re.search(rf"Action{colon_pattern}", response, re.IGNORECASE)
-        if not action_match:
-            # ThoughtのみでActionがない場合は、Thoughtを抽出し、ActionはNoneとする
-            thought = response[thought_match.end():].strip()
-            action_str = None
-        else:
-            # ThoughtとActionの両方がある場合
-            thought = response[thought_match.end():action_match.start()].strip()
+        if action_match:
             action_str_raw = response[action_match.end():].strip()
-            json_match = re.search(r'{.*}', action_str_raw, re.DOTALL)
-            if not json_match:
+            json_payload = _extract_json_payload(action_str_raw)
+            if not json_payload:
                 raise LLMResponseError("Actionブロック内にJSONが見つかりませんでした。")
-            action_str = json_match.group(0)
+            action_str = json_payload
 
         return thought, action_str, final_answer
 
