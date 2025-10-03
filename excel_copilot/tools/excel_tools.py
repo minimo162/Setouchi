@@ -188,22 +188,35 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
     del source_text  # retained for signature compatibility
 
     cleaned_keywords: List[str] = []
-    seen: Set[str] = set()
+    seen_lower: Set[str] = set()
     leading_pairs: Set[str] = set()
+    candidates: List[Tuple[str, str]] = []
+    fallback_candidates: List[Tuple[str, str]] = []
+
     for keyword in base_keywords:
         cleaned = (keyword or "").strip()
         if not cleaned:
             continue
         lowered = cleaned.lower()
-        if lowered in seen:
+        if lowered in seen_lower:
             continue
-        opening_tokens = lowered.split()
-        if opening_tokens:
-            leading_pair = " ".join(opening_tokens[:2])
-            if leading_pair in leading_pairs:
-                continue
-            leading_pairs.add(leading_pair)
-        seen.add(lowered)
+        seen_lower.add(lowered)
+        tokens = lowered.split()
+        leading_pair = " ".join(tokens[:2]) if tokens else ""
+        candidates.append((cleaned, leading_pair))
+
+    for cleaned, leading_pair in candidates:
+        if leading_pair and leading_pair in leading_pairs:
+            fallback_candidates.append((cleaned, leading_pair))
+            continue
+        leading_pairs.add(leading_pair)
+        cleaned_keywords.append(cleaned)
+        if len(cleaned_keywords) >= max_keywords:
+            return cleaned_keywords
+
+    for cleaned, leading_pair in fallback_candidates:
+        if cleaned in cleaned_keywords:
+            continue
         cleaned_keywords.append(cleaned)
         if len(cleaned_keywords) >= max_keywords:
             break
@@ -1028,11 +1041,10 @@ def translate_range_contents(
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
 
                 keyword_prompt = (
-                    "For each Japanese item in the JSON array below, craft exactly eight distinct English search phrases.\n"
-                    "Cover a spectrum of angles: (1) the core product or entities named, (2) the decision or announcement, (3) customer or player experience, (4) performance or technical traits, (5) the people or teams involved, (6) the platform or game title, (7) broader audience appeal, and (8) downstream impact or benefits.\n"
-                    "Use synonyms and paraphrases grounded in the text so that no two phrases begin with the same two-word sequence.\n"
-                    "Vary length between three and nine words, mixing short-tail and long-tail queries.\n"
-                    "Do not invent facts or append commentary beyond the phrases.\n"
+                    "For each Japanese item in the JSON array below, craft exactly ten distinct English search phrases.\n"
+                    "Cover multiple angles: entity names or product lines, the announcement or decision, experiential aspects, performance or technical qualities, involved people or organisations, platforms or venues, broader audience or market framing, and downstream benefits or impact.\n"
+                    "Mix shorter three-to-four word queries with longer six-to-nine word phrasing, and rotate leading vocabulary so no two phrases share the same first two words.\n"
+                    "Use synonyms grounded in the item; never add claims that are absent from the text.\n"
                     "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
                     f"{texts_json}"
                 )
@@ -1115,7 +1127,8 @@ def translate_range_contents(
                     evidence_prompt_sections: List[str] = [
                         "Use the keywords to pull English sentences from the provided materials that support each Japanese item.",
                         "When exact matches are scarce, include sentences that share overlapping entities, themes, or context even if the linkage is loose.",
-                        "Copy sentences verbatim (punctuation, casing, numerals) and aim for 3-6 varied quotes; only return an empty array if genuinely nothing relevant appears.",
+                        "Copy sentences verbatim (punctuation, casing, numerals) and aim for 4-8 varied quotes drawn from different paragraphs or sources whenever possible; only return an empty array if genuinely nothing relevant appears.",
+                        "Avoid citing near-duplicate sentences or repeating the same clause unless no other material exists.",
                         "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
                         "",
                         "Japanese texts with search keywords:",
