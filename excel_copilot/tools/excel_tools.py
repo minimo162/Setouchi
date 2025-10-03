@@ -183,23 +183,26 @@ def _extract_primary_quoted_phrase(text: str) -> Optional[str]:
     return candidate or None
 
 
-def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keywords: int = 12) -> List[str]:
+def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keywords: int = 18) -> List[str]:
     """Add broader coverage keywords so evidence searches hit more diverse sources."""
     enriched: List[str] = []
     seen: Set[str] = set()
 
-    def _add(keyword: str) -> None:
+    def _add(keyword: str) -> bool:
         cleaned = (keyword or "").strip()
         if not cleaned:
-            return
+            return False
         lowered = cleaned.lower()
         if lowered in seen:
-            return
+            return False
         seen.add(lowered)
         enriched.append(cleaned)
+        return True
 
+    base_added: List[str] = []
     for keyword in base_keywords:
-        _add(keyword)
+        if _add(keyword):
+            base_added.append(keyword)
 
     lowered_source = source_text.lower()
     has_mazda = "マツダ" in source_text or "mazda" in lowered_source
@@ -221,6 +224,7 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
     if has_mazda:
         _add("Mazda official announcement")
         _add("Mazda customer engagement")
+        _add("Mazda motorsports program")
 
     if car_name:
         _add(car_name)
@@ -229,6 +233,8 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
             _add(base_car)
         _add(f"{car_name} driving experience")
         _add(f"{car_name} development team")
+        _add("Mazda sports car")
+        _add("racing roadster")
 
     if has_gran_turismo:
         _add("Gran Turismo 7 racing simulator")
@@ -240,34 +246,88 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
         _add("video game inclusion decision")
         if has_gran_turismo:
             _add("decision to feature car in Gran Turismo")
+        _add("racing video game collaboration")
 
     if has_experience or has_customers:
         _add("player driving experience")
         _add("customers experiencing the car")
+        _add("immersive driving experience")
+        _add("virtual driving experience")
 
     if has_supervision and has_employees:
         _add("Mazda employees supervised project")
+        _add("engineers oversaw development")
     if has_supervision and has_development:
         _add("development team supervision")
     if has_supervision and has_realism:
         _add("supervised for realistic experience")
+    if has_supervision:
+        _add("close oversight by engineers")
 
     if has_performance:
         _add("driving performance tuning")
+        _add("performance engineering oversight")
     if has_sound:
         _add("sound design oversight")
+        _add("audio tuning by engineers")
     if has_design:
         _add("vehicle design review")
+        _add("design refinement process")
 
     if has_employees:
         _add("in-house team involvement")
+        _add("company engineers collaboration")
 
     if has_realism:
         _add("deliver near real car experience")
+        _add("authentic driving simulation")
 
-    if len(enriched) > max_keywords:
-        return enriched[:max_keywords]
-    return enriched
+    base_lower_set = {item.lower() for item in base_added}
+    specifics: List[str] = []
+    general: List[str] = []
+    for keyword in enriched:
+        if keyword.lower() in base_lower_set:
+            specifics.append(keyword)
+        else:
+            general.append(keyword)
+
+    limited_specifics: List[str] = []
+    car_gt_count = 0
+    car_only_count = 0
+    for keyword in specifics:
+        lowered = keyword.lower()
+        if car_name and car_name.lower() in lowered:
+            if "gran turismo" in lowered:
+                if car_gt_count >= 3:
+                    continue
+                car_gt_count += 1
+            else:
+                if car_only_count >= 2:
+                    continue
+                car_only_count += 1
+        limited_specifics.append(keyword)
+
+    final_keywords: List[str] = []
+    spec_idx = 0
+    gen_idx = 0
+    while len(final_keywords) < max_keywords and (spec_idx < len(limited_specifics) or gen_idx < len(general)):
+        if spec_idx < len(limited_specifics):
+            final_keywords.append(limited_specifics[spec_idx])
+            spec_idx += 1
+            if len(final_keywords) >= max_keywords:
+                break
+        if gen_idx < len(general):
+            final_keywords.append(general[gen_idx])
+            gen_idx += 1
+
+    while len(final_keywords) < max_keywords and spec_idx < len(limited_specifics):
+        final_keywords.append(limited_specifics[spec_idx])
+        spec_idx += 1
+    while len(final_keywords) < max_keywords and gen_idx < len(general):
+        final_keywords.append(general[gen_idx])
+        gen_idx += 1
+
+    return final_keywords
 
 
 
