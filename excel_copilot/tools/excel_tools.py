@@ -183,12 +183,13 @@ def _extract_primary_quoted_phrase(text: str) -> Optional[str]:
     return candidate or None
 
 
-def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keywords: int = 18) -> List[str]:
-    """Return the AI-supplied keywords with light deduplication and trimming."""
+def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keywords: int = 12) -> List[str]:
+    """Return the AI-supplied keywords with deduplication and opener diversity."""
     del source_text  # retained for signature compatibility
 
     cleaned_keywords: List[str] = []
     seen: Set[str] = set()
+    leading_pairs: Set[str] = set()
     for keyword in base_keywords:
         cleaned = (keyword or "").strip()
         if not cleaned:
@@ -196,6 +197,12 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
         lowered = cleaned.lower()
         if lowered in seen:
             continue
+        opening_tokens = lowered.split()
+        if opening_tokens:
+            leading_pair = " ".join(opening_tokens[:2])
+            if leading_pair in leading_pairs:
+                continue
+            leading_pairs.add(leading_pair)
         seen.add(lowered)
         cleaned_keywords.append(cleaned)
         if len(cleaned_keywords) >= max_keywords:
@@ -1021,12 +1028,11 @@ def translate_range_contents(
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
 
                 keyword_prompt = (
-                    "For each Japanese item in the JSON array below, supply 7-10 concise, varied English search phrases or fragments.\n"
-                    "Capture all salient elements (entities, actions, descriptors, context, outcomes) using synonyms or paraphrases grounded in the text.\n"
-                    "Mix parts of speech when helpful—verbs, adjectives, nouns, short phrases are all acceptable.\n"
-                    "Do not force an explicit subject; include one only when the item emphasizes it.\n"
-                    "Vary the openings so phrases do not all begin with the same word unless the text requires it.\n"
-                    "Do not introduce facts that are absent from the item.\n"
+                    "For each Japanese item in the JSON array below, craft exactly eight distinct English search phrases.\n"
+                    "Cover a spectrum of angles: (1) the core product or entities named, (2) the decision or announcement, (3) customer or player experience, (4) performance or technical traits, (5) the people or teams involved, (6) the platform or game title, (7) broader audience appeal, and (8) downstream impact or benefits.\n"
+                    "Use synonyms and paraphrases grounded in the text so that no two phrases begin with the same two-word sequence.\n"
+                    "Vary length between three and nine words, mixing short-tail and long-tail queries.\n"
+                    "Do not invent facts or append commentary beyond the phrases.\n"
                     "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
                     f"{texts_json}"
                 )
