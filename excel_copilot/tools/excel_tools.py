@@ -253,6 +253,8 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
         _add("customers experiencing the car")
         _add("immersive driving experience")
         _add("virtual driving experience")
+        _add("let players feel the car's performance")
+        _add("experience the car's appeal")
 
     if has_supervision and has_employees:
         _add("Mazda employees supervised project")
@@ -263,6 +265,7 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
         _add("supervised for realistic experience")
     if has_supervision:
         _add("close oversight by engineers")
+        _add("engineers reviewed performance sound design")
 
     if has_performance:
         _add("driving performance tuning")
@@ -277,55 +280,84 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
     if has_employees:
         _add("in-house team involvement")
         _add("company engineers collaboration")
+        _add("development team involvement")
 
     if has_realism:
         _add("deliver near real car experience")
         _add("authentic driving simulation")
+        _add("bring real-world driving feel into the game")
+        _add("near-real vehicle experience for players")
 
-    base_lower_set = {item.lower() for item in base_added}
-    specifics: List[str] = []
-    general: List[str] = []
-    for keyword in enriched:
-        if keyword.lower() in base_lower_set:
-            specifics.append(keyword)
-        else:
-            general.append(keyword)
-
-    limited_specifics: List[str] = []
-    car_gt_count = 0
-    car_only_count = 0
-    for keyword in specifics:
+    def _categorize(keyword: str) -> str:
         lowered = keyword.lower()
-        if car_name and car_name.lower() in lowered:
-            if "gran turismo" in lowered:
-                if car_gt_count >= 3:
-                    continue
-                car_gt_count += 1
-            else:
-                if car_only_count >= 2:
-                    continue
-                car_only_count += 1
-        limited_specifics.append(keyword)
+        if "mazda" in lowered or (car_name and car_name.lower() in lowered):
+            return "brand"
+        if "gran turismo" in lowered or "video game" in lowered or "simulator" in lowered:
+            return "game"
+        if any(term in lowered for term in ["experience", "customer", "player", "feel", "appeal", "immersive", "virtual"]):
+            return "experience"
+        if any(term in lowered for term in ["engineer", "employee", "team", "supervised", "oversaw", "development", "involvement"]):
+            return "supervision"
+        if any(term in lowered for term in ["real", "authentic", "simulation", "near", "world"]):
+            return "realism"
+        if any(term in lowered for term in ["performance", "sound", "audio", "design", "tuning", "driving"]):
+            return "components"
+        return "general"
+
+    categories: Dict[str, List[str]] = {
+        "brand": [],
+        "game": [],
+        "experience": [],
+        "supervision": [],
+        "realism": [],
+        "components": [],
+        "general": [],
+    }
+
+    for keyword in enriched:
+        category = _categorize(keyword)
+        categories[category].append(keyword)
 
     final_keywords: List[str] = []
-    spec_idx = 0
-    gen_idx = 0
-    while len(final_keywords) < max_keywords and (spec_idx < len(limited_specifics) or gen_idx < len(general)):
-        if spec_idx < len(limited_specifics):
-            final_keywords.append(limited_specifics[spec_idx])
-            spec_idx += 1
+
+    def _take(category: str, limit: int) -> None:
+        for keyword in categories.get(category, []):
+            if len(final_keywords) >= max_keywords:
+                return
+            if keyword in final_keywords:
+                continue
+            final_keywords.append(keyword)
+            if sum(1 for item in final_keywords if _categorize(item) == category) >= limit:
+                return
+
+    category_plan = [
+        ("experience", 3),
+        ("supervision", 3),
+        ("realism", 2),
+        ("components", 2),
+        ("general", 3),
+        ("game", 2),
+        ("brand", 3),
+    ]
+
+    for category, limit in category_plan:
+        _take(category, limit)
+        if len(final_keywords) >= max_keywords:
+            break
+
+    if len(final_keywords) < max_keywords:
+        for keyword in enriched:
+            if keyword not in final_keywords:
+                final_keywords.append(keyword)
             if len(final_keywords) >= max_keywords:
                 break
-        if gen_idx < len(general):
-            final_keywords.append(general[gen_idx])
-            gen_idx += 1
 
-    while len(final_keywords) < max_keywords and spec_idx < len(limited_specifics):
-        final_keywords.append(limited_specifics[spec_idx])
-        spec_idx += 1
-    while len(final_keywords) < max_keywords and gen_idx < len(general):
-        final_keywords.append(general[gen_idx])
-        gen_idx += 1
+    if car_name:
+        has_car_keyword = any((car_name.lower() in kw.lower()) for kw in final_keywords)
+        if not has_car_keyword and categories["brand"]:
+            final_keywords.insert(0, categories["brand"][0])
+            if len(final_keywords) > max_keywords:
+                final_keywords = final_keywords[:max_keywords]
 
     return final_keywords
 
