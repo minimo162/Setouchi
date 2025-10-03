@@ -3,7 +3,6 @@ import difflib
 import logging
 import os
 import string
-from collections import Counter
 from typing import List, Any, Optional, Dict, Tuple, Set
 
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
@@ -188,73 +187,21 @@ def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keyw
     """Return the AI-supplied keywords with light deduplication and trimming."""
     del source_text  # retained for signature compatibility
 
-    unique_keywords: List[str] = []
-    seen_lower: Set[str] = set()
+    cleaned_keywords: List[str] = []
+    seen: Set[str] = set()
     for keyword in base_keywords:
         cleaned = (keyword or "").strip()
         if not cleaned:
             continue
         lowered = cleaned.lower()
-        if lowered in seen_lower:
+        if lowered in seen:
             continue
-        seen_lower.add(lowered)
-        unique_keywords.append(cleaned)
-        if len(unique_keywords) >= max_keywords:
+        seen.add(lowered)
+        cleaned_keywords.append(cleaned)
+        if len(cleaned_keywords) >= max_keywords:
             break
 
-    if len(unique_keywords) <= 1:
-        return unique_keywords
-
-    def _normalize_leading_token(token: str) -> str:
-        return token.strip(string.punctuation).lower()
-
-    leading_counts: Counter[str] = Counter()
-    tokenized_entries: List[Tuple[int, List[str]]] = []
-    for index, keyword in enumerate(unique_keywords):
-        tokens = keyword.split()
-        if not tokens:
-            continue
-        normalized = _normalize_leading_token(tokens[0])
-        if not normalized:
-            continue
-        leading_counts[normalized] += 1
-        tokenized_entries.append((index, tokens))
-
-    if not leading_counts:
-        return unique_keywords
-
-    shared_token, frequency = leading_counts.most_common(1)[0]
-    threshold = max(3, int(len(unique_keywords) * 0.6))
-    if frequency < threshold:
-        return unique_keywords
-
-    if not any(len(tokens) > 1 and _normalize_leading_token(tokens[0]) == shared_token for _, tokens in tokenized_entries):
-        return unique_keywords
-
-    # Keep the first appearance with the leading token, but drop the repeated prefix on later entries.
-    final_keywords: List[str] = []
-    final_seen: Set[str] = set()
-    for index, keyword in enumerate(unique_keywords):
-        tokens = keyword.split()
-        candidate = keyword
-        if (
-            index != 0
-            and tokens
-            and _normalize_leading_token(tokens[0]) == shared_token
-            and len(tokens) > 1
-        ):
-            candidate = " ".join(tokens[1:]).strip()
-            if not candidate:
-                candidate = keyword
-        lowered = candidate.lower()
-        if lowered in final_seen:
-            continue
-        final_seen.add(lowered)
-        final_keywords.append(candidate)
-        if len(final_keywords) >= max_keywords:
-            break
-
-    return final_keywords
+    return cleaned_keywords
 
 
 
@@ -1076,6 +1023,8 @@ def translate_range_contents(
                 keyword_prompt = (
                     "For each Japanese item in the JSON array below, supply 7-10 concise, varied English search phrases.\n"
                     "Cover the item from multiple angles (entities, actions, context, outcomes) using synonyms or paraphrases grounded in the text.\n"
+                    "Use diverse leading words so the phrases do not all begin with the same brand or entity unless the item focuses on nothing else.\n"
+                    "Blend different facets (participants, locations, technology, goals, reactions) when they are supported by the Japanese.\n"
                     "Do not introduce facts that are absent from the item.\n"
                     "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
                     f"{texts_json}"
