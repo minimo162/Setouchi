@@ -1021,10 +1021,11 @@ def translate_range_contents(
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
 
                 keyword_prompt = (
-                    "For each Japanese item in the JSON array below, supply 7-10 concise, varied English search phrases.\n"
-                    "Cover the item from multiple angles (entities, actions, context, outcomes) using synonyms or paraphrases grounded in the text.\n"
-                    "Use diverse leading words so the phrases do not all begin with the same brand or entity unless the item focuses on nothing else.\n"
-                    "Blend different facets (participants, locations, technology, goals, reactions) when they are supported by the Japanese.\n"
+                    "For each Japanese item in the JSON array below, supply 7-10 concise, varied English search phrases or fragments.\n"
+                    "Capture all salient elements (entities, actions, descriptors, context, outcomes) using synonyms or paraphrases grounded in the text.\n"
+                    "Mix parts of speech when helpful—verbs, adjectives, nouns, short phrases are all acceptable.\n"
+                    "Do not force an explicit subject; include one only when the item emphasizes it.\n"
+                    "Vary the openings so phrases do not all begin with the same word unless the text requires it.\n"
                     "Do not introduce facts that are absent from the item.\n"
                     "Return a JSON array matching the input order. Each element must expose a 'keywords' list only; no commentary or code fences.\n"
                     f"{texts_json}"
