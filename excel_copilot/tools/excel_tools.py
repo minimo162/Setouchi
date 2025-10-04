@@ -920,7 +920,8 @@ def translate_range_contents(
                 "Translate each Japanese entry below into English; keep the order and stay faithful to the source.\n",
                 "Every translated_text must be written in natural English; do not copy or leave any Japanese text untranslated.\n",
                 "Use the references/URLs only to keep terminology consistent and never emit citation markers.\n",
-                "Borrow key wording from the supporting quotes whenever it faithfully expresses the Japanese text, but do not introduce any detail absent from the original sentences.\n",
+                "Borrow phrasing and sentence structure from the supporting quotes whenever it improves the English rendering of the Japanese text. Limit the borrowing strictly to wording—do not import additional facts, subjects, or entities from the quotes, and never swap in the quote's subject or perspective.\n",
+                "Treat the supporting quotes purely as style references for idiomatic English; do not reinterpret them as factual context for the translation.\n",
                 "Workflow: make English search keywords, scan the references, and reuse wording only when it supports the same fact.\n",
             ]
             if reference_entries:
@@ -935,7 +936,8 @@ def translate_range_contents(
             prompt_preamble = (
                 "Translate each Japanese entry below into English while preserving order and meaning.\n"
                 "Every translated_text must be written in natural English; do not copy or leave any Japanese text untranslated.\n"
-                "Reuse useful phrasing from the provided supporting expressions when it aligns with the Japanese content, but never add ideas that are not in the source.\n"
+                "Reuse the supporting expressions aggressively for phrasing and grammar when they fit, while avoiding any extra facts, subjects, or entities not present in the Japanese sentence, and never replace the source sentence's subject with the one used in a quote.\n"
+                "Treat the supporting expressions purely as style references for idiomatic English, not as background information to merge into the translation.\n"
                 "Return a JSON array of the same length, with no commentary or markdown.\n"
             )
         if references_requested or use_references:
