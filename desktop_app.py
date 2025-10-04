@@ -156,6 +156,7 @@ class CopilotWorker:
                 "- Solve this by calling `translate_range_without_references` with explicit source and output ranges.",
                 "- Keep translation, quote, and explanation columns aligned with the specified output range.",
                 "- Do not request workbook uploads; Excel is already connected.",
+                "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
             ]
         elif self.mode is CopilotMode.TRANSLATION_WITH_REFERENCES:
             prefix_lines = [
@@ -164,6 +165,7 @@ class CopilotWorker:
                 "- Work one cell at a time without `rows_per_batch`; split multi-row ranges across multiple calls.",
                 "- Provide citation output when evidence is expected and keep translation, quote, and explanation columns aligned.",
                 "- Do not request workbook uploads; Excel is already connected.",
+                "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
             ]
         else:
             prefix_lines = [
@@ -172,6 +174,7 @@ class CopilotWorker:
                 "- Clearly identify which range contains the Japanese source text and which range contains the English translation under review.",
                 "- Keep outputs aligned with the ranges specified in the instructions.",
                 "- Do not request workbook uploads; Excel is already connected.",
+                "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
             ]
         prefix = "\n".join(prefix_lines)
         if not trimmed_input:
@@ -211,6 +214,14 @@ class CopilotWorker:
             error_message = f"ブラウザの再初期化に失敗しました: {e}"
             print(error_message)
             traceback.print_exc()
+            try:
+                self.browser_manager.close()
+            except Exception:
+                pass
+            self.browser_manager = None
+            self.agent = None
+            self.tool_functions = []
+            self.tool_schemas = []
             self._emit_response(ResponseMessage(ResponseType.ERROR, error_message))
             return False
 
@@ -335,8 +346,9 @@ class CopilotWorker:
         finally:
             if self.stop_event.is_set():
                 self._emit_response(ResponseMessage(ResponseType.INFO, "\u30e6\u30fc\u30b6\u30fc\u306b\u3088\u3063\u3066\u30bf\u30b9\u30af\u304c\u4e2d\u65ad\u3055\u308c\u307e\u3057\u305f\u3002"))
-            self._restart_browser_session()
-            self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
+            restart_ok = self._restart_browser_session()
+            if restart_ok:
+                self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
 
     def _cleanup(self):
         print("\u30af\u30ea\u30fc\u30f3\u30a2\u30c3\u30d7\u3092\u958b\u59cb\u3057\u307e\u3059...")
