@@ -3,6 +3,7 @@ import sys
 import subprocess
 import logging
 import os
+import math
 from typing import Any, List, Optional, Dict, Tuple, Callable
 from ..core.exceptions import ToolExecutionError
 from ..core.excel_manager import ExcelManager
@@ -37,8 +38,12 @@ class ExcelActions:
         self.book = manager.get_active_workbook()
         self._progress_callback = progress_callback
         self._progress_buffer: List[str] = []
-        self._column_width_cap = 80  # characters
+        self._column_width_cap = 60  # characters
         self._column_width_floor = 18  # characters
+        self._preferred_column_width = 42  # characters
+        self._min_row_height = 16
+        self._line_height = 14
+        self._max_row_height = 360
 
     def set_progress_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         self._progress_callback = callback
@@ -176,32 +181,86 @@ class ExcelActions:
                 pass
 
         try:
-            target_range.autofit('columns')
+            target_range.api.HorizontalAlignment = -4131  # xlLeft
+            target_range.api.VerticalAlignment = -4160  # xlTop
         except Exception:
             try:
-                target_range.columns.autofit()
-            except Exception:
-                pass
-
-        try:
-            target_range.autofit('rows')
-        except Exception:
-            try:
-                target_range.rows.autofit()
+                for cell in target_range.cells:
+                    try:
+                        cell.api.HorizontalAlignment = -4131
+                        cell.api.VerticalAlignment = -4160
+                    except Exception:
+                        continue
             except Exception:
                 pass
 
         try:
             for column in target_range.columns:
-                width = column.column_width
-                if width is None:
-                    continue
-                if width < self._column_width_floor:
-                    column.column_width = self._column_width_floor
-                elif width > self._column_width_cap:
-                    column.column_width = self._column_width_cap
+                try:
+                    width = column.column_width
+                except Exception:
+                    width = None
+                desired = self._preferred_column_width
+                if width is not None and width > 0:
+                    desired = min(self._preferred_column_width, width)
+                desired = max(self._column_width_floor, min(desired, self._column_width_cap))
+                try:
+                    column.column_width = desired
+                except Exception:
+                    try:
+                        column.api.ColumnWidth = desired
+                    except Exception:
+                        continue
         except Exception:
             pass
+
+        try:
+            target_range.rows.autofit()
+        except Exception:
+            try:
+                target_range.api.EntireRow.AutoFit()
+            except Exception:
+                pass
+
+        try:
+            row_iterable = list(target_range.rows)
+        except Exception:
+            row_iterable = []
+
+        for row in row_iterable:
+            try:
+                cells_iterable = list(row.cells)
+            except Exception:
+                cells_iterable = []
+
+            max_lines = 1
+            for cell in cells_iterable:
+                try:
+                    value = cell.value
+                except Exception:
+                    value = None
+                if value is None:
+                    continue
+                text = str(value)
+                if not text:
+                    continue
+                approx_lines = max(1, math.ceil(len(text) / max(1, self._preferred_column_width - 2)))
+                max_lines = max(max_lines, min(approx_lines, self._max_row_height // self._line_height))
+
+            desired_height = max(self._min_row_height, min(self._max_row_height, max_lines * self._line_height))
+            try:
+                current_height = row.row_height
+            except Exception:
+                current_height = None
+
+            if current_height is None or current_height < desired_height - 1:
+                try:
+                    row.row_height = desired_height
+                except Exception:
+                    try:
+                        row.api.RowHeight = desired_height
+                    except Exception:
+                        continue
 
     def apply_diff_highlight_colors(self,
                                     cell_range: str,
