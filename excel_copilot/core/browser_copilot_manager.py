@@ -842,6 +842,14 @@ class BrowserCopilotManager:
         return False
 
 
+    def restart(self):
+        """ブラウザセッションを終了し、起動時と同じ状態に再初期化する"""
+
+        self._logger.info("ブラウザセッションを再初期化します。")
+        self.close()
+        self.start()
+
+
     def close(self):
         """ブラウザとPlaywrightセッションを安全に閉じる"""
         if self.context:

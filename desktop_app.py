@@ -200,6 +200,29 @@ class CopilotWorker:
         self.tool_functions = selected
         self.tool_schemas = [create_tool_schema(func) for func in self.tool_functions]
 
+    def _restart_browser_session(self) -> bool:
+        if not self.browser_manager:
+            return True
+
+        self._emit_response(ResponseMessage(ResponseType.STATUS, "ブラウザを初期化しています..."))
+        try:
+            self.browser_manager.restart()
+        except Exception as e:
+            error_message = f"ブラウザの再初期化に失敗しました: {e}"
+            print(error_message)
+            traceback.print_exc()
+            self._emit_response(ResponseMessage(ResponseType.ERROR, error_message))
+            return False
+
+        if self.agent:
+            try:
+                self.agent.reset()
+            except Exception as reset_err:
+                print(f"エージェントのリセットに失敗しましたが続行します: {reset_err}")
+
+        self._emit_response(ResponseMessage(ResponseType.STATUS, "ブラウザの初期化が完了しました。"))
+        return True
+
     def _initialize(self):
         try:
             print("Worker\u306e\u521d\u671f\u5316\u3092\u958b\u59cb\u3057\u307e\u3059...")
@@ -312,6 +335,7 @@ class CopilotWorker:
         finally:
             if self.stop_event.is_set():
                 self._emit_response(ResponseMessage(ResponseType.INFO, "\u30e6\u30fc\u30b6\u30fc\u306b\u3088\u3063\u3066\u30bf\u30b9\u30af\u304c\u4e2d\u65ad\u3055\u308c\u307e\u3057\u305f\u3002"))
+            self._restart_browser_session()
             self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
 
     def _cleanup(self):
