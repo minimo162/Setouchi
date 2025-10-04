@@ -37,7 +37,8 @@ class ExcelActions:
         self.book = manager.get_active_workbook()
         self._progress_callback = progress_callback
         self._progress_buffer: List[str] = []
-        self._column_width_cap = 60  # characters
+        self._column_width_cap = 80  # characters
+        self._column_width_floor = 18  # characters
 
     def set_progress_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         self._progress_callback = callback
@@ -143,28 +144,61 @@ class ExcelActions:
     def _apply_text_wrapping(self, target_range: xw.Range) -> None:
         """Turn on wrapping, align to top-left, and auto-fit within sensible bounds."""
 
+        wrap_applied = False
+
         try:
             target_range.api.WrapText = True
+            wrap_applied = True
+        except AttributeError:
+            try:
+                target_range.api.wrap_text.set(True)
+                wrap_applied = True
+            except Exception:
+                wrap_applied = False
         except Exception:
-            return
+            wrap_applied = False
+
+        if not wrap_applied:
+            try:
+                for cell in target_range.cells:
+                    try:
+                        cell.api.WrapText = True
+                        wrap_applied = True
+                    except AttributeError:
+                        try:
+                            cell.api.wrap_text.set(True)
+                            wrap_applied = True
+                        except Exception:
+                            continue
+                    except Exception:
+                        continue
+            except Exception:
+                pass
 
         try:
-            target_range.api.HorizontalAlignment = -4131  # xlLeft
-            target_range.api.VerticalAlignment = -4160  # xlTop
+            target_range.autofit('columns')
         except Exception:
-            pass
+            try:
+                target_range.columns.autofit()
+            except Exception:
+                pass
 
         try:
-            target_range.api.EntireRow.AutoFit()
+            target_range.autofit('rows')
         except Exception:
-            pass
+            try:
+                target_range.rows.autofit()
+            except Exception:
+                pass
 
         try:
-            target_range.api.EntireColumn.AutoFit()
-            # Cap excessively wide columns if AutoFit expands beyond the limit.
             for column in target_range.columns:
-                column_width = column.column_width
-                if column_width and column_width > self._column_width_cap:
+                width = column.column_width
+                if width is None:
+                    continue
+                if width < self._column_width_floor:
+                    column.column_width = self._column_width_floor
+                elif width > self._column_width_cap:
                     column.column_width = self._column_width_cap
         except Exception:
             pass
