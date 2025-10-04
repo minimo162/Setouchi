@@ -49,7 +49,7 @@ class AppSettings:
         self.PLAYWRIGHT_PAGE_GOTO_TIMEOUT_MS: int = self._get_int(
             "COPILOT_PAGE_GOTO_TIMEOUT_MS", 90000, minimum=1000
         )
-        self.PLAYWRIGHT_SUPPRESS_FOCUS: bool = _to_bool(os.getenv("COPILOT_SUPPRESS_BROWSER_FOCUS"), True)
+        self.PLAYWRIGHT_SUPPRESS_FOCUS: bool = _to_bool(os.getenv("COPILOT_SUPPRESS_BROWSER_FOCUS"), False)
         self.PLAYWRIGHT_SUPPRESS_FOCUS_LEFT: int = self._get_int(
             "COPILOT_SUPPRESS_BROWSER_FOCUS_LEFT",
             -4000,

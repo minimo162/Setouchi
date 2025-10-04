@@ -77,7 +77,10 @@ class BrowserCopilotManager:
                 raise RuntimeError("ブラウザページの初期化に失敗しました。")
 
             self._focus_suppressed_once = False
-            self._suppress_browser_focus()
+            if COPILOT_SUPPRESS_BROWSER_FOCUS:
+                self._suppress_browser_focus()
+            else:
+                self._ensure_browser_visible()
             try:
                 self.page.set_default_timeout(self.goto_timeout_ms)
             except Exception:
@@ -87,7 +90,10 @@ class BrowserCopilotManager:
             self.page.goto("https://m365.cloud.microsoft/chat/", timeout=self.goto_timeout_ms)
             self._logger.info("ページに接続しました。初期化を開始します...")
             self._initialize_copilot_mode()
-            self._suppress_browser_focus()
+            if COPILOT_SUPPRESS_BROWSER_FOCUS:
+                self._suppress_browser_focus()
+            else:
+                self._ensure_browser_visible()
 
         except PlaywrightTimeoutError as e:
             message = (
@@ -879,6 +885,16 @@ class BrowserCopilotManager:
         self.context = None
         self.playwright = None
         self._focus_suppressed_once = False
+
+    def _ensure_browser_visible(self):
+        if self.headless or not self.page:
+            return
+
+        try:
+            self.page.bring_to_front()
+            self._logger.debug("ブラウザウィンドウを前面に表示しました。")
+        except Exception as exc:
+            self._logger.debug("ブラウザウィンドウを前面に表示できませんでした: %s", exc)
 
     def _suppress_browser_focus(self):
         if (
