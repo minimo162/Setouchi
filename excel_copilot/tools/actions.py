@@ -37,6 +37,7 @@ class ExcelActions:
         self.book = manager.get_active_workbook()
         self._progress_callback = progress_callback
         self._progress_buffer: List[str] = []
+        self._column_width_cap = 60  # characters
 
     def set_progress_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         self._progress_callback = callback
@@ -65,7 +66,9 @@ class ExcelActions:
     def write_to_cell(self, cell: str, value: Any, sheet_name: Optional[str] = None) -> str:
         try:
             sheet = self._get_sheet(sheet_name)
-            sheet.range(cell).value = value
+            target = sheet.range(cell)
+            target.value = value
+            self._apply_text_wrapping(target)
             return f"セル {cell} に値 '{value}' を正常に書き込みました。"
         except Exception as e:
             raise ToolExecutionError(f"セル '{cell}' への書き込み中にエラーが発生しました: {e}")
@@ -130,11 +133,41 @@ class ExcelActions:
                 raise ToolExecutionError(error_msg)
 
             target_range.value = data
+            self._apply_text_wrapping(target_range)
             return f"範囲 '{cell_range}' にデータを正常に書き込みました。"
         except Exception as e:
             if isinstance(e, ToolExecutionError):
                 raise e
             raise ToolExecutionError(f"範囲 '{cell_range}' への書き込み中に予期せぬエラーが発生しました: {e}")
+
+    def _apply_text_wrapping(self, target_range: xw.Range) -> None:
+        """Turn on wrapping, align to top-left, and auto-fit within sensible bounds."""
+
+        try:
+            target_range.api.WrapText = True
+        except Exception:
+            return
+
+        try:
+            target_range.api.HorizontalAlignment = -4131  # xlLeft
+            target_range.api.VerticalAlignment = -4160  # xlTop
+        except Exception:
+            pass
+
+        try:
+            target_range.api.EntireRow.AutoFit()
+        except Exception:
+            pass
+
+        try:
+            target_range.api.EntireColumn.AutoFit()
+            # Cap excessively wide columns if AutoFit expands beyond the limit.
+            for column in target_range.columns:
+                column_width = column.column_width
+                if column_width and column_width > self._column_width_cap:
+                    column.column_width = self._column_width_cap
+        except Exception:
+            pass
 
     def apply_diff_highlight_colors(self,
                                     cell_range: str,

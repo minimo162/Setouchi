@@ -1129,6 +1129,8 @@ def translate_range_contents(
                         "When exact matches are scarce, include sentences that share overlapping entities, themes, or context even if the linkage is loose.",
                         "Copy sentences verbatim (punctuation, casing, numerals) and aim for 4-8 varied quotes drawn from different paragraphs or sources whenever possible; only return an empty array if genuinely nothing relevant appears.",
                         "Avoid citing near-duplicate sentences or repeating the same clause unless no other material exists.",
+                        "Return JSON only—no introductions, labels, or commentary before or after the array.",
+                        "If you lack supporting material, respond with an empty JSON array `[]` and nothing else.",
                         "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
                         "",
                         "Japanese texts with search keywords:",
@@ -1142,6 +1144,7 @@ def translate_range_contents(
                 else:
                     evidence_prompt_sections = [
                         "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
+                        "Return JSON only—no introductions, labels, or commentary before or after the array.",
                         "Return a JSON array matching the order. Each element must include a 'quotes' array and an 'explanation_jp' string (>=2 Japanese sentences).",
                         "",
                         "Japanese texts with search keywords:",
