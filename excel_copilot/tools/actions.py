@@ -38,9 +38,9 @@ class ExcelActions:
         self.book = manager.get_active_workbook()
         self._progress_callback = progress_callback
         self._progress_buffer: List[str] = []
-        self._column_width_cap = 60  # characters
+        self._column_width_cap = 90  # characters
         self._column_width_floor = 18  # characters
-        self._preferred_column_width = 42  # characters
+        self._preferred_column_width = 60  # characters
         self._min_row_height = 16
         self._line_height = 14
         self._max_row_height = 360
