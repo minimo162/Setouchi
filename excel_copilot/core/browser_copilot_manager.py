@@ -22,6 +22,8 @@ from ..config import (
     COPILOT_SLOW_MO_MS,
     COPILOT_PAGE_GOTO_TIMEOUT_MS,
     COPILOT_SUPPRESS_BROWSER_FOCUS,
+    COPILOT_SUPPRESS_BROWSER_FOCUS_LEFT,
+    COPILOT_SUPPRESS_BROWSER_FOCUS_TOP,
 )
 from .exceptions import UserStopRequested
 
@@ -47,6 +49,7 @@ class BrowserCopilotManager:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self._logger = logging.getLogger(__name__)
+        self._focus_suppressed_once = False
 
     def __enter__(self):
         self.start()
@@ -73,6 +76,7 @@ class BrowserCopilotManager:
             if not self.page:
                 raise RuntimeError("ブラウザページの初期化に失敗しました。")
 
+            self._focus_suppressed_once = False
             self._suppress_browser_focus()
             try:
                 self.page.set_default_timeout(self.goto_timeout_ms)
@@ -874,6 +878,7 @@ class BrowserCopilotManager:
         self.page = None
         self.context = None
         self.playwright = None
+        self._focus_suppressed_once = False
 
     def _suppress_browser_focus(self):
         if (
@@ -881,6 +886,7 @@ class BrowserCopilotManager:
             or self.headless
             or not self.context
             or not self.page
+            or self._focus_suppressed_once
         ):
             return
 
@@ -890,10 +896,25 @@ class BrowserCopilotManager:
             window_id = window_info.get("windowId")
             if not window_id:
                 return
+            current_bounds = window_info.get("bounds", {})
+            new_bounds = {
+                "left": COPILOT_SUPPRESS_BROWSER_FOCUS_LEFT,
+                "top": COPILOT_SUPPRESS_BROWSER_FOCUS_TOP,
+            }
+            if "width" in current_bounds:
+                new_bounds["width"] = current_bounds["width"]
+            if "height" in current_bounds:
+                new_bounds["height"] = current_bounds["height"]
+
             session.send(
                 "Browser.setWindowBounds",
-                {"windowId": window_id, "bounds": {"windowState": "minimized"}},
+                {"windowId": window_id, "bounds": new_bounds},
             )
-            self._logger.debug("ブラウザウィンドウを最小化し、フォーカスを抑制しました。")
+            self._focus_suppressed_once = True
+            self._logger.debug(
+                "ブラウザウィンドウをバックグラウンド位置へ移動しました (left=%s, top=%s)。",
+                COPILOT_SUPPRESS_BROWSER_FOCUS_LEFT,
+                COPILOT_SUPPRESS_BROWSER_FOCUS_TOP,
+            )
         except Exception as exc:
-            self._logger.debug("ブラウザウィンドウの最小化に失敗しました: %s", exc)
+            self._logger.debug("ブラウザウィンドウ位置の調整に失敗しました: %s", exc)
