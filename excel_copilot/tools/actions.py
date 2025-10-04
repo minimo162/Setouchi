@@ -155,13 +155,30 @@ class ExcelActions:
             target_range.api.WrapText = True
             wrap_applied = True
         except AttributeError:
+            wrap_applied = False
+        except Exception:
+            wrap_applied = False
+
+        if not wrap_applied:
+            try:
+                target_range.api.WrapText.set(True)
+                wrap_applied = True
+            except Exception:
+                wrap_applied = False
+
+        if not wrap_applied:
             try:
                 target_range.api.wrap_text.set(True)
                 wrap_applied = True
             except Exception:
                 wrap_applied = False
-        except Exception:
-            wrap_applied = False
+
+        if not wrap_applied:
+            try:
+                target_range.api.EntireColumn.WrapText = True
+                wrap_applied = True
+            except Exception:
+                wrap_applied = False
 
         if not wrap_applied:
             try:
@@ -176,7 +193,11 @@ class ExcelActions:
                         except Exception:
                             continue
                     except Exception:
-                        continue
+                        try:
+                            cell.api.WrapText.set(True)
+                            wrap_applied = True
+                        except Exception:
+                            continue
             except Exception:
                 pass
 

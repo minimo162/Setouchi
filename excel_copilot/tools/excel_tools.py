@@ -779,6 +779,7 @@ def translate_range_contents(
         source_matrix = [row[:] for row in original_data]
         range_adjustment_note: Optional[str] = None
         writing_to_source_directly = translation_output_range is None
+        citation_should_include_explanations = writing_to_source_directly
         if writing_to_source_directly and not overwrite_source:
             raise ToolExecutionError(
                 "translation_output_range must be provided when overwrite_source is False."
@@ -1411,7 +1412,9 @@ def translate_range_contents(
                             continue
                         explanation_text = (data.get("explanation") or "").strip()
                         quotes_text = "\n".join(data.get("quotes_lines", []))
-                        citation_matrix[local_row][base_col] = explanation_text
+                        citation_matrix[local_row][base_col] = (
+                            explanation_text if citation_should_include_explanations else ""
+                        )
                         citation_matrix[local_row][base_col + 1] = quotes_text
                     chunk_citation_data = [
                         list(citation_matrix[local_row][0:cite_cols])
@@ -1438,7 +1441,9 @@ def translate_range_contents(
                         explanation_text = (data.get("explanation") or "").strip()
                         quotes_text = "\n".join(data.get("quotes_lines", []))
                         citation_matrix[local_row][base_col + 1] = quotes_text
-                        citation_matrix[local_row][base_col + 2] = explanation_text
+                        citation_matrix[local_row][base_col + 2] = (
+                            explanation_text if citation_should_include_explanations else ""
+                        )
                     chunk_citation_data = [
                         list(citation_matrix[local_row][0:cite_cols])
                         for local_row in range(row_start, row_end)
@@ -1457,7 +1462,7 @@ def translate_range_contents(
                         explanation_text = (data.get("explanation") or "").strip()
                         quotes_lines = data.get("quotes_lines", [])
                         combined_lines: List[str] = []
-                        if explanation_text:
+                        if citation_should_include_explanations and explanation_text:
                             combined_lines.append(f"説明: {explanation_text}")
                         combined_lines.extend(quotes_lines)
                         citation_matrix[local_row][col_idx] = "\n".join(combined_lines).strip()
@@ -1479,7 +1484,7 @@ def translate_range_contents(
                             explanation_text = (data.get("explanation") or "").strip()
                             quotes_lines = data.get("quotes_lines", [])
                             lines: List[str] = []
-                            if explanation_text:
+                            if citation_should_include_explanations and explanation_text:
                                 lines.append(f"説明: {explanation_text}")
                             lines.extend(quotes_lines)
                             if lines:
