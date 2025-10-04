@@ -149,52 +149,6 @@ class ExcelActions:
     def _apply_text_wrapping(self, target_range: xw.Range) -> None:
         """Turn on wrapping, align to top-left, and auto-fit within sensible bounds."""
 
-        def _set_wrap(api_obj: Any) -> bool:
-            if api_obj is None:
-                return False
-            for attr in ("WrapText", "wrap_text"):
-                try:
-                    setattr(api_obj, attr, True)
-                    return True
-                except AttributeError:
-                    pass
-                except Exception:
-                    pass
-                try:
-                    getter = getattr(api_obj, attr)
-                except AttributeError:
-                    getter = None
-                except Exception:
-                    getter = None
-                if getter is None:
-                    continue
-                try:
-                    getter.set(True)
-                    return True
-                except Exception:
-                    continue
-            return False
-
-        wrap_applied = _set_wrap(getattr(target_range, "api", None))
-
-        if not wrap_applied:
-            wrap_applied = _set_wrap(getattr(getattr(target_range, "api", None), "EntireColumn", None)) or wrap_applied
-
-        if not wrap_applied:
-            wrap_applied = _set_wrap(getattr(getattr(target_range, "api", None), "EntireRow", None)) or wrap_applied
-
-        try:
-            for column in getattr(target_range, "columns", []):
-                wrap_applied = _set_wrap(getattr(column, "api", None)) or wrap_applied
-        except Exception:
-            pass
-
-        try:
-            for cell in getattr(target_range, "cells", []):
-                wrap_applied = _set_wrap(getattr(cell, "api", None)) or wrap_applied
-        except Exception:
-            pass
-
         try:
             target_range.api.HorizontalAlignment = -4131  # xlLeft
             target_range.api.VerticalAlignment = -4160  # xlTop
@@ -286,6 +240,66 @@ class ExcelActions:
                         row.api.RowHeight = desired_height
                     except Exception:
                         continue
+
+        def _set_wrap(api_obj: Any) -> bool:
+            if api_obj is None:
+                return False
+            wrap_applied = False
+            for attr in ("WrapText", "wrap_text"):
+                try:
+                    setattr(api_obj, attr, True)
+                    wrap_applied = True
+                except AttributeError:
+                    pass
+                except Exception:
+                    pass
+                try:
+                    getter = getattr(api_obj, attr)
+                except AttributeError:
+                    getter = None
+                except Exception:
+                    getter = None
+                if getter is None:
+                    continue
+                try:
+                    getter.set(True)
+                    wrap_applied = True
+                except Exception:
+                    continue
+            return wrap_applied
+
+        def _enforce_wrap(range_obj: xw.Range) -> None:
+            wrap_targets: List[Any] = []
+            try:
+                wrap_targets.append(getattr(range_obj, "api", None))
+            except Exception:
+                wrap_targets.append(None)
+            try:
+                sheet_obj = getattr(range_obj, "sheet", None)
+                address = getattr(range_obj, "address", None)
+                if sheet_obj is not None and address:
+                    wrap_targets.append(sheet_obj.api.Range(address))
+            except Exception:
+                wrap_targets.append(None)
+
+            try:
+                wrap_targets.extend(getattr(range_obj, "columns", []))
+            except Exception:
+                pass
+            try:
+                wrap_targets.extend(getattr(range_obj, "rows", []))
+            except Exception:
+                pass
+            try:
+                wrap_targets.extend(getattr(range_obj, "cells", []))
+            except Exception:
+                pass
+
+            for target in wrap_targets:
+                api_obj = getattr(target, "api", target)
+                _set_wrap(api_obj)
+
+        _enforce_wrap(target_range)
 
     def apply_diff_highlight_colors(self,
                                     cell_range: str,
