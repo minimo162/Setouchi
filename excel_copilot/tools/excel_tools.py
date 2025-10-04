@@ -14,6 +14,8 @@ from .actions import ExcelActions
 _logger = logging.getLogger(__name__)
 _DIFF_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_DIFF', '').lower() in {'1', 'true', 'yes'}
 
+_NO_QUOTES_PLACEHOLDER = "引用なし"
+
 if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
     logging.basicConfig(level=logging.DEBUG)
 
@@ -1333,10 +1335,14 @@ def translate_range_contents(
                         seen_quotes.add(cleaned_candidate)
                         final_quotes.append(cleaned_candidate)
 
-                    formatted_quotes: List[str] = [
-                        f"引用{idx}: {quote}"
-                        for idx, quote in enumerate(final_quotes, start=1)
-                    ]
+                    formatted_quotes: List[str]
+                    if final_quotes:
+                        formatted_quotes = [
+                            f"引用{idx}: {quote}"
+                            for idx, quote in enumerate(final_quotes, start=1)
+                        ]
+                    else:
+                        formatted_quotes = [_NO_QUOTES_PLACEHOLDER]
 
                     fallback_reason: Optional[str] = None
                     if use_references:
