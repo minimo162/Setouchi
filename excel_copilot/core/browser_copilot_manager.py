@@ -393,9 +393,14 @@ class BrowserCopilotManager:
             ("aria-label contains compose", lambda: self.page.locator("[aria-label*=\"compose\" i]")),
             ("aria-label contains prompt (ci)", lambda: self.page.locator("[aria-label*=\"prompt\" i]")),
             ("role=textbox generic", lambda: self.page.locator("[role=\"textbox\"]")),
-            ("contenteditable div", lambda: self.page.locator("div[contenteditable='true']")),
-            ("contenteditable section", lambda: self.page.locator("section[contenteditable='true']")),
-            ("contenteditable span", lambda: self.page.locator("span[contenteditable='true']")),
+            ("contenteditable div", lambda: self.page.locator("div[contenteditable]")),
+            ("contenteditable section", lambda: self.page.locator("section[contenteditable]")),
+            ("contenteditable span", lambda: self.page.locator("span[contenteditable]")),
+            ("plaintext-only div", lambda: self.page.locator("div[contenteditable='plaintext-only']")),
+            ("plaintext-only section", lambda: self.page.locator("section[contenteditable='plaintext-only']")),
+            ("plaintext-only span", lambda: self.page.locator("span[contenteditable='plaintext-only']")),
+            ("quill editor root", lambda: self.page.locator("div.ql-editor")),
+            ("rich text container", lambda: self.page.locator("div[class*='rich-text'], div[class*='compose-area']")),
             ("data-testid contains composer", lambda: self.page.locator("[data-testid*=\"composer\" i]")),
             ("data-testid contains prompt", lambda: self.page.locator("[data-testid*=\"prompt\" i]")),
             ("data-automationid prompt-text-area", lambda: self.page.locator("[data-automationid=\"prompt-text-area\"]")),
@@ -460,12 +465,14 @@ class BrowserCopilotManager:
                 continue
 
             factories.extend([
-                (f"iframe#{idx + 1} contenteditable role textbox", lambda frame=frame: frame.locator('[contenteditable=\"true\"][role=\"textbox\"]')),
-                (f"iframe#{idx + 1} contenteditable", lambda frame=frame: frame.locator('[contenteditable=\"true\"]')),
+                (f"iframe#{idx + 1} contenteditable role textbox", lambda frame=frame: frame.locator('[contenteditable][role=\"textbox\"]')),
+                (f"iframe#{idx + 1} contenteditable", lambda frame=frame: frame.locator('[contenteditable]')),
+                (f"iframe#{idx + 1} plaintext-only", lambda frame=frame: frame.locator('[contenteditable=\"plaintext-only\"]')),
                 (f"iframe#{idx + 1} textbox", lambda frame=frame: frame.locator('[role=\"textbox\"]')),
                 (f"iframe#{idx + 1} textarea", lambda frame=frame: frame.locator('textarea')),
                 (f"iframe#{idx + 1} paragraph", lambda frame=frame: frame.get_by_role('paragraph')),
                 (f"iframe#{idx + 1} data-testid prompt", lambda frame=frame: frame.locator('[data-testid*=\"prompt\" i]')),
+                (f"iframe#{idx + 1} rich text container", lambda frame=frame: frame.locator("div.ql-editor, div[class*='rich-text']")),
             ])
 
             for placeholder in placeholders:
@@ -476,7 +483,7 @@ class BrowserCopilotManager:
     def _resolve_chat_input_target(self, locator: Locator) -> Locator:
         """チャット欄を操作できる contenteditable コンテナを指すロケーターに正規化する"""
         try:
-            enriched = locator.locator("xpath=ancestor-or-self::*[@contenteditable='true'][1]")
+            enriched = locator.locator("xpath=ancestor-or-self::*[@contenteditable][1]")
             if enriched.count() > 0:
                 print("チャット入力欄: contenteditable な親要素にフォーカスを切り替えます。")
                 return enriched.first
@@ -601,7 +608,7 @@ class BrowserCopilotManager:
                     chat_input = self._wait_for_first_visible(
                         "チャット入力欄 (フォールバック)",
                         fallback_factories,
-                        timeout=20000,
+                        timeout=45000,
                     )
                 except RuntimeError as fallback_error:
                     raise RuntimeError("チャット入力欄のフォールバックにも失敗しました。") from fallback_error
