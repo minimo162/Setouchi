@@ -46,6 +46,7 @@ def _shorten_debug(value: str, limit: int = 120) -> str:
 
 _MOJIBAKE_MARKERS: Set[str] = frozenset('縺繧繝邨蜑螟蠖蛻蝣鬟荳菫譁蜿遘遉遞迚邱遽驟髣髴髢霑蜉')
 _BRACKETED_URL_PATTERN = re.compile(r"\[(\d+)\]\((?:https?|ftp)://[^)]+\)")
+_JAPANESE_CHAR_PATTERN = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufa6d]")
 
 def _mojibake_penalty(text: str) -> int:
     penalty = 0
@@ -58,6 +59,12 @@ def _mojibake_penalty(text: str) -> int:
         elif ch == '\uFFFD':
             penalty += 4
     return penalty
+
+
+def _contains_japanese(text: str) -> bool:
+    if not text:
+        return False
+    return bool(_JAPANESE_CHAR_PATTERN.search(text))
 
 
 def _count_japanese_characters(text: str) -> int:
@@ -333,8 +340,8 @@ MODERN_DIFF_MARKER_PATTERN = re.compile(r"\?(?:追加|削除)\?\s*(.*?)\?")
 _BASE_DIFF_TOKEN_PATTERN = re.compile(r"\s+|[^\s]+")
 _SENTENCE_BOUNDARY_CHARS = set("!.?。？！")
 _CLOSING_PUNCTUATION = ")]},。、？！「」『』'\"》】〕〉"
-_MAX_DIFF_SEGMENT_TOKENS = 18
-_MAX_DIFF_SEGMENT_CHARS = 80
+_MAX_DIFF_SEGMENT_TOKENS = 10
+_MAX_DIFF_SEGMENT_CHARS = 48
 
 REFUSAL_PATTERNS = (
     "申し訳ございません。これには対応できません。",
@@ -408,6 +415,29 @@ def _normalize_cell_value(cell: Any) -> str:
     if cell is None:
         return ''
     return str(cell)
+
+
+def _format_issue_notes(notes_value: Optional[str]) -> str:
+    normalized = _normalize_cell_value(notes_value).strip()
+    if not normalized:
+        return "課題: / 提案: "
+
+    replacements = (
+        (r"(?i)issue\s*[:：]", "課題: "),
+        (r"(?i)suggestion\s*[:：]", "提案: "),
+        (r"(?i)note\s*[:：]", "メモ: "),
+    )
+    result = normalized
+    for pattern, replacement in replacements:
+        result = re.sub(pattern, replacement, result)
+
+    result = result.replace(" / ", " ／ ")
+
+    if not _contains_japanese(result):
+        return "課題: 内容を日本語で記入してください。／ 提案: 内容を日本語で記入してください。"
+
+    return result
+
 
 def _strip_diff_markers(text: Any) -> str:
     if not isinstance(text, str):
@@ -490,6 +520,35 @@ def _format_diff_segment(tokens: List[str], label: str) -> Tuple[str, Optional[i
     _diff_debug(f"_format_diff_segment result label={label} formatted={_shorten_debug(formatted)} offset={highlight_start_offset} length={highlight_length}")
     return formatted, highlight_start_offset, highlight_length
 
+def _split_shared_context(original_segment: str, corrected_segment: str) -> Tuple[str, str, str, str]:
+    if not original_segment and not corrected_segment:
+        return '', '', '', ''
+
+    prefix_len = 0
+    max_prefix = min(len(original_segment), len(corrected_segment))
+    while prefix_len < max_prefix and original_segment[prefix_len] == corrected_segment[prefix_len]:
+        prefix_len += 1
+
+    suffix_len = 0
+    max_suffix_original = len(original_segment) - prefix_len
+    max_suffix_corrected = len(corrected_segment) - prefix_len
+    while (
+        suffix_len < max_suffix_original
+        and suffix_len < max_suffix_corrected
+        and original_segment[len(original_segment) - suffix_len - 1] == corrected_segment[len(corrected_segment) - suffix_len - 1]
+    ):
+        suffix_len += 1
+
+    trimmed_end_original = len(original_segment) - suffix_len if suffix_len else len(original_segment)
+    trimmed_end_corrected = len(corrected_segment) - suffix_len if suffix_len else len(corrected_segment)
+
+    common_prefix = original_segment[:prefix_len]
+    trimmed_original = original_segment[prefix_len:trimmed_end_original]
+    trimmed_corrected = corrected_segment[prefix_len:trimmed_end_corrected]
+    common_suffix = corrected_segment[trimmed_end_corrected:] if suffix_len else ''
+
+    return common_prefix, trimmed_original, trimmed_corrected, common_suffix
+
 def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict[str, int]]]:
     original_text = original if isinstance(original, str) else ('' if original is None else str(original))
     corrected_text = corrected if isinstance(corrected, str) else ('' if corrected is None else str(corrected))
@@ -516,23 +575,44 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
             _diff_debug(f"_build_diff_highlight equal appended len={len(text)} cursor={cursor}")
         elif tag == 'replace':
             removed_tokens = orig_tokens[i1:i2]
-            formatted_removed, offset_removed, length_removed = _format_diff_segment(removed_tokens, 'DEL')
-            if formatted_removed:
-                result_parts.append(formatted_removed)
-                if offset_removed is not None and length_removed:
-                    span = {'start': cursor + offset_removed, 'length': length_removed, 'type': 'DEL'}
-                    spans.append(span)
-                    _diff_debug(f"_build_diff_highlight span added {span}")
-                cursor += len(formatted_removed)
             added_tokens = corr_tokens[j1:j2]
-            formatted_added, offset_added, length_added = _format_diff_segment(added_tokens, 'ADD')
-            if formatted_added:
-                result_parts.append(formatted_added)
-                if offset_added is not None and length_added:
-                    span = {'start': cursor + offset_added, 'length': length_added, 'type': 'ADD'}
-                    spans.append(span)
-                    _diff_debug(f"_build_diff_highlight span added {span}")
-                cursor += len(formatted_added)
+            removed_segment = ''.join(removed_tokens)
+            added_segment = ''.join(added_tokens)
+            prefix, trimmed_removed, trimmed_added, suffix = _split_shared_context(removed_segment, added_segment)
+
+            if not trimmed_removed and not trimmed_added and (removed_segment or added_segment):
+                trimmed_removed = removed_segment
+                trimmed_added = added_segment
+                prefix = ''
+                suffix = ''
+
+            if prefix:
+                result_parts.append(prefix)
+                cursor += len(prefix)
+
+            if trimmed_removed:
+                formatted_removed, offset_removed, length_removed = _format_diff_segment([trimmed_removed], 'DEL')
+                if formatted_removed:
+                    result_parts.append(formatted_removed)
+                    if offset_removed is not None and length_removed:
+                        span = {'start': cursor + offset_removed, 'length': length_removed, 'type': 'DEL'}
+                        spans.append(span)
+                        _diff_debug(f"_build_diff_highlight span added {span}")
+                    cursor += len(formatted_removed)
+
+            if trimmed_added:
+                formatted_added, offset_added, length_added = _format_diff_segment([trimmed_added], 'ADD')
+                if formatted_added:
+                    result_parts.append(formatted_added)
+                    if offset_added is not None and length_added:
+                        span = {'start': cursor + offset_added, 'length': length_added, 'type': 'ADD'}
+                        spans.append(span)
+                        _diff_debug(f"_build_diff_highlight span added {span}")
+                    cursor += len(formatted_added)
+
+            if suffix:
+                result_parts.append(suffix)
+                cursor += len(suffix)
         elif tag == 'delete':
             removed_tokens = orig_tokens[i1:i2]
             formatted_removed, offset_removed, length_removed = _format_diff_segment(removed_tokens, 'DEL')
@@ -2130,7 +2210,7 @@ def check_translation_quality(
 
                 if highlight_matrix is not None:
                     if is_ok_status:
-                        highlight_matrix[row_idx][col_idx] = sanitized_base_text
+                        highlight_matrix[row_idx][col_idx] = ""
                         if highlight_styles is not None:
                             highlight_styles[row_idx][col_idx] = []
                     else:
@@ -2142,16 +2222,14 @@ def check_translation_quality(
 
                 if is_ok_status:
                     status_matrix[row_idx][col_idx] = "OK"
-                    issue_matrix[row_idx][col_idx] = notes_value or ""
+                    issue_matrix[row_idx][col_idx] = ""
                 elif status_value in revise_statuses:
-                    status_matrix[row_idx][col_idx] = "REVISE"
-                    issue_matrix[row_idx][col_idx] = (
-                        notes_value or "Issue:  / Suggestion: "
-                    )
+                    status_matrix[row_idx][col_idx] = "要修正"
+                    issue_matrix[row_idx][col_idx] = _format_issue_notes(notes_value)
                     needs_revision_count += 1
                 else:
                     status_matrix[row_idx][col_idx] = status_value or "UNKNOWN"
-                    issue_matrix[row_idx][col_idx] = notes_value or "Provide reviewer notes in Japanese."
+                    issue_matrix[row_idx][col_idx] = _format_issue_notes(notes_value)
                     needs_revision_count += 1
 
                 _write_single_entry(row_idx, col_idx)
