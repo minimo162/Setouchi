@@ -1053,7 +1053,7 @@ def translate_range_contents(
 
                 keyword_prompt = (
                     "For each Japanese item in the JSON array below, craft exactly ten distinct English search phrases.\n"
-                    "Cover every key element from the item—who/what, actions or decisions, intentions, effects, stakeholders, audiences, and context—while avoiding repetitive framing.\n"
+                    "Ensure the set of ten phrases collectively covers the major actors, actions, consequences, motivations, audiences, and surrounding context described in the item, while keeping each phrasing distinct.\n"
                     "Use synonyms and descriptive stand‑ins so that proper nouns appear only when essential, and alternate with role- or category-based wording (e.g., 'the automaker', 'the sports car') so no single substantive word appears in every phrase.\n"
                     "Mix shorter three-to-four word queries with longer six-to-nine word phrasing, and ensure no two phrases share the same first two words.\n"
                     "Do not invent information beyond the item, and return a JSON array matching the input order where each element exposes only a 'keywords' list.\n"
