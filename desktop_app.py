@@ -1032,9 +1032,17 @@ class CopilotApp:
             if self.status_label:
                 self.status_label.value = response.content or ""
         elif response.type is ResponseType.ERROR:
-            self._set_state(AppState.ERROR)
-            if response.content:
-                self._add_message(response.type, response.content)
+            if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+                if self.status_label:
+                    self.status_label.value = response.content or "\u51e6\u7406\u4e2d\u306b\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f"
+                    self.status_label.color = ft.Colors.RED_200
+                    self.status_label.opacity = 0.9
+                if response.content:
+                    self._add_message(response.type, response.content)
+            else:
+                self._set_state(AppState.ERROR)
+                if response.content:
+                    self._add_message(response.type, response.content)
         elif response.type is ResponseType.END_OF_TASK:
             self._set_state(AppState.READY)
         else:
