@@ -241,65 +241,72 @@ class ExcelActions:
                     except Exception:
                         continue
 
-        def _set_wrap(api_obj: Any) -> bool:
-            if api_obj is None:
-                return False
-            wrap_applied = False
-            for attr in ("WrapText", "wrap_text"):
+        try:
+            target_range.wrap_text = True
+        except Exception:
+            pass
+
+        try:
+            target_range.api.WrapText = True
+        except Exception:
+            pass
+
+        try:
+            target_range.api.Cells.WrapText = True
+        except Exception:
+            pass
+
+        try:
+            target_range.api.wrap_text.set(True)
+        except Exception:
+            pass
+
+        try:
+            target_range.api.cells.wrap_text.set(True)
+        except Exception:
+            pass
+
+        try:
+            for column in target_range.columns:
                 try:
-                    setattr(api_obj, attr, True)
-                    wrap_applied = True
-                except AttributeError:
-                    pass
+                    column.wrap_text = True
+                except Exception:
+                    try:
+                        column.api.WrapText = True
+                    except Exception:
+                        try:
+                            column.api.wrap_text.set(True)
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+
+        try:
+            sheet_obj = target_range.sheet
+            address = target_range.address
+            if sheet_obj is not None and address:
+                try:
+                    sheet_range = sheet_obj.range(address)
+                    sheet_range.wrap_text = True
                 except Exception:
                     pass
+        except Exception:
+            pass
+
+        try:
+            for cell in target_range.cells:
                 try:
-                    getter = getattr(api_obj, attr)
-                except AttributeError:
-                    getter = None
+                    cell.wrap_text = True
                 except Exception:
-                    getter = None
-                if getter is None:
-                    continue
-                try:
-                    getter.set(True)
-                    wrap_applied = True
-                except Exception:
-                    continue
-            return wrap_applied
-
-        def _enforce_wrap(range_obj: xw.Range) -> None:
-            wrap_targets: List[Any] = []
-            try:
-                wrap_targets.append(getattr(range_obj, "api", None))
-            except Exception:
-                wrap_targets.append(None)
-            try:
-                sheet_obj = getattr(range_obj, "sheet", None)
-                address = getattr(range_obj, "address", None)
-                if sheet_obj is not None and address:
-                    wrap_targets.append(sheet_obj.api.Range(address))
-            except Exception:
-                wrap_targets.append(None)
-
-            try:
-                wrap_targets.extend(getattr(range_obj, "columns", []))
-            except Exception:
-                pass
-            try:
-                wrap_targets.extend(getattr(range_obj, "rows", []))
-            except Exception:
-                pass
-            try:
-                wrap_targets.extend(getattr(range_obj, "cells", []))
-            except Exception:
-                pass
-
-            for target in wrap_targets:
-                api_obj = getattr(target, "api", target)
-                _set_wrap(api_obj)
-
-        _enforce_wrap(target_range)
+                    try:
+                        cell.api.WrapText = True
+                    except Exception:
+                        try:
+                            cell.api.wrap_text.set(True)
+                        except Exception:
+                            continue
+        except Exception:
+            pass
 
     def apply_diff_highlight_colors(self,
                                     cell_range: str,
