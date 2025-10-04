@@ -42,6 +42,7 @@ _TRANSLATION_WITH_REF_PROMPT = (
     "- Follow the `Thought:` -> `Action:` -> `Observation` / `Final Answer:` loop with exactly one tool call per Action and no commentary inside the JSON.\n"
     "- Omit `rows_per_batch`; the tool processes one cell at a time. Split the work into multiple calls when translating multi-row ranges.\n"
     "- Always supply explicit `cell_range`, `translation_output_range`, and provide `citation_output_range` whenever the user expects evidence output. Reserve translation / quotes / explanation columns per translated column.\n"
+    "- Keep the output limited to three columns (translation / quotes / explanation) by default; only set `citation_output_range` when the user explicitly requests a separate evidence column.\n"
     "- Leave `overwrite_source` false unless the user explicitly permits overwriting. When overwrite is false you must provide a `translation_output_range` that is three columns wide per translated column.\n"
     "- Use the references only to support facts; never fabricate evidence or cite unrelated material.\n\n"
     "Error handling\n"
