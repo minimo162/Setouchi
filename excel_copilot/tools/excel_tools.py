@@ -44,6 +44,7 @@ def _shorten_debug(value: str, limit: int = 120) -> str:
 
 
 _MOJIBAKE_MARKERS: Set[str] = frozenset('縺繧繝邨蜑螟蠖蛻蝣鬟荳菫譁蜿遘遉遞迚邱遽驟髣髴髢霑蜉')
+_BRACKETED_URL_PATTERN = re.compile(r"\[(\d+)\]\((?:https?|ftp)://[^)]+\)")
 
 def _mojibake_penalty(text: str) -> int:
     penalty = 0
@@ -897,6 +898,21 @@ def translate_range_contents(
                 cleaned = cleaned.split(":", 1)[1].strip()
             return cleaned
 
+
+        def _strip_reference_urls_from_quote(text: str) -> str:
+            """Remove embedded URLs while preserving bracket-only citation markers."""
+
+            if not isinstance(text, str):
+                return text
+
+            cleaned = _BRACKETED_URL_PATTERN.sub(lambda match: f"[{match.group(1)}]", text)
+            cleaned = re.sub(r"\((?:https?|ftp)://[^)]+\)", "", cleaned)
+            cleaned = re.sub(r"(?:https?|ftp)://\S+", "", cleaned)
+            cleaned = re.sub(r"[ \t]+", " ", cleaned)
+            cleaned = re.sub(r" \n", "\n", cleaned)
+            cleaned = re.sub(r"\n ", "\n", cleaned)
+            return cleaned.strip()
+
         def _expand_keyword_variants(keywords: List[str], max_variants: int) -> List[str]:
             variants: List[str] = []
             for keyword in keywords:
@@ -919,7 +935,8 @@ def translate_range_contents(
             prompt_parts = [
                 "Translate each Japanese entry below into English; keep the order and stay faithful to the source.\n",
                 "Every translated_text must be written in natural English; do not copy or leave any Japanese text untranslated.\n",
-                "Use the references/URLs only to keep terminology consistent and never emit citation markers.\n",
+                "Use the references/URLs only to keep terminology consistent and never emit citation markers in the translation output.\n",
+                "When copying supporting material, remove any embedded URLs or hyperlink targets; if citations are unavoidable, retain only bracketed numbers like [1].\n",
                 "Borrow phrasing and sentence structure from the supporting quotes whenever it improves the English rendering of the Japanese text. Limit this borrowing strictly to wording—do not import additional facts, subjects, or entities from the quotes, and never swap in the quote's subject or perspective. If the Japanese source states a subject, translate that subject explicitly; only omit a subject when the Japanese sentence omits it.\n",
                 "Treat the supporting quotes purely as style references for idiomatic English; preserve every entity that appears in the Japanese sentence, and do not introduce new ones from the quotes.\n",
                 "Workflow: make English search keywords, scan the references, and reuse wording only when it supports the same fact.\n",
@@ -1131,8 +1148,12 @@ def translate_range_contents(
                 reference_urls_text = ""
                 reference_urls_text = ""
                 if reference_url_entries:
-                    reference_urls_text = "Refer to the following URLs only if you need the original passages (do not insert the links into the quotes):\n" + "\n".join(
-                        f"  - {entry['url']}" for entry in reference_url_entries if entry.get("url")
+                    reference_urls_text = (
+                        "Refer to the following URLs only if you need the original passages. "
+                        "Do not include these URLs in any quote output; when citations are unavoidable, leave only bracketed numbers like [1].\n"
+                        + "\n".join(
+                            f"  - {entry['url']}" for entry in reference_url_entries if entry.get("url")
+                        )
                     )
 
                 if use_references:
@@ -1152,7 +1173,11 @@ def translate_range_contents(
                     if reference_passage_text:
                         evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
                     if reference_urls_text:
-                        evidence_prompt_sections.extend(["Reference URLs (for your reference only; do NOT include these URLs in the quotes):", reference_urls_text, ""])
+                        evidence_prompt_sections.extend([
+                            "Reference URLs (for lookup only; strip the URLs from quotes and keep at most bracket numbers like [1]):",
+                            reference_urls_text,
+                            "",
+                        ])
                 else:
                     evidence_prompt_sections = [
                         "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
@@ -1194,7 +1219,7 @@ def translate_range_contents(
                     if isinstance(raw_quotes, list):
                         for quote in raw_quotes:
                             if isinstance(quote, str):
-                                cleaned_quote = quote.strip()
+                                cleaned_quote = _strip_reference_urls_from_quote(quote)
                                 if cleaned_quote:
                                     quotes_list.append(cleaned_quote)
                     normalized_quotes_per_item.append(quotes_list)
