@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Optional, Callable, List, Tuple, Union
 from threading import Event
 
-from ..config import COPILOT_BROWSER_CHANNELS, COPILOT_SLOW_MO_MS, COPILOT_PAGE_GOTO_TIMEOUT_MS
+from ..config import (
+    COPILOT_BROWSER_CHANNELS,
+    COPILOT_SLOW_MO_MS,
+    COPILOT_PAGE_GOTO_TIMEOUT_MS,
+    COPILOT_SUPPRESS_BROWSER_FOCUS,
+)
 from .exceptions import UserStopRequested
 
 class BrowserCopilotManager:
@@ -68,6 +73,7 @@ class BrowserCopilotManager:
             if not self.page:
                 raise RuntimeError("ブラウザページの初期化に失敗しました。")
 
+            self._suppress_browser_focus()
             try:
                 self.page.set_default_timeout(self.goto_timeout_ms)
             except Exception:
@@ -77,6 +83,7 @@ class BrowserCopilotManager:
             self.page.goto("https://m365.cloud.microsoft/chat/", timeout=self.goto_timeout_ms)
             self._logger.info("ページに接続しました。初期化を開始します...")
             self._initialize_copilot_mode()
+            self._suppress_browser_focus()
 
         except PlaywrightTimeoutError as e:
             message = (
@@ -867,3 +874,26 @@ class BrowserCopilotManager:
         self.page = None
         self.context = None
         self.playwright = None
+
+    def _suppress_browser_focus(self):
+        if (
+            not COPILOT_SUPPRESS_BROWSER_FOCUS
+            or self.headless
+            or not self.context
+            or not self.page
+        ):
+            return
+
+        try:
+            session = self.context.new_cdp_session(self.page)
+            window_info = session.send("Browser.getWindowForTarget")
+            window_id = window_info.get("windowId")
+            if not window_id:
+                return
+            session.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "minimized"}},
+            )
+            self._logger.debug("ブラウザウィンドウを最小化し、フォーカスを抑制しました。")
+        except Exception as exc:
+            self._logger.debug("ブラウザウィンドウの最小化に失敗しました: %s", exc)

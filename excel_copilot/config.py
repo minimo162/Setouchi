@@ -49,6 +49,7 @@ class AppSettings:
         self.PLAYWRIGHT_PAGE_GOTO_TIMEOUT_MS: int = self._get_int(
             "COPILOT_PAGE_GOTO_TIMEOUT_MS", 90000, minimum=1000
         )
+        self.PLAYWRIGHT_SUPPRESS_FOCUS: bool = _to_bool(os.getenv("COPILOT_SUPPRESS_BROWSER_FOCUS"), True)
 
     def _get_int(self, env_key: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
         raw_value = os.getenv(env_key)
@@ -121,3 +122,4 @@ COPILOT_BROWSER_CHANNELS = settings.PREFERRED_BROWSER_CHANNELS
 COPILOT_HEADLESS = settings.PLAYWRIGHT_HEADLESS
 COPILOT_SLOW_MO_MS = settings.PLAYWRIGHT_SLOW_MO_MS
 COPILOT_PAGE_GOTO_TIMEOUT_MS = settings.PLAYWRIGHT_PAGE_GOTO_TIMEOUT_MS
+COPILOT_SUPPRESS_BROWSER_FOCUS = settings.PLAYWRIGHT_SUPPRESS_FOCUS
