@@ -920,8 +920,8 @@ def translate_range_contents(
                 "Translate each Japanese entry below into English; keep the order and stay faithful to the source.\n",
                 "Every translated_text must be written in natural English; do not copy or leave any Japanese text untranslated.\n",
                 "Use the references/URLs only to keep terminology consistent and never emit citation markers.\n",
-                "Borrow phrasing and sentence structure from the supporting quotes whenever it improves the English rendering of the Japanese text. Limit this borrowing strictly to wording—do not import additional facts, subjects, or entities from the quotes, never swap in the quote's subject or perspective, and never add brand names or actors that the Japanese sentence leaves implicit.\n",
-                "Treat the supporting quotes purely as style references for idiomatic English; if the Japanese sentence omits a subject, keep that omission in the translation (e.g., use impersonal phrasing) rather than filling it with the quote's entities.\n",
+                "Borrow phrasing and sentence structure from the supporting quotes whenever it improves the English rendering of the Japanese text. Limit this borrowing strictly to wording—do not import additional facts, subjects, or entities from the quotes, and never swap in the quote's subject or perspective. If the Japanese source states a subject, translate that subject explicitly; only omit a subject when the Japanese sentence omits it.\n",
+                "Treat the supporting quotes purely as style references for idiomatic English; preserve every entity that appears in the Japanese sentence, and do not introduce new ones from the quotes.\n",
                 "Workflow: make English search keywords, scan the references, and reuse wording only when it supports the same fact.\n",
                 "Output must be pure JSON with no commentary, preambles, or Markdown—only the requested array.\n",
             ]
@@ -937,8 +937,8 @@ def translate_range_contents(
             prompt_preamble = (
                 "Translate each Japanese entry below into English while preserving order and meaning.\n"
                 "Every translated_text must be written in natural English; do not copy or leave any Japanese text untranslated.\n"
-                "Reuse the supporting expressions aggressively for phrasing and grammar when they fit, while avoiding any extra facts, subjects, or entities not present in the Japanese sentence, and never replace the source sentence's subject with a subject drawn from the expressions.\n"
-                "Treat the supporting expressions purely as style references for idiomatic English; if the Japanese sentence omits a subject or proper noun, keep that omission instead of introducing the expressions' entities.\n"
+                "Reuse the supporting expressions aggressively for phrasing and grammar when they fit, while avoiding any extra facts, subjects, or entities not present in the Japanese sentence, and never replace the source sentence's subject with one drawn from the expressions. When the Japanese sentence names a subject, translate that subject explicitly.\n"
+                "Treat the supporting expressions purely as style references for idiomatic English; preserve all entities stated in the Japanese sentence, and only leave subjects implicit when the source sentence does so.\n"
                 "Return a JSON array of the same length, with no commentary or markdown.\n"
                 "Output must be pure JSON with no additional text before or after the array.\n"
             )
