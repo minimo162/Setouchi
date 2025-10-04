@@ -1129,9 +1129,10 @@ def translate_range_contents(
                     reference_passage_text = "\n".join(passage_lines)
 
                 reference_urls_text = ""
+                reference_urls_text = ""
                 if reference_url_entries:
-                    reference_urls_text = "\n".join(
-                        entry["url"] for entry in reference_url_entries if entry.get("url")
+                    reference_urls_text = "Refer to the following URLs only if you need the original passages (do not insert the links into the quotes):\n" + "\n".join(
+                        f"  - {entry['url']}" for entry in reference_url_entries if entry.get("url")
                     )
 
                 if use_references:
@@ -1151,7 +1152,7 @@ def translate_range_contents(
                     if reference_passage_text:
                         evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
                     if reference_urls_text:
-                        evidence_prompt_sections.extend(["Reference URLs:", reference_urls_text, ""])
+                        evidence_prompt_sections.extend(["Reference URLs (for your reference only; do NOT include these URLs in the quotes):", reference_urls_text, ""])
                 else:
                     evidence_prompt_sections = [
                         "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
