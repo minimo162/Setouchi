@@ -923,6 +923,7 @@ def translate_range_contents(
                 "Borrow phrasing and sentence structure from the supporting quotes whenever it improves the English rendering of the Japanese text. Limit the borrowing strictly to wording—do not import additional facts, subjects, or entities from the quotes, and never swap in the quote's subject or perspective.\n",
                 "Treat the supporting quotes purely as style references for idiomatic English; do not reinterpret them as factual context for the translation.\n",
                 "Workflow: make English search keywords, scan the references, and reuse wording only when it supports the same fact.\n",
+                "Output must be pure JSON with no commentary, preambles, or Markdown—only the requested array.\n",
             ]
             if reference_entries:
                 prompt_parts.append(f"Reference passages:\n{json.dumps(reference_entries, ensure_ascii=False)}\n")
@@ -939,6 +940,7 @@ def translate_range_contents(
                 "Reuse the supporting expressions aggressively for phrasing and grammar when they fit, while avoiding any extra facts, subjects, or entities not present in the Japanese sentence, and never replace the source sentence's subject with the one used in a quote.\n"
                 "Treat the supporting expressions purely as style references for idiomatic English, not as background information to merge into the translation.\n"
                 "Return a JSON array of the same length, with no commentary or markdown.\n"
+                "Output must be pure JSON with no additional text before or after the array.\n"
             )
         if references_requested or use_references:
             rows_per_batch = 1
