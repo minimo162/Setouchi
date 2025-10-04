@@ -919,6 +919,7 @@ def translate_range_contents(
             prompt_parts = [
                 f"Translate each Japanese entry below into {target_language}; keep the order and stay faithful to the source.\n",
                 "Use the references/URLs only to keep terminology consistent and never emit citation markers.\n",
+                "Borrow key wording from the supporting quotes whenever it faithfully expresses the Japanese text, but do not introduce any detail absent from the original sentences.\n",
                 "Workflow: make English search keywords, scan the references, and reuse wording only when it supports the same fact.\n",
             ]
             if reference_entries:
@@ -932,6 +933,7 @@ def translate_range_contents(
         else:
             prompt_preamble = (
                 f"Translate each Japanese entry below into {target_language} while preserving order and meaning.\n"
+                "Reuse useful phrasing from the provided supporting expressions when it aligns with the Japanese content, but never add ideas that are not in the source.\n"
                 "Return a JSON array of the same length, with no commentary or markdown.\n"
             )
         if references_requested or use_references:
