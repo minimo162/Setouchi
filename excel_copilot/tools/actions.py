@@ -218,12 +218,12 @@ class ExcelActions:
         try:
             for column in target_range.columns:
                 try:
-                    width = column.column_width
+                    existing_width = column.column_width
                 except Exception:
-                    width = None
+                    existing_width = None
                 desired = self._preferred_column_width
-                if width is not None and width > 0:
-                    desired = min(self._preferred_column_width, width)
+                if existing_width is not None and existing_width > 0:
+                    desired = max(existing_width, self._preferred_column_width)
                 desired = max(self._column_width_floor, min(desired, self._column_width_cap))
                 try:
                     column.column_width = desired
@@ -248,6 +248,15 @@ class ExcelActions:
         except Exception:
             row_iterable = []
 
+        def _effective_width(cell: xw.Range) -> float:
+            try:
+                width_value = cell.column_width
+            except Exception:
+                width_value = None
+            if width_value is None or width_value <= 0:
+                width_value = self._preferred_column_width
+            return max(self._column_width_floor, min(width_value, self._column_width_cap))
+
         for row in row_iterable:
             try:
                 cells_iterable = list(row.cells)
@@ -265,7 +274,8 @@ class ExcelActions:
                 text = str(value)
                 if not text:
                     continue
-                approx_lines = max(1, math.ceil(len(text) / max(1, self._preferred_column_width - 2)))
+                width_hint = _effective_width(cell)
+                approx_lines = max(1, math.ceil(len(text) / max(1, width_hint - 2)))
                 max_lines = max(max_lines, min(approx_lines, self._max_row_height // self._line_height))
 
             desired_height = max(self._min_row_height, min(self._max_row_height, max_lines * self._line_height))
