@@ -188,7 +188,7 @@ class ReActAgent:
 
         return thought, action_str, final_answer
 
-    def _execute_tool(self, action_json_str: str, excel_actions: ExcelActions) -> Any:
+    def _execute_tool(self, action_json_str: str, excel_actions: ExcelActions, stop_event: threading.Event) -> Any:
         """ツールを実行する"""
         try:
             action_data = json.loads(action_json_str)
@@ -210,12 +210,16 @@ class ReActAgent:
             arguments['browser_manager'] = self.browser_manager
         if 'sheetname' in sig.parameters and 'sheetname' not in arguments and self.sheet_name:
             arguments['sheetname'] = self.sheet_name
+        if 'stop_event' in sig.parameters:
+            arguments['stop_event'] = stop_event
 
         try:
             result = tool_function(**arguments)
             if hasattr(excel_actions, 'consume_progress_messages'):
                 excel_actions.consume_progress_messages()
             return result
+        except UserStopRequested:
+            raise
         except Exception as e:
             # エラーのスタックトレースも表示するとデバッグに役立つ
             import traceback
@@ -262,8 +266,12 @@ class ReActAgent:
                             yield {"type": "action", "content": action_json_str}
                             self.messages[-1]["content"] += f"\nAction: {action_json_str}"
 
-                            observation = self._execute_tool(action_json_str, excel_actions)
-                            
+                            try:
+                                observation = self._execute_tool(action_json_str, excel_actions, stop_event)
+                            except UserStopRequested:
+                                yield {"type": "info", "content": "ユーザーの操作で処理が中断されました。"}
+                                return
+
                             # 読み取り結果が長すぎる場合のフィードバック
                             is_read_tool = "read" in json.loads(action_json_str).get("tool_name", "")
                             is_large_output = isinstance(observation, str) and len(observation) > MAX_PROCESSING_TEXT_LENGTH

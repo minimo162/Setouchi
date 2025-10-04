@@ -3,10 +3,11 @@ import difflib
 import logging
 import os
 import string
+from threading import Event
 from typing import List, Any, Optional, Dict, Tuple, Set
 
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
-from excel_copilot.core.exceptions import ToolExecutionError
+from excel_copilot.core.exceptions import ToolExecutionError, UserStopRequested
 
 from .actions import ExcelActions
 
@@ -766,10 +767,16 @@ def translate_range_contents(
     translation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
     rows_per_batch: Optional[int] = None,
+    stop_event: Optional[Event] = None,
 ) -> str:
     '''Translate Japanese text for a range with optional references and controlled output.'''
 
     try:
+        def _ensure_not_stopped() -> None:
+            if stop_event and stop_event.is_set():
+                raise UserStopRequested("ユーザーによって処理が中断されました。")
+
+        _ensure_not_stopped()
         target_sheet, normalized_range = _split_sheet_and_range(cell_range, sheet_name)
         source_rows, source_cols = _parse_range_dimensions(normalized_range)
 
@@ -825,11 +832,14 @@ def translate_range_contents(
             except ToolExecutionError:
                 output_matrix = [["" for _ in range(out_cols)] for _ in range(out_rows)]
 
+        _ensure_not_stopped()
+
         reference_entries: List[Dict[str, Any]] = []
         reference_text_pool: List[str] = []
         if reference_ranges:
             range_list = [reference_ranges] if isinstance(reference_ranges, str) else list(reference_ranges)
             for raw_range in range_list:
+                _ensure_not_stopped()
                 ref_sheet, ref_range = _split_sheet_and_range(raw_range, target_sheet)
                 try:
                     ref_data = actions.read_range(ref_range, ref_sheet)
@@ -876,6 +886,7 @@ def translate_range_contents(
         if reference_urls:
             url_list = [reference_urls] if isinstance(reference_urls, str) else list(reference_urls)
             for raw_url in url_list:
+                _ensure_not_stopped()
                 if not isinstance(raw_url, str):
                     raise ToolExecutionError(
                         "Each reference_urls entry must be a string."
@@ -1015,12 +1026,14 @@ def translate_range_contents(
         items_per_request = 1 if limit_to_single else _ITEMS_PER_TRANSLATION_REQUEST
 
         for row_start in range(0, source_rows, batch_size):
+            _ensure_not_stopped()
             row_end = min(row_start + batch_size, source_rows)
             chunk_texts: List[str] = []
             chunk_positions: List[Tuple[int, int, Optional[int]]] = []
             multi_line_segments: Dict[Tuple[int, int], Dict[str, Any]] = {}
 
             for local_row in range(row_start, row_end):
+                _ensure_not_stopped()
                 for col_idx in range(source_cols):
                     cell_value = original_data[local_row][col_idx]
                     if not isinstance(cell_value, str):
@@ -1062,6 +1075,7 @@ def translate_range_contents(
 
             chunk_entries = list(zip(chunk_texts, chunk_positions))
             for entry_start in range(0, len(chunk_entries), items_per_request):
+                _ensure_not_stopped()
                 entry_slice = chunk_entries[entry_start:entry_start + items_per_request]
                 current_texts = [text for text, _ in entry_slice]
                 current_positions = [pos for _, pos in entry_slice]
@@ -1076,7 +1090,8 @@ def translate_range_contents(
                     "Do not invent information beyond the item, and return a JSON array matching the input order where each element exposes only a 'keywords' list.\n"
                     f"{texts_json}"
                 )
-                keyword_response = browser_manager.ask(keyword_prompt)
+                _ensure_not_stopped()
+                keyword_response = browser_manager.ask(keyword_prompt, stop_event=stop_event)
                 try:
                     match = re.search(r'{.*}|\[.*\]', keyword_response, re.DOTALL)
                     keyword_payload = match.group(0) if match else keyword_response
@@ -1189,7 +1204,8 @@ def translate_range_contents(
                         "",
                     ]
                 evidence_prompt = "\n".join(evidence_prompt_sections)
-                evidence_response = browser_manager.ask(evidence_prompt)
+                _ensure_not_stopped()
+                evidence_response = browser_manager.ask(evidence_prompt, stop_event=stop_event)
                 try:
                     match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
                     evidence_payload = match.group(0) if match else evidence_response
@@ -1241,7 +1257,8 @@ def translate_range_contents(
                     "Return a JSON array where every element has 'translated_text' and 'explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
                     f"Supporting expressions (JSON): {translation_context_json}\n"
                 )
-                response = browser_manager.ask(final_prompt)
+                _ensure_not_stopped()
+                response = browser_manager.ask(final_prompt, stop_event=stop_event)
 
                 try:
                     match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
@@ -1556,6 +1573,8 @@ def translate_range_contents(
         if citation_note:
             write_messages.append(citation_note)
 
+        _ensure_not_stopped()
+
         if output_dirty:
             translation_message = actions.write_range(output_range, output_matrix, output_sheet)
             write_messages.append(translation_message)
@@ -1571,6 +1590,8 @@ def translate_range_contents(
 
         return "\n".join(messages)
 
+    except UserStopRequested:
+        raise
     except ToolExecutionError:
         raise
     except Exception as exc:
@@ -1585,6 +1606,7 @@ def translate_range_without_references(
     translation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
     rows_per_batch: Optional[int] = None,
+    stop_event: Optional[Event] = None,
 ) -> str:
     """Translate ranges without using external reference material."""
     if rows_per_batch is not None and rows_per_batch < 1:
@@ -1602,6 +1624,7 @@ def translate_range_without_references(
         translation_output_range=translation_output_range,
         overwrite_source=overwrite_source,
         rows_per_batch=rows_per_batch,
+        stop_event=stop_event,
     )
 
 
@@ -1616,6 +1639,7 @@ def translate_range_with_references(
     translation_output_range: Optional[str] = None,
     citation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
+    stop_event: Optional[Event] = None,
 ) -> str:
     """Translate ranges while consulting the supplied references per cell."""
     if not reference_ranges and not reference_urls:
@@ -1635,6 +1659,7 @@ def translate_range_with_references(
         translation_output_range=translation_output_range,
         overwrite_source=overwrite_source,
         rows_per_batch=1,
+        stop_event=stop_event,
     )
 
 def check_translation_quality(
@@ -1647,6 +1672,7 @@ def check_translation_quality(
     corrected_output_range: Optional[str] = None,
     highlight_output_range: Optional[str] = None,
     sheet_name: Optional[str] = None,
+    stop_event: Optional[Event] = None,
 ) -> str:
     """Translate text in a range and write the output plus optional context.
 
@@ -1676,6 +1702,11 @@ def check_translation_quality(
 
     """
     try:
+        def _ensure_not_stopped() -> None:
+            if stop_event and stop_event.is_set():
+                raise UserStopRequested("ユーザーによって処理が中断されました。")
+
+        _ensure_not_stopped()
 
         src_rows, src_cols = _parse_range_dimensions(source_range)
         trans_rows, trans_cols = _parse_range_dimensions(translated_range)
@@ -1715,6 +1746,8 @@ def check_translation_quality(
         source_data = _reshape_to_dimensions(actions.read_range(source_range, sheet_name), src_rows, src_cols)
         translated_data = _reshape_to_dimensions(actions.read_range(translated_range, sheet_name), src_rows, src_cols)
 
+        _ensure_not_stopped()
+
         status_matrix = [["" for _ in range(src_cols)] for _ in range(src_rows)]
         issue_matrix = [["" for _ in range(src_cols)] for _ in range(src_rows)]
         corrected_matrix = [] if corrected_output_range else None
@@ -1723,10 +1756,12 @@ def check_translation_quality(
 
         if corrected_matrix is not None or highlight_matrix is not None:
             for r in range(src_rows):
+                _ensure_not_stopped()
                 corrected_row = [] if corrected_matrix is not None else None
                 highlight_row = [] if highlight_matrix is not None else None
                 styles_row = [] if highlight_styles is not None else None
                 for c in range(src_cols):
+                    _ensure_not_stopped()
                     base_value = _normalize_cell_value(translated_data[r][c])
                     if corrected_row is not None:
                         corrected_row.append(base_value)
@@ -1763,6 +1798,7 @@ def check_translation_quality(
 
         def _write_single_entry(row_idx: int, col_idx: int) -> None:
             nonlocal incremental_updates
+            _ensure_not_stopped()
             incremental_updates = True
             row_width = src_cols
             status_row_ref = _row_reference(status_start_row, status_start_col, row_idx, row_width)
@@ -1836,7 +1872,9 @@ def check_translation_quality(
         needs_revision_count = 0
 
         for r in range(src_rows):
+            _ensure_not_stopped()
             for c in range(src_cols):
+                _ensure_not_stopped()
                 original_text = source_data[r][c]
                 translated_text = translated_data[r][c]
                 normalized_translation = _normalize_cell_value(translated_text)
@@ -1875,6 +1913,7 @@ def check_translation_quality(
                     _write_single_entry(r, c)
 
         if not review_entries:
+            _ensure_not_stopped()
             actions.write_range(status_output_range, status_matrix, sheet_name)
             actions.write_range(issue_output_range, issue_matrix, sheet_name)
             if corrected_matrix is not None and corrected_output_range:
@@ -1886,6 +1925,7 @@ def check_translation_quality(
             return "No review entries were generated; nothing to audit."
 
         for entry in review_entries:
+            _ensure_not_stopped()
             batch = [entry]
             payload = json.dumps(batch, ensure_ascii=False)
             preview_sections: List[str] = []
@@ -2006,7 +2046,8 @@ def check_translation_quality(
             response = ""
             batch_results: Optional[List[Any]] = None
             for prompt_variant in prompt_variants:
-                response = browser_manager.ask(prompt_variant)
+                _ensure_not_stopped()
+                response = browser_manager.ask(prompt_variant, stop_event=stop_event)
                 _diff_debug(f"check_translation_quality response={_shorten_debug(response)}")
                 if response and any(indicator in response for indicator in REFUSAL_PATTERNS):
                     _diff_debug('check_translation_quality detected refusal response, trying next prompt variant')
@@ -2036,6 +2077,7 @@ def check_translation_quality(
             pending_ids: List[str] = [entry_id for entry_id in batch_entry_ids if entry_id in id_to_position]
             assigned_ids: Set[str] = set()
             for item in batch_results:
+                _ensure_not_stopped()
                 if not isinstance(item, dict):
                     raise ToolExecutionError(
                         "Each translation quality entry must be a JSON object."
@@ -2131,6 +2173,7 @@ def check_translation_quality(
                 _write_single_entry(row_idx, col_idx)
 
         if not incremental_updates:
+            _ensure_not_stopped()
             actions.write_range(status_output_range, status_matrix, sheet_name)
             actions.write_range(issue_output_range, issue_matrix, sheet_name)
 
@@ -2141,16 +2184,21 @@ def check_translation_quality(
         )
         if corrected_matrix is not None and corrected_output_range:
             if not incremental_updates:
+                _ensure_not_stopped()
                 actions.write_range(corrected_output_range, corrected_matrix, sheet_name)
             message += f" Corrected text written to '{corrected_output_range}'."
         if highlight_matrix is not None and highlight_output_range:
             if not incremental_updates:
+                _ensure_not_stopped()
                 actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
                 if highlight_styles is not None:
+                    _ensure_not_stopped()
                     actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
             message += f" Highlight output written to '{highlight_output_range}'."
         return message
 
+    except UserStopRequested:
+        raise
     except ToolExecutionError:
         raise
     except Exception as e:

@@ -66,7 +66,7 @@ def create_tool_schema(func: callable) -> dict:
 
         for name, param in sig.parameters.items():
             # 内部でのみ使用する引数 (例: actions, browser_manager) はスキーマに含めない
-            if name in ["actions", "excel_manager", "browser_manager"]:
+            if name in ["actions", "excel_manager", "browser_manager", "stop_event"]:
                 continue
 
             if param.annotation is inspect.Parameter.empty:
