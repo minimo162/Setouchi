@@ -120,18 +120,22 @@ class ReActAgent:
         """LLMの出力を Thought, Action, Final Answer に分割する。"""
 
         def _extract_json_payload(text: str) -> Optional[str]:
-            """Return the first JSON payload in text, or None if not found."""
+            """Return the first JSON object/array found anywhere in the text."""
+
             if not text:
                 return None
-            leading_trimmed = text.lstrip()
-            if not leading_trimmed or leading_trimmed[0] not in "[{":
-                return None
-            try:
-                decoder = json.JSONDecoder()
-                _, end_idx = decoder.raw_decode(leading_trimmed)
-            except json.JSONDecodeError:
-                return None
-            return leading_trimmed[:end_idx]
+
+            decoder = json.JSONDecoder()
+            for match in re.finditer(r"[\[{]", text):
+                start_idx = match.start()
+                candidate = text[start_idx:]
+                try:
+                    _, relative_end = decoder.raw_decode(candidate)
+                except json.JSONDecodeError:
+                    continue
+                end_idx = start_idx + relative_end
+                return text[start_idx:end_idx]
+            return None
 
         response = (response or "").strip()
         if not response:
