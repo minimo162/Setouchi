@@ -149,57 +149,51 @@ class ExcelActions:
     def _apply_text_wrapping(self, target_range: xw.Range) -> None:
         """Turn on wrapping, align to top-left, and auto-fit within sensible bounds."""
 
-        wrap_applied = False
+        def _set_wrap(api_obj: Any) -> bool:
+            if api_obj is None:
+                return False
+            for attr in ("WrapText", "wrap_text"):
+                try:
+                    setattr(api_obj, attr, True)
+                    return True
+                except AttributeError:
+                    pass
+                except Exception:
+                    pass
+                try:
+                    getter = getattr(api_obj, attr)
+                except AttributeError:
+                    getter = None
+                except Exception:
+                    getter = None
+                if getter is None:
+                    continue
+                try:
+                    getter.set(True)
+                    return True
+                except Exception:
+                    continue
+            return False
+
+        wrap_applied = _set_wrap(getattr(target_range, "api", None))
+
+        if not wrap_applied:
+            wrap_applied = _set_wrap(getattr(getattr(target_range, "api", None), "EntireColumn", None)) or wrap_applied
+
+        if not wrap_applied:
+            wrap_applied = _set_wrap(getattr(getattr(target_range, "api", None), "EntireRow", None)) or wrap_applied
 
         try:
-            target_range.api.WrapText = True
-            wrap_applied = True
-        except AttributeError:
-            wrap_applied = False
+            for column in getattr(target_range, "columns", []):
+                wrap_applied = _set_wrap(getattr(column, "api", None)) or wrap_applied
         except Exception:
-            wrap_applied = False
+            pass
 
-        if not wrap_applied:
-            try:
-                target_range.api.WrapText.set(True)
-                wrap_applied = True
-            except Exception:
-                wrap_applied = False
-
-        if not wrap_applied:
-            try:
-                target_range.api.wrap_text.set(True)
-                wrap_applied = True
-            except Exception:
-                wrap_applied = False
-
-        if not wrap_applied:
-            try:
-                target_range.api.EntireColumn.WrapText = True
-                wrap_applied = True
-            except Exception:
-                wrap_applied = False
-
-        if not wrap_applied:
-            try:
-                for cell in target_range.cells:
-                    try:
-                        cell.api.WrapText = True
-                        wrap_applied = True
-                    except AttributeError:
-                        try:
-                            cell.api.wrap_text.set(True)
-                            wrap_applied = True
-                        except Exception:
-                            continue
-                    except Exception:
-                        try:
-                            cell.api.WrapText.set(True)
-                            wrap_applied = True
-                        except Exception:
-                            continue
-            except Exception:
-                pass
+        try:
+            for cell in getattr(target_range, "cells", []):
+                wrap_applied = _set_wrap(getattr(cell, "api", None)) or wrap_applied
+        except Exception:
+            pass
 
         try:
             target_range.api.HorizontalAlignment = -4131  # xlLeft
