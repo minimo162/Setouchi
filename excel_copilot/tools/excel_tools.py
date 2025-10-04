@@ -1712,19 +1712,20 @@ def check_translation_quality(
         trans_rows, trans_cols = _parse_range_dimensions(translated_range)
         status_rows, status_cols = _parse_range_dimensions(status_output_range)
         issue_rows, issue_cols = _parse_range_dimensions(issue_output_range)
-        corrected_rows = corrected_cols = None
-        if corrected_output_range:
-            corrected_rows, corrected_cols = _parse_range_dimensions(corrected_output_range)
         highlight_rows = highlight_cols = None
         if highlight_output_range:
             highlight_rows, highlight_cols = _parse_range_dimensions(highlight_output_range)
+
+        correction_note: Optional[str] = None
+        if corrected_output_range:
+            correction_note = (
+                "corrected_output_range was provided but corrections are no longer written; the review now outputs only status, issues, and highlight columns."
+            )
 
         if (src_rows, src_cols) != (trans_rows, trans_cols):
             raise ToolExecutionError("Source range and translated range sizes do not match.")
         if (src_rows, src_cols) != (status_rows, status_cols) or (src_rows, src_cols) != (issue_rows, issue_cols):
             raise ToolExecutionError("Output ranges must match the source range size.")
-        if corrected_output_range and (src_rows, src_cols) != (corrected_rows, corrected_cols):
-            raise ToolExecutionError("Corrected output range must match the source range size.")
         if highlight_output_range and (src_rows, src_cols) != (highlight_rows, highlight_cols):
             raise ToolExecutionError("Highlight output range must match the source range size.")
 
@@ -1732,11 +1733,6 @@ def check_translation_quality(
         status_start_row, status_start_col, _, _ = _parse_range_bounds(status_inner_range)
         issue_sheet_name, issue_inner_range = _split_sheet_and_range(issue_output_range, sheet_name)
         issue_start_row, issue_start_col, _, _ = _parse_range_bounds(issue_inner_range)
-        corrected_sheet_name: Optional[str] = None
-        corrected_start_row = corrected_start_col = None
-        if corrected_output_range:
-            corrected_sheet_name, corrected_inner_range = _split_sheet_and_range(corrected_output_range, sheet_name)
-            corrected_start_row, corrected_start_col, _, _ = _parse_range_bounds(corrected_inner_range)
         highlight_sheet_name: Optional[str] = None
         highlight_start_row = highlight_start_col = None
         if highlight_output_range:
@@ -1750,29 +1746,21 @@ def check_translation_quality(
 
         status_matrix = [["" for _ in range(src_cols)] for _ in range(src_rows)]
         issue_matrix = [["" for _ in range(src_cols)] for _ in range(src_rows)]
-        corrected_matrix = [] if corrected_output_range else None
         highlight_matrix = [] if highlight_output_range else None
         highlight_styles = [] if highlight_output_range else None
 
-        if corrected_matrix is not None or highlight_matrix is not None:
+        if highlight_matrix is not None:
             for r in range(src_rows):
                 _ensure_not_stopped()
-                corrected_row = [] if corrected_matrix is not None else None
-                highlight_row = [] if highlight_matrix is not None else None
+                highlight_row = []
                 styles_row = [] if highlight_styles is not None else None
                 for c in range(src_cols):
                     _ensure_not_stopped()
                     base_value = _normalize_cell_value(translated_data[r][c])
-                    if corrected_row is not None:
-                        corrected_row.append(base_value)
-                    if highlight_row is not None:
-                        highlight_row.append(base_value)
+                    highlight_row.append(base_value)
                     if styles_row is not None:
                         styles_row.append([])
-                if corrected_row is not None:
-                    corrected_matrix.append(corrected_row)
-                if highlight_row is not None:
-                    highlight_matrix.append(highlight_row)
+                highlight_matrix.append(highlight_row)
                 if styles_row is not None:
                     highlight_styles.append(styles_row)
 
@@ -1805,9 +1793,6 @@ def check_translation_quality(
             actions.write_range(status_row_ref, [status_matrix[row_idx]], status_sheet_name)
             issue_row_ref = _row_reference(issue_start_row, issue_start_col, row_idx, row_width)
             actions.write_range(issue_row_ref, [issue_matrix[row_idx]], issue_sheet_name)
-            if corrected_matrix is not None and corrected_start_row is not None and corrected_start_col is not None:
-                corrected_row_ref = _row_reference(corrected_start_row, corrected_start_col, row_idx, row_width)
-                actions.write_range(corrected_row_ref, [corrected_matrix[row_idx]], corrected_sheet_name)
             if highlight_matrix is not None and highlight_start_row is not None and highlight_start_col is not None:
                 highlight_row_ref = _row_reference(highlight_start_row, highlight_start_col, row_idx, row_width)
                 actions.write_range(highlight_row_ref, [highlight_matrix[row_idx]], highlight_sheet_name)
@@ -1816,6 +1801,8 @@ def check_translation_quality(
                         highlight_row_ref,
                         [highlight_styles[row_idx]],
                         highlight_sheet_name,
+                        addition_color_hex="#1565C0",
+                        deletion_color_hex="#C62828",
                     )
             if col_idx == src_cols - 1:
                 row_number = status_start_row + row_idx + 1
@@ -1894,8 +1881,6 @@ def check_translation_quality(
                         status_matrix[r][c] = "MISSING"
                         issue_matrix[r][c] = "Source cell contains Japanese text but the translation cell is blank."
                         needs_revision_count += 1
-                        if corrected_matrix is not None:
-                            corrected_matrix[r][c] = normalized_translation
                         if highlight_matrix is not None:
                             highlight_matrix[r][c] = normalized_translation
                         if highlight_styles is not None:
@@ -1904,8 +1889,6 @@ def check_translation_quality(
                 else:
                     status_matrix[r][c] = ""
                     issue_matrix[r][c] = ""
-                    if corrected_matrix is not None:
-                        corrected_matrix[r][c] = normalized_translation
                     if highlight_matrix is not None:
                         if highlight_styles is not None:
                             highlight_styles[r][c] = []
@@ -1916,12 +1899,16 @@ def check_translation_quality(
             _ensure_not_stopped()
             actions.write_range(status_output_range, status_matrix, sheet_name)
             actions.write_range(issue_output_range, issue_matrix, sheet_name)
-            if corrected_matrix is not None and corrected_output_range:
-                actions.write_range(corrected_output_range, corrected_matrix, sheet_name)
             if highlight_matrix is not None and highlight_output_range:
                 actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
                 if highlight_styles is not None:
-                    actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
+                    actions.apply_diff_highlight_colors(
+                        highlight_output_range,
+                        highlight_styles,
+                        sheet_name,
+                        addition_color_hex="#1565C0",
+                        deletion_color_hex="#C62828",
+                    )
             return "No review entries were generated; nothing to audit."
 
         for entry in review_entries:
@@ -2141,9 +2128,6 @@ def check_translation_quality(
                 if is_ok_status or not corrected_text_str.strip():
                     corrected_text_str = sanitized_base_text
 
-                if corrected_matrix is not None:
-                    corrected_matrix[row_idx][col_idx] = corrected_text_str
-
                 if highlight_matrix is not None:
                     if is_ok_status:
                         highlight_matrix[row_idx][col_idx] = sanitized_base_text
@@ -2182,19 +2166,22 @@ def check_translation_quality(
             f"Reviewed {processed_items} items; flagged {needs_revision_count} for revision. "
             f"Wrote status to '{status_output_range}' and issues to '{issue_output_range}'."
         )
-        if corrected_matrix is not None and corrected_output_range:
-            if not incremental_updates:
-                _ensure_not_stopped()
-                actions.write_range(corrected_output_range, corrected_matrix, sheet_name)
-            message += f" Corrected text written to '{corrected_output_range}'."
         if highlight_matrix is not None and highlight_output_range:
             if not incremental_updates:
                 _ensure_not_stopped()
                 actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
                 if highlight_styles is not None:
                     _ensure_not_stopped()
-                    actions.apply_diff_highlight_colors(highlight_output_range, highlight_styles, sheet_name)
+                    actions.apply_diff_highlight_colors(
+                        highlight_output_range,
+                        highlight_styles,
+                        sheet_name,
+                        addition_color_hex="#1565C0",
+                        deletion_color_hex="#C62828",
+                    )
             message += f" Highlight output written to '{highlight_output_range}'."
+        if correction_note:
+            message += f" {correction_note}"
         return message
 
     except UserStopRequested:

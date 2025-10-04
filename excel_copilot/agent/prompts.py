@@ -62,7 +62,7 @@ _REVIEW_PROMPT = (
     "- Only tool: `check_translation_quality`. Call it whenever the user requests a review and do not invent other tools.\n"
     "- Follow the `Thought:` -> `Action:` -> `Observation` / `Final Answer:` loop. Each Action issues exactly one tool call and the JSON block must not include commentary.\n"
     "- Always begin with `Thought:` before any `Action:`.\n"
-    "- Ensure `status_output_range`, `issue_output_range`, `corrected_output_range`, `highlight_output_range`, and any others match the rows you intend to update and use consistent column layouts.\n"
+    "- Ensure `status_output_range`, `issue_output_range`, and `highlight_output_range` match the rows you intend to update and use consistent column layouts. Do not request additional columns for corrected text.\n"
     "- Keep outputs aligned with the original data shape.\n"
     "- Split large reviews into smaller chunks when needed so that prompts remain reliable.\n\n"
     "Error handling\n"
