@@ -516,40 +516,40 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
             _diff_debug(f"_build_diff_highlight equal appended len={len(text)} cursor={cursor}")
         elif tag == 'replace':
             removed_tokens = orig_tokens[i1:i2]
-            formatted_removed, offset_removed, length_removed = _format_diff_segment(removed_tokens, '蜑企勁')
+            formatted_removed, offset_removed, length_removed = _format_diff_segment(removed_tokens, 'DEL')
             if formatted_removed:
                 result_parts.append(formatted_removed)
                 if offset_removed is not None and length_removed:
-                    span = {'start': cursor + offset_removed, 'length': length_removed, 'type': '蜑企勁'}
+                    span = {'start': cursor + offset_removed, 'length': length_removed, 'type': 'DEL'}
                     spans.append(span)
                     _diff_debug(f"_build_diff_highlight span added {span}")
                 cursor += len(formatted_removed)
             added_tokens = corr_tokens[j1:j2]
-            formatted_added, offset_added, length_added = _format_diff_segment(added_tokens, '霑ｽ蜉')
+            formatted_added, offset_added, length_added = _format_diff_segment(added_tokens, 'ADD')
             if formatted_added:
                 result_parts.append(formatted_added)
                 if offset_added is not None and length_added:
-                    span = {'start': cursor + offset_added, 'length': length_added, 'type': '霑ｽ蜉'}
+                    span = {'start': cursor + offset_added, 'length': length_added, 'type': 'ADD'}
                     spans.append(span)
                     _diff_debug(f"_build_diff_highlight span added {span}")
                 cursor += len(formatted_added)
         elif tag == 'delete':
             removed_tokens = orig_tokens[i1:i2]
-            formatted_removed, offset_removed, length_removed = _format_diff_segment(removed_tokens, '蜑企勁')
+            formatted_removed, offset_removed, length_removed = _format_diff_segment(removed_tokens, 'DEL')
             if formatted_removed:
                 result_parts.append(formatted_removed)
                 if offset_removed is not None and length_removed:
-                    span = {'start': cursor + offset_removed, 'length': length_removed, 'type': '蜑企勁'}
+                    span = {'start': cursor + offset_removed, 'length': length_removed, 'type': 'DEL'}
                     spans.append(span)
                     _diff_debug(f"_build_diff_highlight span added {span}")
                 cursor += len(formatted_removed)
         elif tag == 'insert':
             added_tokens = corr_tokens[j1:j2]
-            formatted_added, offset_added, length_added = _format_diff_segment(added_tokens, '霑ｽ蜉')
+            formatted_added, offset_added, length_added = _format_diff_segment(added_tokens, 'ADD')
             if formatted_added:
                 result_parts.append(formatted_added)
                 if offset_added is not None and length_added:
-                    span = {'start': cursor + offset_added, 'length': length_added, 'type': '霑ｽ蜉'}
+                    span = {'start': cursor + offset_added, 'length': length_added, 'type': 'ADD'}
                     spans.append(span)
                     _diff_debug(f"_build_diff_highlight span added {span}")
                 cursor += len(formatted_added)

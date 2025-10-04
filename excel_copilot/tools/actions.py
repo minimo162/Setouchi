@@ -354,6 +354,7 @@ class ExcelActions:
                 "deletion": "deletion",
                 "delete": "deletion",
                 "deleted": "deletion",
+                "del": "deletion",
                 "remove": "deletion",
                 "removed": "deletion",
                 "削除": "deletion",
