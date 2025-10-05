@@ -655,41 +655,52 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
     if not result.strip():
         _diff_debug("_build_diff_highlight result empty after strip")
         return corrected_text, []
+    clean_text, marker_spans = _parse_highlight_markup(result)
+    if marker_spans:
+        _diff_debug(f"_build_diff_highlight parsed spans count={len(marker_spans)}")
+        return clean_text, marker_spans
     _diff_debug(f"_build_diff_highlight result_len={len(result)} spans={spans}")
-    return result, spans
+    return clean_text, spans
 
 
-def _extract_marker_spans(highlight_text: str) -> List[Dict[str, int]]:
-    if not isinstance(highlight_text, str) or not highlight_text:
-        return []
+def _parse_highlight_markup(raw_text: str) -> Tuple[str, List[Dict[str, int]]]:
+    if not isinstance(raw_text, str) or not raw_text:
+        return "" if raw_text is None else str(raw_text), []
 
+    markers = {"[DEL]": "DEL", "[ADD]": "ADD"}
+    opening_stack: Dict[str, List[int]] = {label: [] for label in markers.values()}
+    output_chars: List[str] = []
     spans: List[Dict[str, int]] = []
     idx = 0
-    length = len(highlight_text)
-    markers = {"[DEL]": "DEL", "[ADD]": "ADD"}
+    out_len = 0
+    text_len = len(raw_text)
 
-    while idx < length:
-        marker_found = None
-        marker_label = None
-        for marker, label in markers.items():
-            if highlight_text.startswith(marker, idx):
-                marker_found = marker
-                marker_label = label
+    while idx < text_len:
+        matched_marker = None
+        matched_label = None
+        for token, label in markers.items():
+            if raw_text.startswith(token, idx):
+                matched_marker = token
+                matched_label = label
                 break
-        if marker_found is None:
-            idx += 1
+        if matched_marker:
+            stack = opening_stack.setdefault(matched_label, [])
+            if stack:
+                start_pos = stack.pop()
+                span_length = out_len - start_pos
+                if span_length > 0:
+                    spans.append({"start": start_pos, "length": span_length, "type": matched_label})
+            else:
+                stack.append(out_len)
+            idx += len(matched_marker)
             continue
 
-        marker_start = idx
-        idx += len(marker_found)
-        segment_start = idx
-        while idx < length and not any(highlight_text.startswith(next_marker, idx) for next_marker in markers):
-            idx += 1
-        segment_length = idx - segment_start
-        span_length = len(marker_found) + segment_length
-        spans.append({"start": marker_start, "length": span_length, "type": marker_label})
+        output_chars.append(raw_text[idx])
+        idx += 1
+        out_len += 1
 
-    return spans
+    clean_text = "".join(output_chars)
+    return clean_text, spans
 
 
 def writetocell(actions: ExcelActions, cell: str, value: Any, sheetname: Optional[str] = None) -> str:
@@ -2349,8 +2360,8 @@ def check_translation_quality(
                         highlight_text: str
                         highlight_spans: List[Dict[str, int]]
                         if isinstance(ai_highlight_raw, str) and ("[DEL]" in ai_highlight_raw or "[ADD]" in ai_highlight_raw):
-                            highlight_text = _maybe_fix_mojibake(ai_highlight_raw)
-                            highlight_spans = _extract_marker_spans(highlight_text)
+                            parsed_text = _maybe_fix_mojibake(ai_highlight_raw)
+                            highlight_text, highlight_spans = _parse_highlight_markup(parsed_text)
                             if not highlight_spans:
                                 highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
                         else:
