@@ -471,9 +471,11 @@ class ExcelActions:
                         if seg_length <= 0:
                             continue
                         if color_info is None:
-                            continue
-
-                        color_kind, color_value, color_tuple = color_info
+                            color_kind = "default"
+                            color_value = 0
+                            color_tuple = (0, 0, 0)
+                        else:
+                            color_kind, color_value, color_tuple = color_info
                         start_position = seg_start + 1
 
                         span_applied = False
@@ -533,10 +535,11 @@ class ExcelActions:
                         if not applied:
                             continue
 
-                        color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
-                        _diff_debug(
-                            f"apply_diff_highlight_colors applied charwise type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
-                        )
+                        if color_kind != "default":
+                            color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
+                            _diff_debug(
+                                f"apply_diff_highlight_colors applied charwise type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
+                            )
 
         except Exception as e:
             _diff_debug(f"apply_diff_highlight_colors exception={e}")
