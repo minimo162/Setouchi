@@ -522,10 +522,10 @@ def _format_diff_segment(tokens: List[str], label: str) -> Tuple[str, Optional[i
     prefix = segment[:leading_len]
     suffix = segment[core_end:]
     marker_prefix = f"[{label}]"
-    marker_suffix = ""
+    marker_suffix = f"[{label}]"
     formatted = f'{prefix}{marker_prefix}{core}{marker_suffix}{suffix}'
     highlight_start_offset = len(prefix)
-    highlight_length = len(marker_prefix) + len(core) + len(marker_suffix)
+    highlight_length = len(marker_prefix) + len(core)
     _diff_debug(f"_format_diff_segment result label={label} formatted={_shorten_debug(formatted)} offset={highlight_start_offset} length={highlight_length}")
     return formatted, highlight_start_offset, highlight_length
 
@@ -2412,13 +2412,19 @@ def check_translation_quality(
                         ai_highlight_raw = item.get("highlighted_text") or item.get("highlighted_translation")
                         highlight_text: str
                         highlight_spans: List[Dict[str, int]]
+                        highlight_text = ""
+                        highlight_spans: List[Dict[str, int]] = []
                         if isinstance(ai_highlight_raw, str) and ("[DEL]" in ai_highlight_raw or "[ADD]" in ai_highlight_raw):
                             parsed_text = _maybe_fix_mojibake(ai_highlight_raw)
                             highlight_text, highlight_spans = _parse_highlight_markup(parsed_text)
-                            if not highlight_spans:
-                                highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
-                        else:
-                            highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
+
+                        if not highlight_spans:
+                            highlight_text, highlight_spans = _build_diff_highlight(
+                                sanitized_base_text,
+                                corrected_text_str,
+                            )
+                        if not highlight_text:
+                            highlight_text = corrected_text_str
                         highlight_text, highlight_spans = _attach_highlight_labels(highlight_text, highlight_spans)
                         highlight_text = _maybe_fix_mojibake(highlight_text)
                         highlight_matrix[row_idx][col_idx] = highlight_text
