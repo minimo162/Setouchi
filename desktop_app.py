@@ -1289,7 +1289,7 @@ class CopilotApp:
             return
 
         now = time.monotonic()
-        follow_up_delays = (0.1, 0.3, 0.6, 1.2, 2.4)
+        follow_up_delays = (0.05, 0.15, 0.3, 0.5, 0.75, 1.0, 1.5, 2.2, 3.0, 4.0)
         self._dropdown_refresh_deadline = max(self._dropdown_refresh_deadline, now + follow_up_delays[-1] + 0.1)
 
         for delay in follow_up_delays:
