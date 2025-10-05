@@ -1316,6 +1316,10 @@ class CopilotApp:
         follow_up_delays = ((0.0,) + base_delays) if run_immediately else base_delays
         self._dropdown_refresh_deadline = max(self._dropdown_refresh_deadline, now + follow_up_delays[-1] + 0.1)
 
+        if run_immediately:
+            # Trigger one refresh synchronously so the open menu can reflect changes right away.
+            self._handle_follow_up_dropdown_refresh()
+
         for delay in follow_up_delays:
             timer = threading.Timer(delay, self._handle_follow_up_dropdown_refresh)
             timer.daemon = True
@@ -1326,10 +1330,26 @@ class CopilotApp:
             return
         if time.monotonic() > self._dropdown_refresh_deadline:
             return
-        self._refresh_excel_context(
-            desired_workbook=self.current_workbook_name,
-            auto_triggered=True,
-        )
+
+        def _run_refresh():
+            if not self.ui_loop_running:
+                return
+            if time.monotonic() > self._dropdown_refresh_deadline:
+                return
+            self._refresh_excel_context(
+                desired_workbook=self.current_workbook_name,
+                auto_triggered=True,
+            )
+
+        invoke_later = getattr(self.page, "invoke_later", None)
+        if callable(invoke_later):
+            try:
+                invoke_later(_run_refresh)
+                return
+            except Exception:
+                pass
+
+        _run_refresh()
 
     def _on_workbook_dropdown_focus(self, e: Optional[ft.ControlEvent]):
         if not self.workbook_selector or self.workbook_selector.disabled:
