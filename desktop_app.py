@@ -50,6 +50,7 @@ class RequestType(str, Enum):
     STOP = "STOP"
     QUIT = "QUIT"
     UPDATE_CONTEXT = "UPDATE_CONTEXT"
+    RESET_BROWSER = "RESET_BROWSER"
 
 class ResponseType(str, Enum):
     STATUS = "status"
@@ -302,6 +303,9 @@ class CopilotWorker:
             if request.type is RequestType.UPDATE_CONTEXT:
                 self._update_context(request.payload)
                 continue
+            if request.type is RequestType.RESET_BROWSER:
+                self._handle_browser_reset_request()
+                continue
             if request.type is RequestType.USER_INPUT:
                 if isinstance(request.payload, str):
                     self._execute_task(request.payload)
@@ -378,20 +382,29 @@ class CopilotWorker:
             stop_requested = self.stop_event.is_set()
             if stop_requested:
                 self._emit_response(ResponseMessage(ResponseType.INFO, "\u30e6\u30fc\u30b6\u30fc\u306b\u3088\u3063\u3066\u30bf\u30b9\u30af\u304c\u4e2d\u65ad\u3055\u308c\u307e\u3057\u305f\u3002"))
-            restart_ok = self._restart_browser_session()
-            if restart_ok:
-                action_name = "focus_app_window" if stop_requested else "focus_excel_window"
-                metadata = {"action": action_name}
-                if action_name == "focus_excel_window":
-                    metadata["wait_for_browser_ready"] = True
-                self._emit_response(
-                    ResponseMessage(
-                        ResponseType.INFO,
-                        "",
-                        metadata=metadata,
+            if stop_requested:
+                restart_ok = self._restart_browser_session()
+                if restart_ok:
+                    metadata = {"action": "focus_app_window"}
+                    self._emit_response(
+                        ResponseMessage(
+                            ResponseType.INFO,
+                            "",
+                            metadata=metadata,
+                        )
                     )
-                )
             self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
+
+    def _handle_browser_reset_request(self):
+        restart_ok = self._restart_browser_session()
+        if restart_ok:
+            self._emit_response(
+                ResponseMessage(
+                    ResponseType.INFO,
+                    "",
+                    metadata={"action": "focus_app_window"},
+                )
+            )
 
     def _cleanup(self):
         print("\u30af\u30ea\u30fc\u30f3\u30a2\u30c3\u30d7\u3092\u958b\u59cb\u3057\u307e\u3059...")
@@ -573,6 +586,8 @@ class CopilotApp:
         self.chat_list: Optional[ft.ListView] = None
         self.user_input: Optional[ft.TextField] = None
         self.action_button: Optional[ft.Container] = None
+        self.save_log_button: Optional[ft.TextButton] = None
+        self.browser_reset_button: Optional[ft.TextButton] = None
 
         self.chat_history: list[dict[str, str]] = []
         self.history_lock = threading.Lock()
@@ -592,6 +607,7 @@ class CopilotApp:
         self._excel_poll_stop_event = threading.Event()
         self._excel_refresh_event = threading.Event()
         self._excel_poll_interval = 0.8
+        self._browser_reset_in_progress = False
 
         self._configure_page()
         self._build_layout()
@@ -665,6 +681,21 @@ class CopilotApp:
             ),
         )
 
+        self.browser_reset_button = ft.TextButton(
+            text="\u30d6\u30e9\u30a6\u30b6\u3092\u518d\u521d\u671f\u5316",
+            icon=ft.Icons.REFRESH,
+            on_click=self._handle_browser_reset_click,
+            disabled=True,
+            style=ft.ButtonStyle(
+                color={
+                    ft.ControlState.DEFAULT: ft.Colors.GREY_400,
+                    ft.ControlState.HOVERED: ft.Colors.GREY_200,
+                    ft.ControlState.DISABLED: ft.Colors.GREY_700,
+                },
+                padding=ft.Padding(left=4, top=6, right=4, bottom=6),
+            ),
+        )
+
         self.workbook_selector = ft.Dropdown(
             options=[],
             width=180,
@@ -710,6 +741,11 @@ class CopilotApp:
                     self.save_log_button,
                     alignment=ft.alignment.center_left,
                     padding=ft.Padding(left=2, top=8, right=2, bottom=0),
+                ),
+                ft.Container(
+                    self.browser_reset_button,
+                    alignment=ft.alignment.center_left,
+                    padding=ft.Padding(left=2, top=0, right=2, bottom=0),
                 ),
             ],
             width=220,
@@ -875,6 +911,11 @@ class CopilotApp:
                 self.sheet_selector.disabled = True
             else:
                 self.sheet_selector.disabled = not (can_interact and bool(self.sheet_selector.options))
+        if self.browser_reset_button:
+            if new_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+                self.browser_reset_button.disabled = True
+            elif not self._browser_reset_in_progress and can_interact:
+                self.browser_reset_button.disabled = False
 
         if self.status_label:
             self.status_label.opacity = 1
@@ -975,6 +1016,21 @@ class CopilotApp:
             return
 
         self._add_message(ResponseType.INFO, f"\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f: {file_path}")
+
+    def _handle_browser_reset_click(self, e: Optional[ft.ControlEvent]):
+        if self._browser_reset_in_progress:
+            return
+        if self.app_state not in {AppState.READY, AppState.ERROR}:
+            return
+        if not self.worker or not self.request_queue:
+            return
+
+        self._browser_reset_in_progress = True
+        if self.browser_reset_button:
+            self.browser_reset_button.disabled = True
+        self._add_message(ResponseType.INFO, "\u30d6\u30e9\u30a6\u30b6\u306e\u518d\u521d\u671f\u5316\u3092\u5b9f\u884c\u3057\u307e\u3059...")
+        self.request_queue.put(RequestMessage(RequestType.RESET_BROWSER))
+        self._update_ui()
 
     def _export_chat_history(self) -> Path:
         with self.history_lock:
@@ -1474,6 +1530,10 @@ class CopilotApp:
                 self._focus_excel_window()
                 self._pending_focus_action = None
                 self._pending_focus_deadline = None
+            if self._browser_reset_in_progress:
+                self._browser_reset_in_progress = False
+                if self.browser_reset_button and self.app_state in {AppState.READY, AppState.ERROR}:
+                    self.browser_reset_button.disabled = False
 
         if response.type is ResponseType.INITIALIZATION_COMPLETE:
             self._set_state(AppState.READY)
@@ -1504,6 +1564,10 @@ class CopilotApp:
                 self._set_state(AppState.ERROR)
                 if response.content:
                     self._add_message(response.type, response.content)
+            if self._browser_reset_in_progress:
+                self._browser_reset_in_progress = False
+                if self.browser_reset_button and self.app_state in {AppState.READY, AppState.ERROR}:
+                    self.browser_reset_button.disabled = False
         elif response.type is ResponseType.END_OF_TASK:
             self._set_state(AppState.READY)
         elif response.type is ResponseType.INFO:
@@ -1521,6 +1585,10 @@ class CopilotApp:
                 self._pending_focus_action = None
                 self._pending_focus_deadline = None
                 self._focus_app_window()
+                if self._browser_reset_in_progress:
+                    self._browser_reset_in_progress = False
+                    if self.browser_reset_button and self.app_state in {AppState.READY, AppState.ERROR}:
+                        self.browser_reset_button.disabled = False
             elif response.content:
                 self._add_message(type_value, response.content)
         else:
