@@ -2133,7 +2133,7 @@ def check_translation_quality(
             preview_block = f"\n\nOriginal / Translation Preview:\n{preview_text}" if preview_text else ""
             _diff_debug(f"check_translation_quality payload={_shorten_debug(payload)}")
             analysis_prompt = (
-                "You are reviewing Japanese financial disclosure translations.\n"
+                "You are reviewing Japanese-to-English translations.\n"
                 "Exactly one review item is provided at a time. Focus only on that single item.\n"
                 "Do not attempt to operate Excel or any other applications; only analyze the text and respond in JSON.\n"
                 "Each review item includes 'id', 'original_text' (Japanese source text), and 'translated_text' (English translation under review).\n"
@@ -2220,7 +2220,7 @@ def check_translation_quality(
                     + "\n"
                 ),
                 (
-                    "You are reviewing translations of corporate financial disclosures. "
+                    "You are reviewing Japanese-to-English translations. "
                     "Exactly one review item is supplied at a time; focus only on that single item. "
                     "Do not attempt to control Excel or describe UI steps; respond only with JSON. "
                     "Treat 'original_text' as the Japanese source and 'translated_text' as the English translation under review. "
