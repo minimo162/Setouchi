@@ -79,7 +79,7 @@ _REVIEW_PROMPT = (
     "- Use status `OK` when the draft translation is acceptable with no changes. Otherwise respond with `REVISE`.\n"
     "- `notes` must be written in Japanese using the format `Issue: ... / Suggestion: ...`.\n"
     "- `corrected_text` must contain the full corrected English sentence (or the unchanged sentence for `OK`).\n"
-    "- `highlighted_text` must show deletions and insertions relative to the existing translation using inline markers: wrap removed segments in `[DEL]...` and added segments in `[ADD]...`. Keep surrounding context intact and do not nest markers. Leave it empty for `OK`.\n"
+    "- `highlighted_text` must show deletions and insertions relative to the existing translation using inline markers: wrap removed segments as `[DEL]削除テキスト[DEL]` and added segments as `[ADD]追加テキスト[ADD]`. Do not use closing tags like `[/DEL]` or `[/ADD]`, and keep surrounding context intact. Leave it empty for `OK`.\n"
     "- If you return an `edits` array, describe each edit with a `type` (`delete`, `add`, or `replace`), the affected `text`, and a short `reason` in Japanese.\n"
     "- Do not wrap the JSON in code fences or include explanatory prose outside the JSON array.\n\n"
     "Error handling\n"

@@ -2143,7 +2143,7 @@ def check_translation_quality(
                 "Use status 'OK' only when the draft translation requires no changes; otherwise respond with 'REVISE'.\n"
                 "Write 'notes' in Japanese using the exact pattern 'Issue: ... / Suggestion: ...'. Keep them concise and actionable.\n"
                 "Set 'corrected_text' to the fully corrected English sentence. For status 'OK', repeat the original translation unchanged.\n"
-                "Populate 'highlighted_text' to show the difference versus the current translation: wrap deletions in '[DEL]...'/wrap additions in '[ADD]...'. Leave it empty for status 'OK'.\n"
+                "Populate 'highlighted_text' to show the difference versus the current translation: wrap deletions as `[DEL]削除テキスト[DEL]` and additions as `[ADD]追加テキスト[ADD]`. Do not use closing tags like [/DEL] or [/ADD]. Leave it empty for status 'OK'.\n"
                 "Do not wrap the JSON in code fences or add commentary outside the array.\n"
             )
             def _parse_batch_response(response_text: str) -> Optional[List[Any]]:
@@ -2229,7 +2229,7 @@ def check_translation_quality(
                     "Use status 'OK' when the translation is acceptable (notes empty or a short remark). Only select 'OK' when you are certain there are no issues. "
                     "Use status 'REVISE' when changes are needed and write notes in Japanese as 'Issue: ... / Suggestion: ...'. If unsure, choose 'REVISE'. "
                     "Set 'corrected_text' to the fully corrected English sentence. Build 'highlighted_text' from corrected_text, "
-                    "marking additions as [ADD ...] and deletions as [DEL ...]. "
+                    "marking deletions as `[DEL]削除テキスト[DEL]` and additions as `[ADD]追加テキスト[ADD]` (no closing tags such as [/ADD]). "
                     "Return exactly one JSON array and nothing else."
                     + preview_block
                     + f"\n\nReview item (JSON):\n{payload}\n"
