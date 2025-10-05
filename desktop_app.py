@@ -154,7 +154,7 @@ class CopilotWorker:
             prefix_lines = [
                 "[Translation (No References) Mode Request]",
                 "- Solve this by calling `translate_range_without_references` with explicit source and output ranges.",
-                "- Keep translation, quote, and explanation columns aligned with the specified output range.",
+                "- Keep the translation column aligned with the specified output range (one column per source column).",
                 "- Do not request workbook uploads; Excel is already connected.",
                 "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
             ]
@@ -233,13 +233,6 @@ class CopilotWorker:
 
         self._emit_response(ResponseMessage(ResponseType.STATUS, "ブラウザの初期化が完了しました。"))
         return True
-
-    def _focus_excel_window(self):
-        try:
-            with ExcelManager() as manager:
-                manager.focus_application_window()
-        except Exception as focus_err:
-            print(f"Excelウィンドウの前面表示に失敗しました: {focus_err}")
 
     def _initialize(self):
         try:
@@ -351,11 +344,19 @@ class CopilotWorker:
         except Exception as e:
             self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u30bf\u30b9\u30af\u5b9f\u884c\u30a8\u30e9\u30fc: {e}"))
         finally:
-            if self.stop_event.is_set():
+            stop_requested = self.stop_event.is_set()
+            if stop_requested:
                 self._emit_response(ResponseMessage(ResponseType.INFO, "\u30e6\u30fc\u30b6\u30fc\u306b\u3088\u3063\u3066\u30bf\u30b9\u30af\u304c\u4e2d\u65ad\u3055\u308c\u307e\u3057\u305f\u3002"))
             restart_ok = self._restart_browser_session()
             if restart_ok:
-                self._focus_excel_window()
+                action_name = "focus_app_window" if stop_requested else "focus_excel_window"
+                self._emit_response(
+                    ResponseMessage(
+                        ResponseType.INFO,
+                        "",
+                        metadata={"action": action_name},
+                    )
+                )
             self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
 
     def _cleanup(self):
@@ -584,6 +585,13 @@ class CopilotApp:
                 bring_fn()
         except Exception as focus_err:
             print(f"アプリウィンドウの前面表示に失敗しました: {focus_err}")
+
+    def _focus_excel_window(self):
+        try:
+            with ExcelManager() as manager:
+                manager.focus_application_window()
+        except Exception as focus_err:
+            print(f"Excelウィンドウの前面表示に失敗しました: {focus_err}")
 
     def _build_layout(self):
         self.title_label = ft.Text("Excel\nCo-pilot", size=26, weight=ft.FontWeight.BOLD, color="#FFFFFF")
@@ -1101,6 +1109,14 @@ class CopilotApp:
                     self._add_message(response.type, response.content)
         elif response.type is ResponseType.END_OF_TASK:
             self._set_state(AppState.READY)
+        elif response.type is ResponseType.INFO:
+            action = response.metadata.get("action") if response.metadata else None
+            if action == "focus_excel_window":
+                self._focus_excel_window()
+            elif action == "focus_app_window":
+                self._focus_app_window()
+            elif response.content:
+                self._add_message(type_value, response.content)
         else:
             if response.content:
                 self._add_message(type_value, response.content)

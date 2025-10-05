@@ -862,6 +862,7 @@ def translate_range_contents(
     overwrite_source: bool = False,
     rows_per_batch: Optional[int] = None,
     stop_event: Optional[Event] = None,
+    output_mode: str = "translation_with_context",
 ) -> str:
     '''Translate Japanese text for a range with optional references and controlled output.'''
 
@@ -883,7 +884,9 @@ def translate_range_contents(
         source_matrix = [row[:] for row in original_data]
         range_adjustment_note: Optional[str] = None
         writing_to_source_directly = translation_output_range is None
-        citation_should_include_explanations = writing_to_source_directly
+        include_context_columns = output_mode != "translation_only"
+        translation_block_width = 3 if include_context_columns else 1
+        citation_should_include_explanations = writing_to_source_directly and include_context_columns
         if writing_to_source_directly and not overwrite_source:
             raise ToolExecutionError(
                 "translation_output_range must be provided when overwrite_source is False."
@@ -895,10 +898,14 @@ def translate_range_contents(
         else:
             output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
             out_rows, out_cols = _parse_range_dimensions(output_range)
-            required_output_cols = source_cols * 3
+            required_output_cols = source_cols * translation_block_width
             if out_rows < source_rows or out_cols < required_output_cols:
+                if include_context_columns:
+                    requirement_text = "three columns (translation, quotes, explanation)"
+                else:
+                    requirement_text = "one column (translation)"
                 raise ToolExecutionError(
-                    "translation_output_range must provide three columns (translation, quotes, explanation) per source column."
+                    f"translation_output_range must provide {requirement_text} per source column."
                 )
             if out_rows != source_rows or out_cols != required_output_cols:
                 start_row, start_col, _, _ = _parse_range_bounds(output_range)
@@ -914,8 +921,12 @@ def translate_range_contents(
                 adjusted_range_display = (
                     f"{output_sheet}!{adjusted_range}" if output_sheet else adjusted_range
                 )
+                if include_context_columns:
+                    requirement_text = "translation / quotes / explanation layout"
+                else:
+                    requirement_text = "translation-only layout"
                 range_adjustment_note = (
-                    f"translation_output_range '{original_range_display}' did not match the required layout; "
+                    f"translation_output_range '{original_range_display}' did not match the required {requirement_text}; "
                     f"using '{adjusted_range_display}' instead."
                 )
                 output_range = adjusted_range
@@ -1414,13 +1425,17 @@ def translate_range_contents(
                         quotes_col_index = None
                         explanation_col_index = None
                     else:
-                        translation_col_index = col_idx * 3
-                        quotes_col_index = translation_col_index + 1
-                        explanation_col_index = translation_col_index + 2
+                        translation_col_index = col_idx * translation_block_width
+                        if include_context_columns:
+                            quotes_col_index = translation_col_index + 1
+                            explanation_col_index = translation_col_index + 2
+                        else:
+                            quotes_col_index = None
+                            explanation_col_index = None
 
-                    explanation_text = explanation_jp.strip()
+                    explanation_text = explanation_jp.strip() if include_context_columns else ""
                     quote_candidates = []
-                    if item_index < len(normalized_quotes_per_item):
+                    if include_context_columns and item_index < len(normalized_quotes_per_item):
                         raw_candidates = normalized_quotes_per_item[item_index]
                         if isinstance(raw_candidates, list):
                             quote_candidates = raw_candidates
@@ -1471,26 +1486,30 @@ def translate_range_contents(
 
                     final_quotes: List[str] = []
                     seen_quotes: Set[str] = set()
-                    for candidate in quote_candidates or []:
-                        if not isinstance(candidate, str):
-                            continue
-                        cleaned_candidate = candidate.strip()
-                        if not cleaned_candidate or cleaned_candidate in seen_quotes:
-                            continue
-                        seen_quotes.add(cleaned_candidate)
-                        final_quotes.append(cleaned_candidate)
+                    if include_context_columns:
+                        for candidate in quote_candidates or []:
+                            if not isinstance(candidate, str):
+                                continue
+                            cleaned_candidate = candidate.strip()
+                            if not cleaned_candidate or cleaned_candidate in seen_quotes:
+                                continue
+                            seen_quotes.add(cleaned_candidate)
+                            final_quotes.append(cleaned_candidate)
 
                     formatted_quotes: List[str]
-                    if final_quotes:
-                        formatted_quotes = [
-                            f"引用{idx}: {quote}"
-                            for idx, quote in enumerate(final_quotes, start=1)
-                        ]
+                    if include_context_columns:
+                        if final_quotes:
+                            formatted_quotes = [
+                                f"引用{idx}: {quote}"
+                                for idx, quote in enumerate(final_quotes, start=1)
+                            ]
+                        else:
+                            formatted_quotes = [_NO_QUOTES_PLACEHOLDER]
                     else:
-                        formatted_quotes = [_NO_QUOTES_PLACEHOLDER]
+                        formatted_quotes = []
 
                     fallback_reason: Optional[str] = None
-                    if use_references:
+                    if include_context_columns and use_references:
                         default_explanation = "参照資料の内容を踏まえ、原文の意味と語調を保つように訳語を選定しました。"
                         if not explanation_text:
                             explanation_text = default_explanation
@@ -1521,7 +1540,7 @@ def translate_range_contents(
                                 cell_ref = f"{target_sheet}!{cell_ref}"
                             explanation_fallback_notes.append(f"{cell_ref}: {fallback_reason}")
 
-                    if quotes_col_index is not None and explanation_col_index is not None:
+                    if quotes_col_index is not None and explanation_col_index is not None and include_context_columns:
                         quotes_text = "\n".join(formatted_quotes)
                         if output_matrix[local_row][quotes_col_index] != quotes_text:
                             output_matrix[local_row][quotes_col_index] = quotes_text
@@ -1657,7 +1676,7 @@ def translate_range_contents(
         if not any_translation:
             return f"No translatable text was found in range '{cell_range}'."
 
-        if explanation_fallback_notes:
+        if include_context_columns and explanation_fallback_notes:
             messages.insert(0, "explanation_jp が不足していたセルに既定の説明文を補いました: " + " / ".join(explanation_fallback_notes))
 
         write_messages: List[str] = []
@@ -1719,6 +1738,7 @@ def translate_range_without_references(
         overwrite_source=overwrite_source,
         rows_per_batch=rows_per_batch,
         stop_event=stop_event,
+        output_mode="translation_only",
     )
 
 
