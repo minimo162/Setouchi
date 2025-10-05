@@ -392,7 +392,7 @@ class ExcelActions:
                         cell.api.Font.ColorIndex = 1
                         cell.api.Font.Color = 0
                         cell.api.Font.Strikethrough = False
-                        cell.api.Font.Underline = 0
+                        cell.api.Font.Underline = -4142
                     except Exception as reset_error:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) reset color failed {reset_error}")
                     try:
@@ -400,7 +400,7 @@ class ExcelActions:
                         entire_chars.Font.ColorIndex = 1
                         entire_chars.Font.Color = 0
                         entire_chars.Font.Strikethrough = False
-                        entire_chars.Font.Underline = 0
+                        entire_chars.Font.Underline = -4142
                     except Exception as chars_reset_err:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters reset failed {chars_reset_err}")
                     if not spans:
@@ -484,16 +484,17 @@ class ExcelActions:
 
                         span_applied = False
                         try:
-                            cell.api.Characters(start_position, seg_length).Font.Color = color_value
+                            char_range = cell.api.Characters(start_position, seg_length)
+                            char_range.Font.Color = color_value
                             if color_kind == "deletion":
-                                cell.api.Characters(start_position, seg_length).Font.Strikethrough = True
-                                cell.api.Characters(start_position, seg_length).Font.Underline = 0
+                                char_range.Font.Strikethrough = True
+                                char_range.Font.Underline = -4142
                             elif color_kind == "addition":
-                                cell.api.Characters(start_position, seg_length).Font.Underline = 2
-                                cell.api.Characters(start_position, seg_length).Font.Strikethrough = False
+                                char_range.Font.Strikethrough = False
+                                char_range.Font.Underline = 2
                             else:
-                                cell.api.Characters(start_position, seg_length).Font.Strikethrough = False
-                                cell.api.Characters(start_position, seg_length).Font.Underline = 0
+                                char_range.Font.Strikethrough = False
+                                char_range.Font.Underline = -4142
                             span_applied = True
                         except Exception as primary_error:
                             _diff_debug(
@@ -502,16 +503,17 @@ class ExcelActions:
 
                         if not span_applied:
                             try:
-                                cell.characters[start_position - 1, seg_length].font.color = color_tuple
+                                segment_font = cell.characters[start_position - 1, seg_length].font
+                                segment_font.color = color_tuple
                                 if color_kind == "deletion":
-                                    cell.characters[start_position - 1, seg_length].font.strike = True
-                                    cell.characters[start_position - 1, seg_length].font.underline = False
+                                    segment_font.strikethrough = True
+                                    segment_font.underline = 'None'
                                 elif color_kind == "addition":
-                                    cell.characters[start_position - 1, seg_length].font.underline = True
-                                    cell.characters[start_position - 1, seg_length].font.strike = False
+                                    segment_font.strikethrough = False
+                                    segment_font.underline = 'Single'
                                 else:
-                                    cell.characters[start_position - 1, seg_length].font.strike = False
-                                    cell.characters[start_position - 1, seg_length].font.underline = False
+                                    segment_font.strikethrough = False
+                                    segment_font.underline = 'None'
                                 span_applied = True
                             except Exception as span_fallback_error:
                                 _diff_debug(
@@ -531,19 +533,17 @@ class ExcelActions:
                             colored = False
                             if api_char_supported:
                                 try:
-                                    cell.api.Characters(char_position, 1).Font.Color = color_value
+                                    char_obj = cell.api.Characters(char_position, 1)
+                                    char_obj.Font.Color = color_value
                                     if color_kind == "deletion":
-                                        char_obj = cell.api.Characters(char_position, 1)
                                         char_obj.Font.Strikethrough = True
-                                        char_obj.Font.Underline = 0
+                                        char_obj.Font.Underline = -4142
                                     elif color_kind == "addition":
-                                        char_obj = cell.api.Characters(char_position, 1)
+                                        char_obj.Font.Strikethrough = False
                                         char_obj.Font.Underline = 2
-                                        char_obj.Font.Strikethrough = False
                                     else:
-                                        char_obj = cell.api.Characters(char_position, 1)
                                         char_obj.Font.Strikethrough = False
-                                        char_obj.Font.Underline = 0
+                                        char_obj.Font.Underline = -4142
                                     colored = True
                                 except Exception as per_char_error:
                                     api_char_supported = False
@@ -552,16 +552,17 @@ class ExcelActions:
                                     )
                             if not colored and characters_char_supported:
                                 try:
-                                    cell.characters[char_position - 1].font.color = color_tuple
+                                    char_font = cell.characters[char_position - 1].font
+                                    char_font.color = color_tuple
                                     if color_kind == "deletion":
-                                        cell.characters[char_position - 1].font.strike = True
-                                        cell.characters[char_position - 1].font.underline = False
+                                        char_font.strikethrough = True
+                                        char_font.underline = 'None'
                                     elif color_kind == "addition":
-                                        cell.characters[char_position - 1].font.underline = True
-                                        cell.characters[char_position - 1].font.strike = False
+                                        char_font.strikethrough = False
+                                        char_font.underline = 'Single'
                                     else:
-                                        cell.characters[char_position - 1].font.strike = False
-                                        cell.characters[char_position - 1].font.underline = False
+                                        char_font.strikethrough = False
+                                        char_font.underline = 'None'
                                     colored = True
                                 except Exception as per_char_fallback_error:
                                     characters_char_supported = False
