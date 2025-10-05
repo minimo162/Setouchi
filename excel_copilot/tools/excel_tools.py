@@ -1417,11 +1417,11 @@ def translate_range_contents(
                             )
                             if raw_explanation is None:
                                 evidence_value = item.get("evidence")
-                                if isinstance(evidence_value, dict):
-                                    raw_explanation = (
-                                        evidence_value.get("explanation_jp")
-                                        or evidence_value.get("explanation")
-                                    )
+                            if isinstance(evidence_value, dict):
+                                raw_explanation = (
+                                    evidence_value.get("explanation_jp")
+                                    or evidence_value.get("explanation")
+                                )
                             if isinstance(raw_explanation, (str, int, float)):
                                 explanation_jp = _sanitize_evidence_value(str(raw_explanation))
                     elif isinstance(item, str):
@@ -1437,6 +1437,17 @@ def translate_range_contents(
                     translation_value = translation_value.strip()
                     if not translation_value:
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+
+                    source_cell_value = _normalize_cell_value(original_data[position[0]][position[1]]).strip()
+                    if not include_context_columns:
+                        if translation_value == source_cell_value and _contains_japanese(translation_value):
+                            raise ToolExecutionError(
+                                "翻訳結果が元のテキストと同一で日本語のままです。翻訳が完了していません。"
+                            )
+                        if target_language and target_language.lower().startswith("english") and _contains_japanese(translation_value):
+                            raise ToolExecutionError(
+                                "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
+                            )
 
                     if len(position) == 3:
                         local_row, col_idx, segment_index = position
