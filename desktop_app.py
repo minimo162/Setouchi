@@ -1103,14 +1103,19 @@ class CopilotApp:
             return None
 
         with self._excel_refresh_lock:
-            if auto_triggered:
+            selector_value = None
+            if self.workbook_selector:
+                selector_value = self.workbook_selector.value
+
+            target_workbook = (
+                desired_workbook
+                or selector_value
+                or self.current_workbook_name
+                or self._load_last_workbook_preference()
+            )
+
+            if auto_triggered and target_workbook is None:
                 target_workbook = None
-            else:
-                target_workbook = (
-                    desired_workbook
-                    or self.current_workbook_name
-                    or self._load_last_workbook_preference()
-                )
 
             try:
                 with ExcelManager(target_workbook) as manager:
@@ -1175,7 +1180,13 @@ class CopilotApp:
                     self.workbook_selection_updating = False
                     controls_changed = True
 
-                if self.workbook_selector.value != active_workbook:
+                if not auto_triggered:
+                    if self.workbook_selector.value != active_workbook:
+                        self.workbook_selection_updating = True
+                        self.workbook_selector.value = active_workbook
+                        self.workbook_selection_updating = False
+                        controls_changed = True
+                elif not self.workbook_selector.value and active_workbook:
                     self.workbook_selection_updating = True
                     self.workbook_selector.value = active_workbook
                     self.workbook_selection_updating = False
@@ -1193,7 +1204,13 @@ class CopilotApp:
                     self.sheet_selection_updating = False
                     controls_changed = True
 
-                if self.sheet_selector.value != active_sheet:
+                if not auto_triggered:
+                    if self.sheet_selector.value != active_sheet:
+                        self.sheet_selection_updating = True
+                        self.sheet_selector.value = active_sheet
+                        self.sheet_selection_updating = False
+                        controls_changed = True
+                elif not self.sheet_selector.value and active_sheet:
                     self.sheet_selection_updating = True
                     self.sheet_selector.value = active_sheet
                     self.sheet_selection_updating = False
@@ -1203,12 +1220,18 @@ class CopilotApp:
                     controls_changed = True
 
                 context_changed = False
-                if active_workbook != self.current_workbook_name:
-                    self.current_workbook_name = active_workbook
-                    context_changed = True
-                if active_sheet != self.current_sheet_name:
-                    self.current_sheet_name = active_sheet
-                    context_changed = True
+                if not auto_triggered:
+                    if active_workbook != self.current_workbook_name:
+                        self.current_workbook_name = active_workbook
+                        context_changed = True
+                    if active_sheet != self.current_sheet_name:
+                        self.current_sheet_name = active_sheet
+                        context_changed = True
+                else:
+                    if self.current_workbook_name is None and active_workbook:
+                        self.current_workbook_name = active_workbook
+                    if self.current_sheet_name is None and active_sheet:
+                        self.current_sheet_name = active_sheet
 
                 if self.current_workbook_name:
                     self._save_last_workbook_preference(self.current_workbook_name)
