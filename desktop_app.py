@@ -550,7 +550,6 @@ class CopilotApp:
         self._register_window_handlers()
 
     def mount(self):
-        self._focus_app_window()
         self._set_state(AppState.INITIALIZING)
         self._update_ui()
         sheet_name = self._refresh_excel_context(is_initial_start=True)
@@ -1084,6 +1083,7 @@ class CopilotApp:
             self._set_state(AppState.READY)
             if self.status_label:
                 self.status_label.value = response.content or self.status_label.value
+            self._focus_app_window()
         elif response.type is ResponseType.STATUS:
             if self.status_label:
                 self.status_label.value = response.content or ""
