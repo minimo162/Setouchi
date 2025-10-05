@@ -568,8 +568,6 @@ class CopilotApp:
 
         self.title_label: Optional[ft.Text] = None
         self.status_label: Optional[ft.Text] = None
-        self.excel_info_label: Optional[ft.Text] = None
-        self.refresh_button: Optional[ft.ElevatedButton] = None
         self.workbook_selector: Optional[ft.Dropdown] = None
         self.sheet_selector: Optional[ft.Dropdown] = None
         self.chat_list: Optional[ft.ListView] = None
@@ -588,6 +586,10 @@ class CopilotApp:
         self._focus_wait_timeout_sec = FOCUS_WAIT_TIMEOUT_SECONDS
         self._status_message_override: Optional[str] = None
         self._status_color_override: Optional[str] = None
+        self._excel_refresh_lock = threading.Lock()
+        self._excel_refresh_interval = 3.0
+        self._excel_monitor_thread: Optional[threading.Thread] = None
+        self._last_excel_snapshot: Dict[str, Any] = {}
 
         self._configure_page()
         self._build_layout()
@@ -609,6 +611,12 @@ class CopilotApp:
 
         self.queue_thread = threading.Thread(target=self._process_response_queue_loop, daemon=True)
         self.queue_thread.start()
+
+        self._excel_monitor_thread = threading.Thread(
+            target=self._monitor_excel_changes,
+            daemon=True,
+        )
+        self._excel_monitor_thread.start()
 
         self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
 
@@ -645,27 +653,19 @@ class CopilotApp:
         self.title_label = ft.Text("Excel\nCo-pilot", size=26, weight=ft.FontWeight.BOLD, color="#FFFFFF")
         self.status_label = ft.Text("\u521d\u671f\u5316\u4e2d...", size=15, color=ft.Colors.GREY_500, animate_opacity=300, animate_scale=600)
 
-        self.excel_info_label = ft.Text("", size=14, color="#CFD8DC")
-        self.refresh_button = ft.ElevatedButton(
-            text="\u66f4\u65b0",
-            on_click=self._handle_refresh_click,
-            bgcolor=ft.Colors.DEEP_PURPLE_500,
-            color=ft.Colors.WHITE,
-            scale=1,
-            animate_scale=100,
-            on_hover=self._handle_button_hover,
-        )
-
-        self.save_log_button = ft.ElevatedButton(
+        self.save_log_button = ft.TextButton(
             text="\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58",
             icon=ft.Icons.SAVE_OUTLINED,
             on_click=self._handle_save_log_click,
-            bgcolor="#2C2A3A",
-            color=ft.Colors.WHITE,
             disabled=True,
-            animate_scale=100,
-            scale=1,
-            on_hover=self._handle_button_hover,
+            style=ft.ButtonStyle(
+                color={
+                    ft.MaterialState.DEFAULT: ft.Colors.GREY_400,
+                    ft.MaterialState.HOVERED: ft.Colors.GREY_200,
+                    ft.MaterialState.DISABLED: ft.Colors.GREY_700,
+                },
+                padding=ft.Padding(left=4, top=6, right=4, bottom=6),
+            ),
         )
 
         self.workbook_selector = ft.Dropdown(
@@ -695,15 +695,17 @@ class CopilotApp:
                 self.title_label,
                 self.status_label,
                 ft.Divider(color="#4A4458"),
-                self.excel_info_label,
-                self.refresh_button,
-                self.save_log_button,
                 self.workbook_selector,
                 self.sheet_selector,
+                ft.Container(
+                    self.save_log_button,
+                    alignment=ft.alignment.center_left,
+                    padding=ft.Padding(left=2, top=8, right=2, bottom=0),
+                ),
             ],
             width=220,
             spacing=20,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.START,
         )
 
         sidebar = ft.Container(
@@ -854,8 +856,6 @@ class CopilotApp:
             self.user_input.disabled = not can_interact
         if self.mode_selector:
             self.mode_selector.disabled = not can_interact
-        if self.refresh_button:
-            self.refresh_button.disabled = new_state is AppState.INITIALIZING
 
         if self.status_label:
             self.status_label.opacity = 1
@@ -1078,113 +1078,134 @@ class CopilotApp:
             except OSError as err:
                 print(f"Failed to write sheet preference: {err}")
 
-    def _handle_refresh_click(self, e: Optional[ft.ControlEvent]):
-        self._refresh_excel_context(desired_workbook=self.current_workbook_name)
-
     def _refresh_excel_context(
         self,
         is_initial_start: bool = False,
         desired_workbook: Optional[str] = None,
+        auto_triggered: bool = False,
     ) -> Optional[str]:
-        if not self.sheet_selector or not self.refresh_button or not self.workbook_selector:
+        if not self.sheet_selector or not self.workbook_selector or not self.ui_loop_running:
             return None
 
-        self.sheet_selector.disabled = True
-        self.workbook_selector.disabled = True
-        self.refresh_button.disabled = True
-        self.refresh_button.text = "\u66f4\u65b0\u4e2d..."
-        self._update_ui()
-
-        selected_workbook = None
-        selected_sheet = None
-
-        try:
+        with self._excel_refresh_lock:
             target_workbook = desired_workbook or self.current_workbook_name or self._load_last_workbook_preference()
-            with ExcelManager(target_workbook) as manager:
-                workbook_names = manager.list_workbook_names()
-                if not workbook_names:
-                    raise ExcelConnectionError("\u958b\u3044\u3066\u3044\u308bExcel\u30d6\u30c3\u30af\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002")
 
-                if target_workbook and target_workbook in workbook_names:
-                    try:
-                        manager.activate_workbook(target_workbook)
-                    except Exception as activate_err:
-                        print(f"\u5bfe\u8c61\u30d6\u30c3\u30af '{target_workbook}' \u306e\u9078\u629e\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {activate_err}")
+            try:
+                with ExcelManager(target_workbook) as manager:
+                    workbook_names = manager.list_workbook_names()
+                    if not workbook_names:
+                        raise ExcelConnectionError("開いているExcelブックが見つかりません。")
 
-                info_dict = manager.get_active_workbook_and_sheet()
-                selected_workbook = info_dict["workbook_name"]
-                selected_sheet = info_dict["sheet_name"]
+                    if target_workbook and target_workbook in workbook_names:
+                        try:
+                            manager.activate_workbook(target_workbook)
+                        except Exception as activate_err:
+                            print(f"対象ブック '{target_workbook}' の選択に失敗しました: {activate_err}")
 
-                sheet_names = manager.list_sheet_names()
+                    info_dict = manager.get_active_workbook_and_sheet()
+                    active_workbook = info_dict["workbook_name"]
+                    active_sheet = info_dict["sheet_name"]
 
-                preferred_sheet = self._load_last_sheet_preference(selected_workbook)
-                if (
-                    preferred_sheet
-                    and preferred_sheet in sheet_names
-                    and preferred_sheet != selected_sheet
-                ):
-                    try:
-                        selected_sheet = manager.activate_sheet(preferred_sheet)
-                    except Exception as activate_err:
-                        print(
-                            f"\u524d\u56de\u9078\u629e\u3057\u305f\u30b7\u30fc\u30c8 '{preferred_sheet}' \u306e\u5fa9\u5143\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {activate_err}"
-                        )
-                        self._add_message(
-                            ResponseType.INFO,
-                            f"\u4fdd\u5b58\u6e08\u307f\u30b7\u30fc\u30c8\u300e{preferred_sheet}\u300f\u3092\u958b\u3051\u307e\u305b\u3093\u3067\u3057\u305f: {activate_err}",
-                        )
-                        selected_sheet = info_dict["sheet_name"]
+                    sheet_names = manager.list_sheet_names()
 
-                self.current_workbook_name = selected_workbook
-                self.current_sheet_name = selected_sheet
+                    preferred_sheet = self._load_last_sheet_preference(active_workbook)
+                    if (
+                        preferred_sheet
+                        and preferred_sheet in sheet_names
+                        and preferred_sheet != active_sheet
+                    ):
+                        try:
+                            active_sheet = manager.activate_sheet(preferred_sheet)
+                        except Exception as activate_err:
+                            print(
+                                f"前回選択したシート '{preferred_sheet}' の復元に失敗しました: {activate_err}"
+                            )
+                            if not auto_triggered:
+                                self._add_message(
+                                    ResponseType.INFO,
+                                    f"保存済みシート『{preferred_sheet}』を開けませんでした: {activate_err}",
+                                )
+
+                snapshot = {
+                    "workbooks": tuple(workbook_names),
+                    "workbook": active_workbook,
+                    "sheet": active_sheet,
+                    "sheets": tuple(sheet_names),
+                }
+
+                if auto_triggered and snapshot == self._last_excel_snapshot:
+                    return active_sheet
+
+                self._last_excel_snapshot = snapshot
+
+                existing_workbook_values = [
+                    (opt.key or opt.text) for opt in (self.workbook_selector.options or [])
+                ]
+                if existing_workbook_values != workbook_names:
+                    self.workbook_selection_updating = True
+                    self.workbook_selector.options = [ft.dropdown.Option(name) for name in workbook_names]
+                    self.workbook_selection_updating = False
 
                 self.workbook_selection_updating = True
-                self.workbook_selector.options = [ft.dropdown.Option(name) for name in workbook_names]
-                self.workbook_selector.value = selected_workbook
+                self.workbook_selector.value = active_workbook
                 self.workbook_selector.disabled = False
                 self.workbook_selection_updating = False
 
-                self.sheet_selection_updating = True
-                info_text = f"\u5bfe\u8c61\u30d6\u30c3\u30af: {selected_workbook}\n\u5bfe\u8c61\u30b7\u30fc\u30c8: {selected_sheet}"
-                if self.excel_info_label:
-                    self.excel_info_label.value = info_text
+                existing_sheet_values = [
+                    (opt.key or opt.text) for opt in (self.sheet_selector.options or [])
+                ]
+                if existing_sheet_values != sheet_names:
+                    self.sheet_selection_updating = True
+                    self.sheet_selector.options = [ft.dropdown.Option(name) for name in sheet_names]
+                    self.sheet_selection_updating = False
 
-                self.sheet_selector.options = [ft.dropdown.Option(name) for name in sheet_names]
-                self.sheet_selector.value = selected_sheet
+                self.sheet_selection_updating = True
+                self.sheet_selector.value = active_sheet
                 self.sheet_selector.disabled = False
                 self.sheet_selection_updating = False
+
+                context_changed = False
+                if active_workbook != self.current_workbook_name:
+                    self.current_workbook_name = active_workbook
+                    context_changed = True
+                if active_sheet != self.current_sheet_name:
+                    self.current_sheet_name = active_sheet
+                    context_changed = True
 
                 if self.current_workbook_name:
                     self._save_last_workbook_preference(self.current_workbook_name)
                 if self.current_workbook_name and self.current_sheet_name:
                     self._save_last_sheet_preference(self.current_workbook_name, self.current_sheet_name)
 
-                if not is_initial_start and self.request_queue:
+                if context_changed and self.request_queue:
                     payload: Dict[str, Any] = {"workbook_name": self.current_workbook_name}
                     if self.current_sheet_name:
                         payload["sheet_name"] = self.current_sheet_name
                     self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, payload))
 
-                return selected_sheet
-        except Exception as ex:
-            error_message = f"Excel\u306e\u60c5\u5831\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {ex}"
-            if self.excel_info_label:
-                self.excel_info_label.value = error_message
-            self.sheet_selector.disabled = True
-            self.sheet_selector.options = []
-            self.sheet_selector.value = None
-            self.workbook_selector.disabled = True
-            self.workbook_selector.options = []
-            self.workbook_selector.value = None
-            if not is_initial_start:
-                self._add_message(ResponseType.ERROR, error_message)
-            return None
-        finally:
-            self.sheet_selection_updating = False
-            self.workbook_selection_updating = False
-            self.refresh_button.disabled = False
-            self.refresh_button.text = "\u66f4\u65b0"
-            self._update_ui()
+                self._update_ui()
+
+                return active_sheet
+
+            except Exception as ex:
+                error_message = f"Excelの情報取得に失敗しました: {ex}"
+                self.sheet_selection_updating = True
+                self.sheet_selector.options = []
+                self.sheet_selector.value = None
+                self.sheet_selector.disabled = True
+                self.sheet_selection_updating = False
+
+                self.workbook_selection_updating = True
+                self.workbook_selector.options = []
+                self.workbook_selector.value = None
+                self.workbook_selector.disabled = True
+                self.workbook_selection_updating = False
+
+                self._last_excel_snapshot = {}
+                if not auto_triggered and not is_initial_start:
+                    self._add_message(ResponseType.ERROR, error_message)
+                self._update_ui()
+                return None
 
     def _run_copilot(self, e: Optional[ft.ControlEvent]):
         if not self.user_input:
@@ -1236,8 +1257,6 @@ class CopilotApp:
                 manager.activate_sheet(selected_sheet)
         except Exception as ex:
             error_message = f"\u30b7\u30fc\u30c8\u306e\u5207\u308a\u66ff\u3048\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {ex}"
-            if self.excel_info_label:
-                self.excel_info_label.value = error_message
             self.sheet_selection_updating = True
             if self.sheet_selector:
                 self.sheet_selector.value = previous_sheet
@@ -1254,11 +1273,16 @@ class CopilotApp:
         if self.current_workbook_name:
             self._save_last_sheet_preference(self.current_workbook_name, selected_sheet)
             self._save_last_workbook_preference(self.current_workbook_name)
-        workbook = self.current_workbook_name or "Unknown"
-        if self.excel_info_label:
-            self.excel_info_label.value = f"対象ブック: {workbook}\n対象シート: {selected_sheet}"
         self._add_message(ResponseType.INFO, f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30b7\u30fc\u30c8\u3092\u300e{selected_sheet}\u300f\u306b\u8a2d\u5b9a\u3057\u307e\u3057\u305f\u3002")
         self._update_ui()
+
+    def _monitor_excel_changes(self):
+        while self.ui_loop_running:
+            time.sleep(self._excel_refresh_interval)
+            try:
+                self._refresh_excel_context(auto_triggered=True)
+            except Exception as monitor_err:
+                print(f"Excelコンテキストの自動更新に失敗しました: {monitor_err}")
 
     def _process_response_queue_loop(self):
         while self.ui_loop_running:
