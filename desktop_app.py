@@ -587,6 +587,8 @@ class CopilotApp:
         self._status_message_override: Optional[str] = None
         self._status_color_override: Optional[str] = None
         self._excel_refresh_lock = threading.Lock()
+        self._last_excel_snapshot: Dict[str, Any] = {}
+        self._dropdown_refresh_deadline: float = 0.0
 
         self._configure_page()
         self._build_layout()
@@ -663,6 +665,7 @@ class CopilotApp:
             options=[],
             width=180,
             on_change=self._on_workbook_change,
+            on_focus=self._on_workbook_dropdown_focus,
             hint_text="\u30d6\u30c3\u30af\u3092\u9078\u629e",
             border_radius=8,
             fill_color="#2C2A3A",
@@ -679,6 +682,7 @@ class CopilotApp:
             options=[],
             width=180,
             on_change=self._on_sheet_change,
+            on_focus=self._on_sheet_dropdown_focus,
             hint_text="\u30b7\u30fc\u30c8\u3092\u9078\u629e",
             border_radius=8,
             fill_color="#2C2A3A",
@@ -1272,10 +1276,46 @@ class CopilotApp:
             except Exception:
                 pass
 
+    def _refresh_excel_context_before_dropdown(self):
+        # Refresh workbook/sheet lists right before the dropdown overlay opens.
+        self._refresh_excel_context(
+            desired_workbook=self.current_workbook_name,
+            auto_triggered=True,
+        )
+        self._schedule_follow_up_excel_refreshes()
+
+    def _schedule_follow_up_excel_refreshes(self):
+        if not self.ui_loop_running:
+            return
+
+        now = time.monotonic()
+        follow_up_delays = (0.1, 0.3, 0.6, 1.2, 2.4)
+        self._dropdown_refresh_deadline = max(self._dropdown_refresh_deadline, now + follow_up_delays[-1] + 0.1)
+
+        for delay in follow_up_delays:
+            timer = threading.Timer(delay, self._handle_follow_up_dropdown_refresh)
+            timer.daemon = True
+            timer.start()
+
+    def _handle_follow_up_dropdown_refresh(self):
+        if not self.ui_loop_running:
+            return
+        if time.monotonic() > self._dropdown_refresh_deadline:
+            return
+        self._refresh_excel_context(
+            desired_workbook=self.current_workbook_name,
+            auto_triggered=True,
+        )
+
+    def _on_workbook_dropdown_focus(self, e: Optional[ft.ControlEvent]):
+        if not self.workbook_selector or self.workbook_selector.disabled:
+            return
+        self._refresh_excel_context_before_dropdown()
+
     def _on_workbook_dropdown_tap(self, e: Optional[ft.TapEvent]):
         if not self.workbook_selector or self.workbook_selector.disabled:
             return
-        self._refresh_excel_context(desired_workbook=self.current_workbook_name)
+        self._refresh_excel_context_before_dropdown()
 
     def _on_sheet_change(self, e: ft.ControlEvent):
         if self.sheet_selection_updating:
@@ -1319,10 +1359,15 @@ class CopilotApp:
             except Exception:
                 pass
 
+    def _on_sheet_dropdown_focus(self, e: Optional[ft.ControlEvent]):
+        if not self.sheet_selector or self.sheet_selector.disabled:
+            return
+        self._refresh_excel_context_before_dropdown()
+
     def _on_sheet_dropdown_tap(self, e: Optional[ft.TapEvent]):
         if not self.sheet_selector or self.sheet_selector.disabled:
             return
-        self._refresh_excel_context(desired_workbook=self.current_workbook_name)
+        self._refresh_excel_context_before_dropdown()
 
     def _process_response_queue_loop(self):
         while self.ui_loop_running:
