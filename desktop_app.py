@@ -1258,6 +1258,11 @@ class CopilotApp:
             return
         self._save_last_workbook_preference(selected_workbook)
         self._refresh_excel_context(desired_workbook=selected_workbook)
+        if self.user_input and not self.user_input.disabled:
+            try:
+                self.user_input.focus()
+            except Exception:
+                pass
 
     def _on_workbook_focus(self, e: Optional[ft.ControlEvent]):
         if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
@@ -1305,6 +1310,11 @@ class CopilotApp:
             self._save_last_workbook_preference(self.current_workbook_name)
         self._add_message(ResponseType.INFO, f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30b7\u30fc\u30c8\u3092\u300e{selected_sheet}\u300f\u306b\u8a2d\u5b9a\u3057\u307e\u3057\u305f\u3002")
         self._update_ui()
+        if self.user_input and not self.user_input.disabled:
+            try:
+                self.user_input.focus()
+            except Exception:
+                pass
 
     def _process_response_queue_loop(self):
         while self.ui_loop_running:
