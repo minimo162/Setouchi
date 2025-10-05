@@ -921,6 +921,8 @@ class CopilotApp:
                 self.action_button.disabled = not can_interact
 
         self._update_ui()
+        if new_state is AppState.READY:
+            self._request_background_excel_refresh()
 
     def _update_ui(self):
         try:
@@ -1296,12 +1298,16 @@ class CopilotApp:
     def _excel_polling_loop(self):
         while not self._excel_poll_stop_event.is_set():
             try:
-                self._excel_refresh_event.wait(timeout=self._excel_poll_interval)
+                triggered = self._excel_refresh_event.wait(timeout=self._excel_poll_interval)
                 self._excel_refresh_event.clear()
             except Exception as wait_err:
                 print(f"Excel poll wait failed: {wait_err}")
             if self._excel_poll_stop_event.is_set():
                 break
+            if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+                if triggered:
+                    time.sleep(0.2)
+                continue
             self._invoke_excel_refresh(auto_triggered=True)
 
     def _invoke_excel_refresh(self, auto_triggered: bool):
