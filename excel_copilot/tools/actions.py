@@ -375,9 +375,6 @@ class ExcelActions:
                 max_cols = min(cols, len(row_styles))
                 for c_idx in range(max_cols):
                     spans = row_styles[c_idx] if isinstance(row_styles[c_idx], list) else []
-                    if not spans:
-                        _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) no spans")
-                        continue
                     cell = target_range[r_idx, c_idx]
                     try:
                         cell_value = cell.value or ""
@@ -391,6 +388,12 @@ class ExcelActions:
                     _diff_debug(
                         f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value_len={value_len} spans={spans}"
                     )
+                    try:
+                        cell.api.Font.ColorIndex = 0
+                    except Exception as reset_error:
+                        _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) reset color failed {reset_error}")
+                    if not spans:
+                        continue
                     for span in spans:
                         if not isinstance(span, dict):
                             _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) span invalid {span}")
