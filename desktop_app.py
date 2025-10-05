@@ -1103,7 +1103,14 @@ class CopilotApp:
             return None
 
         with self._excel_refresh_lock:
-            target_workbook = desired_workbook or self.current_workbook_name or self._load_last_workbook_preference()
+            if auto_triggered:
+                target_workbook = None
+            else:
+                target_workbook = (
+                    desired_workbook
+                    or self.current_workbook_name
+                    or self._load_last_workbook_preference()
+                )
 
             try:
                 with ExcelManager(target_workbook) as manager:
