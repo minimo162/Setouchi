@@ -659,6 +659,39 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
     return result, spans
 
 
+def _extract_marker_spans(highlight_text: str) -> List[Dict[str, int]]:
+    if not isinstance(highlight_text, str) or not highlight_text:
+        return []
+
+    spans: List[Dict[str, int]] = []
+    idx = 0
+    length = len(highlight_text)
+    markers = {"[DEL]": "DEL", "[ADD]": "ADD"}
+
+    while idx < length:
+        marker_found = None
+        marker_label = None
+        for marker, label in markers.items():
+            if highlight_text.startswith(marker, idx):
+                marker_found = marker
+                marker_label = label
+                break
+        if marker_found is None:
+            idx += 1
+            continue
+
+        marker_start = idx
+        idx += len(marker_found)
+        segment_start = idx
+        while idx < length and not any(highlight_text.startswith(next_marker, idx) for next_marker in markers):
+            idx += 1
+        segment_length = idx - segment_start
+        span_length = len(marker_found) + segment_length
+        spans.append({"start": marker_start, "length": span_length, "type": marker_label})
+
+    return spans
+
+
 def writetocell(actions: ExcelActions, cell: str, value: Any, sheetname: Optional[str] = None) -> str:
     """Write a value into a single Excel cell.
 
@@ -2092,10 +2125,13 @@ def check_translation_quality(
                 "Do not attempt to operate Excel or any other applications; only analyze the text and respond in JSON.\n"
                 "Each review item includes 'id', 'original_text' (Japanese source text), and 'translated_text' (English translation under review).\n"
                 "Treat 'original_text' as the authoritative Japanese source and 'translated_text' as the English draft under review.\n"
-                "Respond with a single JSON array containing exactly one object. That object must provide 'id', 'status', 'notes', 'highlighted_text', 'corrected_text', 'before_text', and 'after_text'.\n"
-                "Use status 'OK' only when the translation is acceptable (notes may be empty or a brief comment).\n"
-                "When any issue exists or you are unsure, choose status 'REVISE' and write notes in Japanese using the format 'Issue: ... / Suggestion: ...'.\n"
-                "Set 'corrected_text' to the fully corrected English sentence.\n"
+                "Respond with a JSON array containing exactly one object. Provide: 'id', 'status', 'notes', 'corrected_text', and 'highlighted_text'.\n"
+                "Optionally include 'before_text', 'after_text', or an 'edits' array (each element with fields 'type', 'text', and 'reason').\n"
+                "Use status 'OK' only when the draft translation requires no changes; otherwise respond with 'REVISE'.\n"
+                "Write 'notes' in Japanese using the exact pattern 'Issue: ... / Suggestion: ...'. Keep them concise and actionable.\n"
+                "Set 'corrected_text' to the fully corrected English sentence. For status 'OK', repeat the original translation unchanged.\n"
+                "Populate 'highlighted_text' to show the difference versus the current translation: wrap deletions in '[DEL]...'/wrap additions in '[ADD]...'. Leave it empty for status 'OK'.\n"
+                "Do not wrap the JSON in code fences or add commentary outside the array.\n"
             )
             def _parse_batch_response(response_text: str) -> Optional[List[Any]]:
                 _diff_debug(f"check_translation_quality parse raw={_shorten_debug(response_text)}")
@@ -2291,7 +2327,16 @@ def check_translation_quality(
                         if highlight_styles is not None:
                             highlight_styles[row_idx][col_idx] = []
                     else:
-                        highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
+                        ai_highlight_raw = item.get("highlighted_text") or item.get("highlighted_translation")
+                        highlight_text: str
+                        highlight_spans: List[Dict[str, int]]
+                        if isinstance(ai_highlight_raw, str) and ("[DEL]" in ai_highlight_raw or "[ADD]" in ai_highlight_raw):
+                            highlight_text = _maybe_fix_mojibake(ai_highlight_raw)
+                            highlight_spans = _extract_marker_spans(highlight_text)
+                            if not highlight_spans:
+                                highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
+                        else:
+                            highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
                         highlight_text = _maybe_fix_mojibake(highlight_text)
                         highlight_matrix[row_idx][col_idx] = highlight_text
                         if highlight_styles is not None:
