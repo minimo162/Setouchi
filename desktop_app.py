@@ -1103,8 +1103,13 @@ class CopilotApp:
             return None
 
         with self._excel_refresh_lock:
+            selector_value = None
+            if self.workbook_selector:
+                selector_value = self.workbook_selector.value
+
             target_workbook = (
                 desired_workbook
+                or selector_value
                 or self.current_workbook_name
                 or self._load_last_workbook_preference()
             )
@@ -1300,10 +1305,7 @@ class CopilotApp:
 
     def _refresh_excel_context_before_dropdown(self):
         # Refresh workbook/sheet lists right before the dropdown overlay opens.
-        self._refresh_excel_context(
-            desired_workbook=self.current_workbook_name,
-            auto_triggered=True,
-        )
+        self._refresh_excel_context(auto_triggered=True)
         self._schedule_follow_up_excel_refreshes(run_immediately=True)
 
     def _schedule_follow_up_excel_refreshes(self, run_immediately: bool = False):
@@ -1336,10 +1338,7 @@ class CopilotApp:
                 return
             if time.monotonic() > self._dropdown_refresh_deadline:
                 return
-            self._refresh_excel_context(
-                desired_workbook=self.current_workbook_name,
-                auto_triggered=True,
-            )
+            self._refresh_excel_context(auto_triggered=True)
 
         invoke_later = getattr(self.page, "invoke_later", None)
         if callable(invoke_later):
