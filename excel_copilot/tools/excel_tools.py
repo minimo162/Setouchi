@@ -2101,6 +2101,9 @@ def check_translation_quality(
                     )
             return "No review entries were generated; nothing to audit."
 
+        ordered_ids = [entry["id"] for entry in review_entries]
+        id_to_index: Dict[str, int] = {entry_id: idx for idx, entry_id in enumerate(ordered_ids)}
+
         for entry in review_entries:
             _ensure_not_stopped()
             batch = [entry]
@@ -2253,9 +2256,8 @@ def check_translation_quality(
 
             ok_statuses = {"OK", "PASS", "GOOD"}
             revise_statuses = {"REVISE", "NG", "FAIL", "ISSUE"}
-            batch_entry_ids = [entry.get("id") for entry in batch if isinstance(entry.get("id"), str)]
-            pending_ids: List[str] = [entry_id for entry_id in batch_entry_ids if entry_id in id_to_position]
             assigned_ids: Set[str] = set()
+            assigned_indices: Set[int] = set()
             for item in batch_results:
                 _ensure_not_stopped()
                 if not isinstance(item, dict):
@@ -2272,19 +2274,35 @@ def check_translation_quality(
                 raw_item_id = item.get("id")
                 candidate_id = str(raw_item_id).strip() if raw_item_id is not None else ""
                 resolved_id: Optional[str] = None
+                candidate_index: Optional[int] = None
                 if candidate_id and candidate_id in id_to_position and candidate_id not in assigned_ids:
                     resolved_id = candidate_id
+                    candidate_index = id_to_index.get(candidate_id)
                 else:
-                    while pending_ids and pending_ids[0] in assigned_ids:
-                        pending_ids.pop(0)
-                    if pending_ids:
-                        resolved_id = pending_ids.pop(0)
-                        if candidate_id != resolved_id:
-                            _diff_debug(f"check_translation_quality applying fallback id={candidate_id} -> {resolved_id}")
+                    if candidate_id and candidate_id.isdigit():
+                        numeric_index = int(candidate_id) - 1
+                        if 0 <= numeric_index < len(ordered_positions) and numeric_index not in assigned_indices:
+                            candidate_index = numeric_index
+                    if candidate_index is None:
+                        for idx, entry_id in enumerate(ordered_ids):
+                            if idx in assigned_indices:
+                                continue
+                            candidate_index = idx
+                            resolved_id = entry_id
+                            break
+                    elif resolved_id is None and candidate_index is not None:
+                        resolved_id = ordered_ids[candidate_index]
+                    if resolved_id and candidate_id and candidate_id != resolved_id:
+                        _diff_debug(f"check_translation_quality applying fallback id={candidate_id} -> {resolved_id}")
+
                 if resolved_id is None:
                     _diff_debug(f"check_translation_quality skipping entry with unknown id={candidate_id}")
                     continue
                 assigned_ids.add(resolved_id)
+                if candidate_index is None:
+                    candidate_index = id_to_index.get(resolved_id)
+                if candidate_index is not None:
+                    assigned_indices.add(candidate_index)
                 item_id = resolved_id
 
                 status_raw = item.get("status", "")
