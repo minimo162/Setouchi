@@ -234,6 +234,13 @@ class CopilotWorker:
         self._emit_response(ResponseMessage(ResponseType.STATUS, "ブラウザの初期化が完了しました。"))
         return True
 
+    def _focus_excel_window(self):
+        try:
+            with ExcelManager() as manager:
+                manager.focus_application_window()
+        except Exception as focus_err:
+            print(f"Excelウィンドウの前面表示に失敗しました: {focus_err}")
+
     def _initialize(self):
         try:
             print("Worker\u306e\u521d\u671f\u5316\u3092\u958b\u59cb\u3057\u307e\u3059...")
@@ -348,7 +355,8 @@ class CopilotWorker:
                 self._emit_response(ResponseMessage(ResponseType.INFO, "\u30e6\u30fc\u30b6\u30fc\u306b\u3088\u3063\u3066\u30bf\u30b9\u30af\u304c\u4e2d\u65ad\u3055\u308c\u307e\u3057\u305f\u3002"))
             restart_ok = self._restart_browser_session()
             if restart_ok:
-                self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
+                self._focus_excel_window()
+            self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
 
     def _cleanup(self):
         print("\u30af\u30ea\u30fc\u30f3\u30a2\u30c3\u30d7\u3092\u958b\u59cb\u3057\u307e\u3059...")
@@ -542,6 +550,7 @@ class CopilotApp:
         self._register_window_handlers()
 
     def mount(self):
+        self._focus_app_window()
         self._set_state(AppState.INITIALIZING)
         self._update_ui()
         sheet_name = self._refresh_excel_context(is_initial_start=True)
@@ -565,6 +574,17 @@ class CopilotApp:
         self.page.bgcolor = "#141218"
         self.page.window.center()
         self.page.window.prevent_close = True
+
+    def _focus_app_window(self):
+        try:
+            window = getattr(self.page, "window", None)
+            if not window:
+                return
+            bring_fn = getattr(window, "to_front", None) or getattr(window, "bring_to_front", None)
+            if callable(bring_fn):
+                bring_fn()
+        except Exception as focus_err:
+            print(f"アプリウィンドウの前面表示に失敗しました: {focus_err}")
 
     def _build_layout(self):
         self.title_label = ft.Text("Excel\nCo-pilot", size=26, weight=ft.FontWeight.BOLD, color="#FFFFFF")

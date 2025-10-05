@@ -60,6 +60,36 @@ class ExcelManager:
             raise ExcelConnectionError("ワークブックに接続されていません。")
         return self.book
 
+    def focus_application_window(self) -> None:
+        """Excelアプリケーションとアクティブブックを前面に表示する"""
+
+        app = self.app
+        book = self.book
+
+        if app:
+            try:
+                app.visible = True
+            except Exception:
+                pass
+            try:
+                app.activate(steal_focus=True)
+            except TypeError:
+                try:
+                    app.activate()
+                except Exception:
+                    pass
+            except Exception:
+                try:
+                    app.activate()
+                except Exception:
+                    pass
+
+        if book:
+            try:
+                book.activate()
+            except Exception:
+                pass
+
     def get_active_workbook_and_sheet(self) -> dict[str, str]:
         """現在アクティブなExcelブックとシート名を取得し、辞書として返す。"""
         try:
