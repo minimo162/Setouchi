@@ -1305,7 +1305,15 @@ class CopilotApp:
 
     def _refresh_excel_context_before_dropdown(self):
         # Refresh workbook/sheet lists right before the dropdown overlay opens.
-        self._refresh_excel_context(auto_triggered=True)
+        deadline = time.monotonic() + 0.35
+        while True:
+            previous_snapshot = self._last_excel_snapshot
+            self._refresh_excel_context(auto_triggered=True)
+            if self._last_excel_snapshot != previous_snapshot:
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
         self._schedule_follow_up_excel_refreshes(run_immediately=True)
 
     def _schedule_follow_up_excel_refreshes(self, run_immediately: bool = False):
@@ -1394,7 +1402,6 @@ class CopilotApp:
         if self.current_workbook_name:
             self._save_last_sheet_preference(self.current_workbook_name, selected_sheet)
             self._save_last_workbook_preference(self.current_workbook_name)
-        self._add_message(ResponseType.INFO, f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30b7\u30fc\u30c8\u3092\u300e{selected_sheet}\u300f\u306b\u8a2d\u5b9a\u3057\u307e\u3057\u305f\u3002")
         self._update_ui()
         if self.user_input and not self.user_input.disabled:
             try:
