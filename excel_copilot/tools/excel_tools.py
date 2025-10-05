@@ -365,6 +365,10 @@ def _parse_range_dimensions(range_ref: str) -> Tuple[int, int]:
     if not ref:
         raise ToolExecutionError('Range string is empty.')
     if ':' not in ref:
+        if not CELL_REFERENCE_PATTERN.fullmatch(ref):
+            raise ToolExecutionError(
+                f"Range '{range_ref}' is not a valid Excel reference. Use A1-style addresses such as 'A1' or 'A1:B5'."
+            )
         return 1, 1
     start_ref, end_ref = ref.split(':', 1)
     start_match = CELL_REFERENCE_PATTERN.fullmatch(start_ref)
