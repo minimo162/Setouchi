@@ -1067,14 +1067,20 @@ def translate_range_contents(
             )
             prompt_preamble = "".join(prompt_parts)
         else:
-            prompt_preamble = (
-                "Translate each Japanese entry below into English while preserving order and meaning.\n"
-                "Every translated_text must be written in natural English; do not copy or leave any Japanese text untranslated.\n"
-                "Reuse the supporting expressions aggressively for phrasing and grammar when they fit, while avoiding any extra facts, subjects, or entities not present in the Japanese sentence, and never replace the source sentence's subject with one drawn from the expressions. When the Japanese sentence names a subject, translate that subject explicitly.\n"
-                "Treat the supporting expressions purely as style references for idiomatic English; preserve all entities stated in the Japanese sentence, and only leave subjects implicit when the source sentence does so.\n"
-                "Return a JSON array of the same length, with no commentary or markdown.\n"
-                "Output must be pure JSON with no additional text before or after the array.\n"
-            )
+            if include_context_columns:
+                prompt_preamble = (
+                    "Translate each Japanese entry below into English while preserving order and meaning.\n"
+                    "Every translated_text must be written in natural English; do not copy or leave any Japanese text untranslated.\n"
+                    "Reuse supporting expressions when they help, but never add facts or entities not found in the Japanese sentence.\n"
+                    "Return a JSON array of the same length, with no commentary or markdown.\n"
+                    "Output must be pure JSON with no additional text before or after the array.\n"
+                )
+            else:
+                prompt_preamble = (
+                    "Translate each Japanese entry below into English while preserving order and meaning.\n"
+                    "Return a JSON array of strings matching the input order. Each element must be the natural English translation only—no explanations, quotes, or additional keys.\n"
+                    "Output must be pure JSON with no extra text before or after the array.\n"
+                )
         if references_requested or use_references:
             rows_per_batch = 1
         batch_size = rows_per_batch if rows_per_batch is not None else 1
@@ -1186,193 +1192,208 @@ def translate_range_contents(
                 current_positions = [pos for _, pos in entry_slice]
 
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
-
-                keyword_prompt = (
-                    "For each Japanese item in the JSON array below, craft exactly ten distinct English search phrases.\n"
-                    "Ensure the set of ten phrases collectively covers the major actors, actions, consequences, motivations, audiences, and surrounding context described in the item, while keeping each phrasing distinct.\n"
-                    "Use synonyms and descriptive stand‑ins so that proper nouns appear only when essential, and alternate with role- or category-based wording (e.g., 'the automaker', 'the sports car') so no single substantive word appears in every phrase.\n"
-                    "Mix shorter three-to-four word queries with longer six-to-nine word phrasing, and ensure no two phrases share the same first two words.\n"
-                    "Do not invent information beyond the item, and return a JSON array matching the input order where each element exposes only a 'keywords' list.\n"
-                    f"{texts_json}"
-                )
-                _ensure_not_stopped()
-                keyword_response = browser_manager.ask(keyword_prompt, stop_event=stop_event)
-                try:
-                    match = re.search(r'{.*}|\[.*\]', keyword_response, re.DOTALL)
-                    keyword_payload = match.group(0) if match else keyword_response
-                    keyword_items = json.loads(keyword_payload)
-                except json.JSONDecodeError as exc:
-                    raise ToolExecutionError(
-                        f"Failed to parse keyword generation response as JSON: {keyword_response}"
-                    ) from exc
-                if not isinstance(keyword_items, list) or len(keyword_items) != len(current_texts):
-                    raise ToolExecutionError(
-                        "Keyword response must be a list with one entry per source text."
-                    )
-
-                normalized_keywords: List[List[str]] = []
-                for item in keyword_items:
-                    if isinstance(item, dict):
-                        raw_keywords = item.get("keywords")
-                    elif isinstance(item, list):
-                        raw_keywords = item
-                    else:
-                        raw_keywords = None
-                    if not raw_keywords or not isinstance(raw_keywords, list):
-                        raise ToolExecutionError(
-                            "Each keyword entry must contain a 'keywords' list."
-                        )
-                    keyword_list = []
-                    for keyword in raw_keywords:
-                        if isinstance(keyword, str):
-                            cleaned = keyword.strip()
-                            if cleaned:
-                                keyword_list.append(cleaned)
-                    if not keyword_list:
-                        raise ToolExecutionError(
-                            "Each keyword entry must include at least one non-empty keyword."
-                        )
-                    normalized_keywords.append(keyword_list)
-
-                search_keywords_per_item: List[List[str]] = []
-                for source_text, base_keywords in zip(current_texts, normalized_keywords):
-                    enriched_keywords = _enrich_search_keywords(source_text, list(base_keywords))
-                    search_keywords_per_item.append(enriched_keywords)
-
-                keyword_plan_lines: List[str] = []
-                for index, (source_text, keywords) in enumerate(zip(current_texts, search_keywords_per_item), start=1):
-                    keyword_plan_lines.append(f"Item {index}:")
-                    keyword_plan_lines.append(f"- Japanese: {source_text}")
-                    keyword_plan_lines.append("- Search keywords:")
-                    for keyword in keywords:
-                        keyword_plan_lines.append(f"  * {keyword}")
-                keyword_plan_text = "\n".join(keyword_plan_lines)
-
-                reference_passage_text = ""
-                if reference_entries:
-                    passage_lines: List[str] = []
-                    for entry in reference_entries:
-                        label_parts = [entry.get("id")]
-                        sheet_name = entry.get("sheet")
-                        if sheet_name:
-                            label_parts.append(f"sheet {sheet_name}")
-                        source_range = entry.get("source_range")
-                        if source_range:
-                            label_parts.append(f"range {source_range}")
-                        header = " ".join(part for part in label_parts if part) or "Reference"
-                        passage_lines.append(f"{header}:")
-                        for content_line in entry.get("content", []):
-                            passage_lines.append(f"  - {content_line}")
-                    reference_passage_text = "\n".join(passage_lines)
-
-                reference_urls_text = ""
-                reference_urls_text = ""
-                if reference_url_entries:
-                    reference_urls_text = (
-                        "Refer to the following URLs only if you need the original passages. "
-                        "Do not include these URLs in any quote output; when citations are unavoidable, leave only bracketed numbers like [1].\n"
-                        + "\n".join(
-                            f"  - {entry['url']}" for entry in reference_url_entries if entry.get("url")
-                        )
-                    )
-
-                if use_references:
-                    evidence_prompt_sections: List[str] = [
-                        "Use the keywords to pull English sentences from the provided materials that support each Japanese item.",
-                        "When exact matches are scarce, include sentences that share overlapping entities, themes, or context even if the linkage is loose.",
-                        "Copy sentences verbatim (punctuation, casing, numerals) and aim for 4-8 varied quotes drawn from different paragraphs or sources whenever possible; only return an empty array if genuinely nothing relevant appears.",
-                        "Avoid citing near-duplicate sentences or repeating the same clause unless no other material exists.",
-                        "Return JSON only—no introductions, labels, or commentary before or after the array.",
-                        "If you lack supporting material, respond with an empty JSON array `[]` and nothing else.",
-                        "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
-                        "",
-                        "Japanese texts with search keywords:",
-                        keyword_plan_text,
-                        "",
-                    ]
-                    if reference_passage_text:
-                        evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
-                    if reference_urls_text:
-                        evidence_prompt_sections.extend([
-                            "Reference URLs (for lookup only; strip the URLs from quotes and keep at most bracket numbers like [1]):",
-                            reference_urls_text,
-                            "",
-                        ])
-                else:
-                    evidence_prompt_sections = [
-                        "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
-                        "Return JSON only—no introductions, labels, or commentary before or after the array.",
-                        "Return a JSON array matching the order. Each element must include a 'quotes' array and an 'explanation_jp' string (>=2 Japanese sentences).",
-                        "",
-                        "Japanese texts with search keywords:",
-                        keyword_plan_text,
-                        "",
-                    ]
-                evidence_prompt = "\n".join(evidence_prompt_sections)
-                _ensure_not_stopped()
-                evidence_response = browser_manager.ask(evidence_prompt, stop_event=stop_event)
-                try:
-                    match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
-                    evidence_payload = match.group(0) if match else evidence_response
-                    evidence_items = json.loads(evidence_payload)
-                except json.JSONDecodeError as exc:
-                    raise ToolExecutionError(
-                        f"Failed to parse evidence response as JSON: {evidence_response}"
-                    ) from exc
-                if not isinstance(evidence_items, list) or len(evidence_items) != len(current_texts):
-                    raise ToolExecutionError(
-                        "Evidence response must be a list with one entry per source text."
-                    )
-
                 normalized_quotes_per_item: List[List[str]] = []
-                for quotes_entry in evidence_items:
-                    if isinstance(quotes_entry, dict):
-                        raw_quotes = quotes_entry.get("quotes")
-                        if raw_quotes is None:
-                            translated_candidate = quotes_entry.get("translated_text")
-                            if isinstance(translated_candidate, str) and translated_candidate.strip():
-                                raw_quotes = [translated_candidate]
-                    elif isinstance(quotes_entry, list):
-                        raw_quotes = quotes_entry
+
+                if include_context_columns:
+                    keyword_prompt = (
+                        "For each Japanese item in the JSON array below, craft exactly ten distinct English search phrases.\n"
+                        "Ensure the set of ten phrases collectively covers the major actors, actions, consequences, motivations, audiences, and surrounding context described in the item, while keeping each phrasing distinct.\n"
+                        "Use synonyms and descriptive stand‑ins so that proper nouns appear only when essential, and alternate with role- or category-based wording (e.g., 'the automaker', 'the sports car') so no single substantive word appears in every phrase.\n"
+                        "Mix shorter three-to-four word queries with longer six-to-nine word phrasing, and ensure no two phrases share the same first two words.\n"
+                        "Do not invent information beyond the item, and return a JSON array matching the input order where each element exposes only a 'keywords' list.\n"
+                        f"{texts_json}"
+                    )
+                    _ensure_not_stopped()
+                    keyword_response = browser_manager.ask(keyword_prompt, stop_event=stop_event)
+                    try:
+                        match = re.search(r'{.*}|\[.*\]', keyword_response, re.DOTALL)
+                        keyword_payload = match.group(0) if match else keyword_response
+                        keyword_items = json.loads(keyword_payload)
+                    except json.JSONDecodeError as exc:
+                        raise ToolExecutionError(
+                            f"Failed to parse keyword generation response as JSON: {keyword_response}"
+                        ) from exc
+                    if not isinstance(keyword_items, list) or len(keyword_items) != len(current_texts):
+                        raise ToolExecutionError(
+                            "Keyword response must be a list with one entry per source text."
+                        )
+
+                    normalized_keywords: List[List[str]] = []
+                    for item in keyword_items:
+                        if isinstance(item, dict):
+                            raw_keywords = item.get("keywords")
+                        elif isinstance(item, list):
+                            raw_keywords = item
+                        else:
+                            raw_keywords = None
+                        if not raw_keywords or not isinstance(raw_keywords, list):
+                            raise ToolExecutionError(
+                                "Each keyword entry must contain a 'keywords' list."
+                            )
+                        keyword_list = []
+                        for keyword in raw_keywords:
+                            if isinstance(keyword, str):
+                                cleaned = keyword.strip()
+                                if cleaned:
+                                    keyword_list.append(cleaned)
+                        if not keyword_list:
+                            raise ToolExecutionError(
+                                "Each keyword entry must include at least one non-empty keyword."
+                            )
+                        normalized_keywords.append(keyword_list)
+
+                    search_keywords_per_item: List[List[str]] = []
+                    for source_text, base_keywords in zip(current_texts, normalized_keywords):
+                        enriched_keywords = _enrich_search_keywords(source_text, list(base_keywords))
+                        search_keywords_per_item.append(enriched_keywords)
+
+                    keyword_plan_lines: List[str] = []
+                    for index, (source_text, keywords) in enumerate(zip(current_texts, search_keywords_per_item), start=1):
+                        keyword_plan_lines.append(f"Item {index}:")
+                        keyword_plan_lines.append(f"- Japanese: {source_text}")
+                        keyword_plan_lines.append("- Search keywords:")
+                        for keyword in keywords:
+                            keyword_plan_lines.append(f"  * {keyword}")
+                    keyword_plan_text = "\n".join(keyword_plan_lines)
+
+                    reference_passage_text = ""
+                    if reference_entries:
+                        passage_lines: List[str] = []
+                        for entry in reference_entries:
+                            label_parts = [entry.get("id")]
+                            sheet_name = entry.get("sheet")
+                            if sheet_name:
+                                label_parts.append(f"sheet {sheet_name}")
+                            source_range = entry.get("source_range")
+                            if source_range:
+                                label_parts.append(f"range {source_range}")
+                            header = " ".join(part for part in label_parts if part) or "Reference"
+                            passage_lines.append(f"{header}:")
+                            for content_line in entry.get("content", []):
+                                passage_lines.append(f"  - {content_line}")
+                        reference_passage_text = "\n".join(passage_lines)
+
+                    reference_urls_text = ""
+                    if reference_url_entries:
+                        reference_urls_text = (
+                            "Refer to the following URLs only if you need the original passages. "
+                            "Do not include these URLs in any quote output; when citations are unavoidable, leave only bracketed numbers like [1].\n"
+                            + "\n".join(
+                                f"  - {entry['url']}" for entry in reference_url_entries if entry.get("url")
+                            )
+                        )
+
+                    if use_references:
+                        evidence_prompt_sections: List[str] = [
+                            "Use the keywords to pull English sentences from the provided materials that support each Japanese item.",
+                            "When exact matches are scarce, include sentences that share overlapping entities, themes, or context even if the linkage is loose.",
+                            "Copy sentences verbatim (punctuation, casing, numerals) and aim for 4-8 varied quotes drawn from different paragraphs or sources whenever possible; only return an empty array if genuinely nothing relevant appears.",
+                            "Avoid citing near-duplicate sentences or repeating the same clause unless no other material exists.",
+                            "Return JSON only—no introductions, labels, or commentary before or after the array.",
+                            "If you lack supporting material, respond with an empty JSON array `[]` and nothing else.",
+                            "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
+                            "",
+                            "Japanese texts with search keywords:",
+                            keyword_plan_text,
+                            "",
+                        ]
+                        if reference_passage_text:
+                            evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
+                        if reference_urls_text:
+                            evidence_prompt_sections.extend([
+                                "Reference URLs (for lookup only; strip the URLs from quotes and keep at most bracket numbers like [1]):",
+                                reference_urls_text,
+                                "",
+                            ])
                     else:
-                        raw_quotes = None
-                    quotes_list: List[str] = []
-                    if isinstance(raw_quotes, list):
-                        for quote in raw_quotes:
-                            if isinstance(quote, str):
-                                cleaned_quote = _strip_reference_urls_from_quote(quote)
-                                if cleaned_quote:
-                                    quotes_list.append(cleaned_quote)
-                    normalized_quotes_per_item.append(quotes_list)
+                        evidence_prompt_sections = [
+                            "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
+                            "Return JSON only—no introductions, labels, or commentary before or after the array.",
+                            "Return a JSON array matching the order. Each element must include a 'quotes' array and an 'explanation_jp' string (>=2 Japanese sentences).",
+                            "",
+                            "Japanese texts with search keywords:",
+                            keyword_plan_text,
+                            "",
+                        ]
+                    evidence_prompt = "\n".join(evidence_prompt_sections)
+                    _ensure_not_stopped()
+                    evidence_response = browser_manager.ask(evidence_prompt, stop_event=stop_event)
+                    try:
+                        match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
+                        evidence_payload = match.group(0) if match else evidence_response
+                        evidence_items = json.loads(evidence_payload)
+                    except json.JSONDecodeError as exc:
+                        raise ToolExecutionError(
+                            f"Failed to parse evidence response as JSON: {evidence_response}"
+                        ) from exc
+                    if not isinstance(evidence_items, list) or len(evidence_items) != len(current_texts):
+                        raise ToolExecutionError(
+                            "Evidence response must be a list with one entry per source text."
+                        )
 
-                translation_context = [
-                    {
-                        "source_text": text,
-                        "keywords": keywords,
-                        "quotes": normalized_quotes_per_item[index] if index < len(normalized_quotes_per_item) else []
-                    }
-                    for index, (text, keywords) in enumerate(zip(current_texts, search_keywords_per_item))
-                ]
-                translation_context_json = json.dumps(translation_context, ensure_ascii=False)
+                    for quotes_entry in evidence_items:
+                        if isinstance(quotes_entry, dict):
+                            raw_quotes = quotes_entry.get("quotes")
+                            if raw_quotes is None:
+                                translated_candidate = quotes_entry.get("translated_text")
+                                if isinstance(translated_candidate, str) and translated_candidate.strip():
+                                    raw_quotes = [translated_candidate]
+                        elif isinstance(quotes_entry, list):
+                            raw_quotes = quotes_entry
+                        else:
+                            raw_quotes = None
+                        quotes_list: List[str] = []
+                        if isinstance(raw_quotes, list):
+                            for quote in raw_quotes:
+                                if isinstance(quote, str):
+                                    cleaned_quote = _strip_reference_urls_from_quote(quote)
+                                    if cleaned_quote:
+                                        quotes_list.append(cleaned_quote)
+                        normalized_quotes_per_item.append(quotes_list)
 
-                final_prompt = (
-                    f"{prompt_preamble}{texts_json}"
-                    "Write natural English translations that stay faithful to each Japanese sentence.\n"
-                    "Use the supporting expressions only when they fit; do not add or omit facts.\n"
-                    "Return a JSON array where every element has 'translated_text' and 'explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
-                    f"Supporting expressions (JSON): {translation_context_json}\n"
-                )
-                _ensure_not_stopped()
-                response = browser_manager.ask(final_prompt, stop_event=stop_event)
+                    translation_context = [
+                        {
+                            "source_text": text,
+                            "keywords": keywords,
+                            "quotes": normalized_quotes_per_item[index] if index < len(normalized_quotes_per_item) else []
+                        }
+                        for index, (text, keywords) in enumerate(zip(current_texts, search_keywords_per_item))
+                    ]
+                    translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
-                try:
-                    match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
-                    json_payload = match.group(0) if match else response
-                    parsed_payload = json.loads(json_payload)
-                except json.JSONDecodeError as exc:
-                    raise ToolExecutionError(
-                        f"Failed to parse translation response as JSON: {response}"
-                    ) from exc
+                    final_prompt = (
+                        f"{prompt_preamble}{texts_json}"
+                        "Write natural English translations that stay faithful to each Japanese sentence.\n"
+                        "Use the supporting expressions only when they fit; do not add or omit facts.\n"
+                        "Return a JSON array where every element has 'translated_text' and 'explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
+                        f"Supporting expressions (JSON): {translation_context_json}\n"
+                    )
+                    _ensure_not_stopped()
+                    response = browser_manager.ask(final_prompt, stop_event=stop_event)
+
+                    try:
+                        match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
+                        json_payload = match.group(0) if match else response
+                        parsed_payload = json.loads(json_payload)
+                    except json.JSONDecodeError as exc:
+                        raise ToolExecutionError(
+                            f"Failed to parse translation response as JSON: {response}"
+                        ) from exc
+                else:
+                    final_prompt = (
+                        f"{prompt_preamble}{texts_json}\n"
+                        "Return a JSON array of the same length, where each element is a single string containing the English translation.\n"
+                    )
+                    _ensure_not_stopped()
+                    response = browser_manager.ask(final_prompt, stop_event=stop_event)
+                    try:
+                        match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
+                        json_payload = match.group(0) if match else response
+                        parsed_payload = json.loads(json_payload)
+                    except json.JSONDecodeError as exc:
+                        raise ToolExecutionError(
+                            f"Failed to parse translation response as JSON: {response}"
+                        ) from exc
 
                 if not isinstance(parsed_payload, list) or len(parsed_payload) != len(current_texts):
                     raise ToolExecutionError(
@@ -1389,21 +1410,24 @@ def translate_range_contents(
                             or item.get("translation")
                             or item.get("output")
                         )
-                        raw_explanation = (
-                            item.get("explanation_jp")
-                            or item.get("explanation")
-                        )
-                        if raw_explanation is None:
-                            evidence_value = item.get("evidence")
-                            if isinstance(evidence_value, dict):
-                                raw_explanation = (
-                                    evidence_value.get("explanation_jp")
-                                    or evidence_value.get("explanation")
-                                )
-                        if isinstance(raw_explanation, (str, int, float)):
-                            explanation_jp = _sanitize_evidence_value(str(raw_explanation))
+                        if include_context_columns:
+                            raw_explanation = (
+                                item.get("explanation_jp")
+                                or item.get("explanation")
+                            )
+                            if raw_explanation is None:
+                                evidence_value = item.get("evidence")
+                                if isinstance(evidence_value, dict):
+                                    raw_explanation = (
+                                        evidence_value.get("explanation_jp")
+                                        or evidence_value.get("explanation")
+                                    )
+                            if isinstance(raw_explanation, (str, int, float)):
+                                explanation_jp = _sanitize_evidence_value(str(raw_explanation))
                     elif isinstance(item, str):
                         translation_value = item
+                    elif isinstance(item, (int, float)):
+                        translation_value = str(item)
 
                     if not isinstance(translation_value, str):
                         raise ToolExecutionError(
@@ -1724,6 +1748,9 @@ def translate_range_without_references(
     """Translate ranges without using external reference material."""
     if rows_per_batch is not None and rows_per_batch < 1:
         raise ToolExecutionError("rows_per_batch must be at least 1 when provided.")
+
+    if rows_per_batch is None:
+        rows_per_batch = _ITEMS_PER_TRANSLATION_REQUEST
 
     return translate_range_contents(
         actions=actions,
