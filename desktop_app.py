@@ -1103,19 +1103,11 @@ class CopilotApp:
             return None
 
         with self._excel_refresh_lock:
-            selector_value = None
-            if self.workbook_selector:
-                selector_value = self.workbook_selector.value
-
             target_workbook = (
                 desired_workbook
-                or selector_value
                 or self.current_workbook_name
                 or self._load_last_workbook_preference()
             )
-
-            if auto_triggered and target_workbook is None:
-                target_workbook = None
 
             try:
                 with ExcelManager(target_workbook) as manager:
@@ -1308,27 +1300,20 @@ class CopilotApp:
 
     def _refresh_excel_context_before_dropdown(self):
         # Refresh workbook/sheet lists right before the dropdown overlay opens.
-        initial_snapshot = self._last_excel_snapshot
-        deadline = time.monotonic() + 0.6
-        while True:
-            self._refresh_excel_context(
-                desired_workbook=self.current_workbook_name,
-                auto_triggered=True,
-            )
-            if self._last_excel_snapshot != initial_snapshot:
-                break
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
-        self._schedule_follow_up_excel_refreshes()
+        self._refresh_excel_context(
+            desired_workbook=self.current_workbook_name,
+            auto_triggered=True,
+        )
+        self._schedule_follow_up_excel_refreshes(run_immediately=True)
 
-    def _schedule_follow_up_excel_refreshes(self):
+    def _schedule_follow_up_excel_refreshes(self, run_immediately: bool = False):
         if not self.ui_loop_running:
             return
 
         now = time.monotonic()
         # Keep early follow-ups snappy without overwhelming Excel COM calls.
-        follow_up_delays = (0.05, 0.12, 0.25, 0.4, 0.6, 0.9, 1.3, 2.0, 3.0, 4.0)
+        base_delays = (0.05, 0.12, 0.25, 0.4, 0.6, 0.9, 1.3, 2.0, 3.0, 4.0)
+        follow_up_delays = ((0.0,) + base_delays) if run_immediately else base_delays
         self._dropdown_refresh_deadline = max(self._dropdown_refresh_deadline, now + follow_up_delays[-1] + 0.1)
 
         for delay in follow_up_delays:
