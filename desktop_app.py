@@ -561,6 +561,8 @@ class CopilotApp:
         self._pending_focus_action: Optional[str] = None
         self._pending_focus_deadline: Optional[float] = None
         self._focus_wait_timeout_sec = FOCUS_WAIT_TIMEOUT_SECONDS
+        self._status_message_override: Optional[str] = None
+        self._status_color_override: Optional[str] = None
 
         self._configure_page()
         self._build_layout()
@@ -795,6 +797,8 @@ class CopilotApp:
             self._browser_ready_for_focus = False
             self._pending_focus_action = None
             self._pending_focus_deadline = None
+            self._status_message_override = None
+            self._status_color_override = None
         is_ready = new_state is AppState.READY
         is_task_in_progress = new_state is AppState.TASK_IN_PROGRESS
         is_stopping = new_state is AppState.STOPPING
@@ -812,15 +816,25 @@ class CopilotApp:
             self.status_label.opacity = 1
             self.status_label.scale = 1
             if new_state is AppState.INITIALIZING:
+                self._status_message_override = None
+                self._status_color_override = None
                 self.status_label.value = "\u521d\u671f\u5316\u4e2d..."
                 self.status_label.color = ft.Colors.GREY_500
             elif is_ready:
-                self.status_label.value = "\u5f85\u6a5f\u4e2d"
-                self.status_label.color = ft.Colors.GREEN_300
+                if self._status_message_override:
+                    self.status_label.value = self._status_message_override
+                    self.status_label.color = self._status_color_override or ft.Colors.GREY_400
+                else:
+                    self.status_label.value = "\u5f85\u6a5f\u4e2d"
+                    self.status_label.color = ft.Colors.GREEN_300
             elif is_error:
+                self._status_message_override = None
+                self._status_color_override = None
                 self.status_label.value = "\u30a8\u30e9\u30fc"
                 self.status_label.color = ft.Colors.RED_300
             else:
+                self._status_message_override = None
+                self._status_color_override = None
                 self.status_label.color = ft.Colors.GREY_500
 
         if self.action_button:
@@ -1131,8 +1145,17 @@ class CopilotApp:
                 self.status_label.value = response.content or self.status_label.value
             self._focus_app_window()
         elif response.type is ResponseType.STATUS:
+            status_text = (response.content or "").strip()
+            if status_text:
+                self._status_message_override = status_text
+                self._status_color_override = ft.Colors.GREY_400
+            else:
+                self._status_message_override = None
+                self._status_color_override = None
             if self.status_label:
-                self.status_label.value = response.content or ""
+                self.status_label.value = status_text
+                if status_text:
+                    self.status_label.color = self._status_color_override or ft.Colors.GREY_400
         elif response.type is ResponseType.ERROR:
             if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
                 if self.status_label:
