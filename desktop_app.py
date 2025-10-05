@@ -231,7 +231,13 @@ class CopilotWorker:
             except Exception as reset_err:
                 print(f"エージェントのリセットに失敗しましたが続行します: {reset_err}")
 
-        self._emit_response(ResponseMessage(ResponseType.STATUS, "ブラウザの初期化が完了しました。"))
+        self._emit_response(
+            ResponseMessage(
+                ResponseType.STATUS,
+                "ブラウザの初期化が完了しました。",
+                metadata={"browser_ready": True},
+            )
+        )
         return True
 
     def _initialize(self):
@@ -350,11 +356,14 @@ class CopilotWorker:
             restart_ok = self._restart_browser_session()
             if restart_ok:
                 action_name = "focus_app_window" if stop_requested else "focus_excel_window"
+                metadata = {"action": action_name}
+                if action_name == "focus_excel_window":
+                    metadata["wait_for_browser_ready"] = True
                 self._emit_response(
                     ResponseMessage(
                         ResponseType.INFO,
                         "",
-                        metadata={"action": action_name},
+                        metadata=metadata,
                     )
                 )
             self._emit_response(ResponseMessage(ResponseType.END_OF_TASK))
@@ -545,6 +554,9 @@ class CopilotApp:
         self.log_dir = Path(COPILOT_USER_DATA_DIR) / "setouchi_logs"
         self.preference_file = Path(COPILOT_USER_DATA_DIR) / "setouchi_state.json"
         self.preference_lock = threading.Lock()
+
+        self._browser_ready_for_focus = False
+        self._pending_focus_action: Optional[str] = None
 
         self._configure_page()
         self._build_layout()
@@ -775,6 +787,9 @@ class CopilotApp:
             return
 
         self.app_state = new_state
+        if new_state is AppState.TASK_IN_PROGRESS:
+            self._browser_ready_for_focus = False
+            self._pending_focus_action = None
         is_ready = new_state is AppState.READY
         is_task_in_progress = new_state is AppState.TASK_IN_PROGRESS
         is_stopping = new_state is AppState.STOPPING
@@ -1087,6 +1102,13 @@ class CopilotApp:
     def _display_response(self, response: ResponseMessage):
         type_value = response.metadata.get("source_type", response.type.value)
 
+        browser_ready = bool(response.metadata.get("browser_ready"))
+        if browser_ready:
+            self._browser_ready_for_focus = True
+            if self._pending_focus_action == "focus_excel_window":
+                self._focus_excel_window()
+                self._pending_focus_action = None
+
         if response.type is ResponseType.INITIALIZATION_COMPLETE:
             self._set_state(AppState.READY)
             if self.status_label:
@@ -1112,8 +1134,14 @@ class CopilotApp:
         elif response.type is ResponseType.INFO:
             action = response.metadata.get("action") if response.metadata else None
             if action == "focus_excel_window":
-                self._focus_excel_window()
+                wait_for_browser_ready = bool(response.metadata.get("wait_for_browser_ready")) if response.metadata else False
+                if wait_for_browser_ready and not self._browser_ready_for_focus:
+                    self._pending_focus_action = "focus_excel_window"
+                else:
+                    self._focus_excel_window()
+                    self._pending_focus_action = None
             elif action == "focus_app_window":
+                self._pending_focus_action = None
                 self._focus_app_window()
             elif response.content:
                 self._add_message(type_value, response.content)
