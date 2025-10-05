@@ -588,7 +588,10 @@ class CopilotApp:
         self._status_color_override: Optional[str] = None
         self._excel_refresh_lock = threading.Lock()
         self._last_excel_snapshot: Dict[str, Any] = {}
-        self._dropdown_refresh_deadline: float = 0.0
+        self._excel_poll_thread: Optional[threading.Thread] = None
+        self._excel_poll_stop_event = threading.Event()
+        self._excel_refresh_event = threading.Event()
+        self._excel_poll_interval = 0.8
 
         self._configure_page()
         self._build_layout()
@@ -612,6 +615,7 @@ class CopilotApp:
         self.queue_thread.start()
 
         self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
+        self._start_background_excel_polling()
 
     def _configure_page(self):
         self.page.title = "Excel Co-pilot"
@@ -1266,6 +1270,63 @@ class CopilotApp:
                 self._update_ui()
                 return None
 
+    def _start_background_excel_polling(self):
+        if self._excel_poll_thread and self._excel_poll_thread.is_alive():
+            return
+        self._excel_poll_stop_event.clear()
+        self._excel_refresh_event.set()
+        self._excel_poll_thread = threading.Thread(
+            target=self._excel_polling_loop,
+            name="excel-context-poll",
+            daemon=True,
+        )
+        self._excel_poll_thread.start()
+
+    def _stop_background_excel_polling(self):
+        self._excel_poll_stop_event.set()
+        self._excel_refresh_event.set()
+        thread = self._excel_poll_thread
+        if thread and thread.is_alive():
+            try:
+                thread.join(timeout=2.0)
+            except Exception as join_err:
+                print(f"Excel poll thread join failed: {join_err}")
+        self._excel_poll_thread = None
+
+    def _excel_polling_loop(self):
+        while not self._excel_poll_stop_event.is_set():
+            try:
+                self._excel_refresh_event.wait(timeout=self._excel_poll_interval)
+                self._excel_refresh_event.clear()
+            except Exception as wait_err:
+                print(f"Excel poll wait failed: {wait_err}")
+            if self._excel_poll_stop_event.is_set():
+                break
+            self._invoke_excel_refresh(auto_triggered=True)
+
+    def _invoke_excel_refresh(self, auto_triggered: bool):
+        if not self.ui_loop_running:
+            return
+
+        def _run():
+            if not self.ui_loop_running:
+                return
+            self._refresh_excel_context(auto_triggered=auto_triggered)
+
+        invoke_later = getattr(self.page, "invoke_later", None)
+        if callable(invoke_later):
+            try:
+                invoke_later(_run)
+                return
+            except Exception as invoke_err:
+                print(f"invoke_later failed, running refresh inline: {invoke_err}")
+        _run()
+
+    def _request_background_excel_refresh(self):
+        if not self.ui_loop_running:
+            return
+        self._excel_refresh_event.set()
+
     def _run_copilot(self, e: Optional[ft.ControlEvent]):
         if not self.user_input:
             return
@@ -1305,58 +1366,8 @@ class CopilotApp:
 
     def _refresh_excel_context_before_dropdown(self):
         # Refresh workbook/sheet lists right before the dropdown overlay opens.
-        deadline = time.monotonic() + 0.35
-        while True:
-            previous_snapshot = self._last_excel_snapshot
-            self._refresh_excel_context(auto_triggered=True)
-            if self._last_excel_snapshot != previous_snapshot:
-                break
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
-        self._schedule_follow_up_excel_refreshes(run_immediately=True)
-
-    def _schedule_follow_up_excel_refreshes(self, run_immediately: bool = False):
-        if not self.ui_loop_running:
-            return
-
-        now = time.monotonic()
-        # Keep early follow-ups snappy without overwhelming Excel COM calls.
-        base_delays = (0.05, 0.12, 0.25, 0.4, 0.6, 0.9, 1.3, 2.0, 3.0, 4.0)
-        follow_up_delays = ((0.0,) + base_delays) if run_immediately else base_delays
-        self._dropdown_refresh_deadline = max(self._dropdown_refresh_deadline, now + follow_up_delays[-1] + 0.1)
-
-        if run_immediately:
-            # Trigger one refresh synchronously so the open menu can reflect changes right away.
-            self._handle_follow_up_dropdown_refresh()
-
-        for delay in follow_up_delays:
-            timer = threading.Timer(delay, self._handle_follow_up_dropdown_refresh)
-            timer.daemon = True
-            timer.start()
-
-    def _handle_follow_up_dropdown_refresh(self):
-        if not self.ui_loop_running:
-            return
-        if time.monotonic() > self._dropdown_refresh_deadline:
-            return
-
-        def _run_refresh():
-            if not self.ui_loop_running:
-                return
-            if time.monotonic() > self._dropdown_refresh_deadline:
-                return
-            self._refresh_excel_context(auto_triggered=True)
-
-        invoke_later = getattr(self.page, "invoke_later", None)
-        if callable(invoke_later):
-            try:
-                invoke_later(_run_refresh)
-                return
-            except Exception:
-                pass
-
-        _run_refresh()
+        self._invoke_excel_refresh(auto_triggered=True)
+        self._request_background_excel_refresh()
 
     def _on_workbook_dropdown_focus(self, e: Optional[ft.ControlEvent]):
         if not self.workbook_selector or self.workbook_selector.disabled:
@@ -1518,6 +1529,7 @@ class CopilotApp:
         else:
             print(f"Force exit triggered. reason={reason}")
             self.shutdown_requested = True
+            self._stop_background_excel_polling()
             if self.ui_loop_running:
                 self.ui_loop_running = False
                 try:
