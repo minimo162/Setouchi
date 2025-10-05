@@ -727,6 +727,9 @@ class CopilotApp:
         self.user_input = ft.TextField(
             hint_text="",
             expand=True,
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
             on_submit=self._run_copilot,
             border_color="#4A4458",
             focused_border_color="#B39DDB",
