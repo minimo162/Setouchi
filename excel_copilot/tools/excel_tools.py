@@ -1411,6 +1411,7 @@ def translate_range_contents(
                             or item.get("output")
                         )
                         if include_context_columns:
+                            evidence_value = None
                             raw_explanation = (
                                 item.get("explanation_jp")
                                 or item.get("explanation")

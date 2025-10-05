@@ -587,9 +587,6 @@ class CopilotApp:
         self._status_message_override: Optional[str] = None
         self._status_color_override: Optional[str] = None
         self._excel_refresh_lock = threading.Lock()
-        self._excel_refresh_interval = 3.0
-        self._excel_monitor_thread: Optional[threading.Thread] = None
-        self._last_excel_snapshot: Dict[str, Any] = {}
 
         self._configure_page()
         self._build_layout()
@@ -611,12 +608,6 @@ class CopilotApp:
 
         self.queue_thread = threading.Thread(target=self._process_response_queue_loop, daemon=True)
         self.queue_thread.start()
-
-        self._excel_monitor_thread = threading.Thread(
-            target=self._monitor_excel_changes,
-            daemon=True,
-        )
-        self._excel_monitor_thread.start()
 
         self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
 
@@ -672,6 +663,7 @@ class CopilotApp:
             options=[],
             width=180,
             on_change=self._on_workbook_change,
+            on_focus=self._on_workbook_focus,
             hint_text="\u30d6\u30c3\u30af\u3092\u9078\u629e",
             border_radius=8,
             fill_color="#2C2A3A",
@@ -683,6 +675,7 @@ class CopilotApp:
             options=[],
             width=180,
             on_change=self._on_sheet_change,
+            on_focus=self._on_sheet_focus,
             hint_text="\u30b7\u30fc\u30c8\u3092\u9078\u629e",
             border_radius=8,
             fill_color="#2C2A3A",
@@ -856,6 +849,16 @@ class CopilotApp:
             self.user_input.disabled = not can_interact
         if self.mode_selector:
             self.mode_selector.disabled = not can_interact
+        if self.workbook_selector:
+            if new_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+                self.workbook_selector.disabled = True
+            else:
+                self.workbook_selector.disabled = not (can_interact and bool(self.workbook_selector.options))
+        if self.sheet_selector:
+            if new_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+                self.sheet_selector.disabled = True
+            else:
+                self.sheet_selector.disabled = not (can_interact and bool(self.sheet_selector.options))
 
         if self.status_label:
             self.status_label.opacity = 1
@@ -1199,7 +1202,7 @@ class CopilotApp:
                         payload["sheet_name"] = self.current_sheet_name
                     self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, payload))
 
-                if context_changed or controls_changed or not auto_triggered:
+                if context_changed or controls_changed or is_initial_start:
                     self._update_ui()
 
                 return active_sheet
@@ -1256,6 +1259,16 @@ class CopilotApp:
         self._save_last_workbook_preference(selected_workbook)
         self._refresh_excel_context(desired_workbook=selected_workbook)
 
+    def _on_workbook_focus(self, e: Optional[ft.ControlEvent]):
+        if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+            return
+        self._refresh_excel_context(desired_workbook=self.current_workbook_name)
+
+    def _on_sheet_focus(self, e: Optional[ft.ControlEvent]):
+        if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+            return
+        self._refresh_excel_context(desired_workbook=self.current_workbook_name)
+
     def _on_sheet_change(self, e: ft.ControlEvent):
         if self.sheet_selection_updating:
             return
@@ -1292,14 +1305,6 @@ class CopilotApp:
             self._save_last_workbook_preference(self.current_workbook_name)
         self._add_message(ResponseType.INFO, f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30b7\u30fc\u30c8\u3092\u300e{selected_sheet}\u300f\u306b\u8a2d\u5b9a\u3057\u307e\u3057\u305f\u3002")
         self._update_ui()
-
-    def _monitor_excel_changes(self):
-        while self.ui_loop_running:
-            time.sleep(self._excel_refresh_interval)
-            try:
-                self._refresh_excel_context(auto_triggered=True)
-            except Exception as monitor_err:
-                print(f"Excelコンテキストの自動更新に失敗しました: {monitor_err}")
 
     def _process_response_queue_loop(self):
         while self.ui_loop_running:
