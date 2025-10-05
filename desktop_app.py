@@ -1138,6 +1138,8 @@ class CopilotApp:
 
                 self._last_excel_snapshot = snapshot
 
+                controls_changed = False
+
                 existing_workbook_values = [
                     (opt.key or opt.text) for opt in (self.workbook_selector.options or [])
                 ]
@@ -1145,11 +1147,16 @@ class CopilotApp:
                     self.workbook_selection_updating = True
                     self.workbook_selector.options = [ft.dropdown.Option(name) for name in workbook_names]
                     self.workbook_selection_updating = False
+                    controls_changed = True
 
-                self.workbook_selection_updating = True
-                self.workbook_selector.value = active_workbook
-                self.workbook_selector.disabled = False
-                self.workbook_selection_updating = False
+                if self.workbook_selector.value != active_workbook:
+                    self.workbook_selection_updating = True
+                    self.workbook_selector.value = active_workbook
+                    self.workbook_selection_updating = False
+                    controls_changed = True
+                if self.workbook_selector.disabled:
+                    self.workbook_selector.disabled = False
+                    controls_changed = True
 
                 existing_sheet_values = [
                     (opt.key or opt.text) for opt in (self.sheet_selector.options or [])
@@ -1158,11 +1165,16 @@ class CopilotApp:
                     self.sheet_selection_updating = True
                     self.sheet_selector.options = [ft.dropdown.Option(name) for name in sheet_names]
                     self.sheet_selection_updating = False
+                    controls_changed = True
 
-                self.sheet_selection_updating = True
-                self.sheet_selector.value = active_sheet
-                self.sheet_selector.disabled = False
-                self.sheet_selection_updating = False
+                if self.sheet_selector.value != active_sheet:
+                    self.sheet_selection_updating = True
+                    self.sheet_selector.value = active_sheet
+                    self.sheet_selection_updating = False
+                    controls_changed = True
+                if self.sheet_selector.disabled:
+                    self.sheet_selector.disabled = False
+                    controls_changed = True
 
                 context_changed = False
                 if active_workbook != self.current_workbook_name:
@@ -1183,7 +1195,8 @@ class CopilotApp:
                         payload["sheet_name"] = self.current_sheet_name
                     self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, payload))
 
-                self._update_ui()
+                if context_changed or controls_changed or not auto_triggered:
+                    self._update_ui()
 
                 return active_sheet
 
