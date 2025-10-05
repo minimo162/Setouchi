@@ -1761,7 +1761,7 @@ def translate_range_without_references(
         raise ToolExecutionError("rows_per_batch must be at least 1 when provided.")
 
     if rows_per_batch is None:
-        rows_per_batch = _ITEMS_PER_TRANSLATION_REQUEST
+        rows_per_batch = max(4, _ITEMS_PER_TRANSLATION_REQUEST)
 
     return translate_range_contents(
         actions=actions,
