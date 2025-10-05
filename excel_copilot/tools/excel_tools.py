@@ -1134,7 +1134,10 @@ def translate_range_contents(
         source_dirty = False
 
         limit_to_single = references_requested or use_references
-        items_per_request = 1 if limit_to_single else _ITEMS_PER_TRANSLATION_REQUEST
+        if limit_to_single:
+            items_per_request = 1
+        else:
+            items_per_request = max(1, rows_per_batch or _ITEMS_PER_TRANSLATION_REQUEST)
 
         for row_start in range(0, source_rows, batch_size):
             _ensure_not_stopped()
@@ -1380,10 +1383,7 @@ def translate_range_contents(
                             f"Failed to parse translation response as JSON: {response}"
                         ) from exc
                 else:
-                    final_prompt = (
-                        f"{prompt_preamble}{texts_json}\n"
-                        "Return a JSON array of the same length, where each element is a single string containing the English translation.\n"
-                    )
+                    final_prompt = f"{prompt_preamble}{texts_json}"
                     _ensure_not_stopped()
                     response = browser_manager.ask(final_prompt, stop_event=stop_event)
                     try:
