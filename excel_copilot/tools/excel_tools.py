@@ -667,39 +667,38 @@ def _parse_highlight_markup(raw_text: str) -> Tuple[str, List[Dict[str, int]]]:
     if not isinstance(raw_text, str) or not raw_text:
         return "" if raw_text is None else str(raw_text), []
 
-    markers = {"[DEL]": "DEL", "[ADD]": "ADD"}
-    opening_stack: Dict[str, List[int]] = {label: [] for label in markers.values()}
-    output_chars: List[str] = []
+    pattern = re.compile(r"\[(DEL|ADD)\](.*?)\[(DEL|ADD)\]", re.DOTALL)
+    output_segments: List[str] = []
     spans: List[Dict[str, int]] = []
-    idx = 0
-    out_len = 0
-    text_len = len(raw_text)
+    cursor = 0
+    current_length = 0
 
-    while idx < text_len:
-        matched_marker = None
-        matched_label = None
-        for token, label in markers.items():
-            if raw_text.startswith(token, idx):
-                matched_marker = token
-                matched_label = label
-                break
-        if matched_marker:
-            stack = opening_stack.setdefault(matched_label, [])
-            if stack:
-                start_pos = stack.pop()
-                span_length = out_len - start_pos
-                if span_length > 0:
-                    spans.append({"start": start_pos, "length": span_length, "type": matched_label})
-            else:
-                stack.append(out_len)
-            idx += len(matched_marker)
+    for match in pattern.finditer(raw_text):
+        open_type = match.group(1)
+        segment_text = match.group(2)
+        close_type = match.group(3)
+        if open_type != close_type:
             continue
 
-        output_chars.append(raw_text[idx])
-        idx += 1
-        out_len += 1
+        leading_text = raw_text[cursor:match.start()]
+        if leading_text:
+            output_segments.append(leading_text)
+            current_length += len(leading_text)
 
-    clean_text = "".join(output_chars)
+        span_start = current_length
+        output_segments.append(segment_text)
+        span_length = len(segment_text)
+        current_length += span_length
+        if span_length > 0:
+            spans.append({"start": span_start, "length": span_length, "type": open_type.upper()})
+
+        cursor = match.end()
+
+    if cursor < len(raw_text):
+        trailing_text = raw_text[cursor:]
+        output_segments.append(trailing_text)
+
+    clean_text = "".join(output_segments)
     return clean_text, spans
 
 
