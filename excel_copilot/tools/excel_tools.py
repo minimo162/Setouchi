@@ -685,12 +685,27 @@ def _parse_highlight_markup(raw_text: str) -> Tuple[str, List[Dict[str, int]]]:
             output_segments.append(leading_text)
             current_length += len(leading_text)
 
-        span_start = current_length
-        output_segments.append(segment_text)
-        span_length = len(segment_text)
-        current_length += span_length
-        if span_length > 0:
-            spans.append({"start": span_start, "length": span_length, "type": open_type.upper()})
+        if segment_text:
+            prefix_ws_len = len(segment_text) - len(segment_text.lstrip())
+            suffix_ws_len = len(segment_text) - len(segment_text.rstrip())
+
+            if prefix_ws_len:
+                prefix_ws = segment_text[:prefix_ws_len]
+                output_segments.append(prefix_ws)
+                current_length += len(prefix_ws)
+
+            core_text = segment_text[prefix_ws_len: len(segment_text) - suffix_ws_len if suffix_ws_len else len(segment_text)]
+            if core_text:
+                span_start = current_length
+                output_segments.append(core_text)
+                span_length = len(core_text)
+                current_length += span_length
+                spans.append({"start": span_start, "length": span_length, "type": open_type.upper()})
+
+            if suffix_ws_len:
+                suffix_ws = segment_text[len(segment_text) - suffix_ws_len:]
+                output_segments.append(suffix_ws)
+                current_length += len(suffix_ws)
 
         cursor = match.end()
 

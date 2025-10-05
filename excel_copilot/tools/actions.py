@@ -389,18 +389,26 @@ class ExcelActions:
                         f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value_len={value_len} spans={spans}"
                     )
                     try:
-                        cell.api.Font.ColorIndex = 0
-                        cell.api.Font.Color = -4142
+                        cell.api.Font.ColorIndex = 1
+                        cell.api.Font.Color = 0
                     except Exception as reset_error:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) reset color failed {reset_error}")
                     try:
                         entire_chars = cell.api.Characters()
-                        entire_chars.Font.ColorIndex = 0
-                        entire_chars.Font.Color = -4142
+                        entire_chars.Font.ColorIndex = 1
+                        entire_chars.Font.Color = 0
                     except Exception as chars_reset_err:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters reset failed {chars_reset_err}")
                     if not spans:
                         continue
+
+                    value_len = len(cell_value)
+                    if value_len <= 0:
+                        continue
+
+                    color_map: List[Optional[Tuple[str, int, Tuple[int, int, int]]]] = [None] * value_len
+                    valid_span_present = False
+
                     for span in spans:
                         if not isinstance(span, dict):
                             _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) span invalid {span}")
@@ -441,18 +449,36 @@ class ExcelActions:
                         else:
                             _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) unknown type {span_type}")
                             continue
+                        span_end = start_idx + length_val
+                        for idx in range(start_idx, span_end):
+                            color_map[idx] = (color_kind, color_value, color_tuple)
+                        valid_span_present = True
 
-                        start_position = start_idx + 1
-                        length_val = min(length_val, value_len - start_idx)
-                        if length_val <= 0:
-                            _diff_debug(
-                                f"apply_diff_highlight_colors cell({r_idx},{c_idx}) computed non-positive length after clamp start={start_idx} value_len={value_len}"
-                            )
+                    if not valid_span_present:
+                        continue
+
+                    segments: List[Tuple[int, int, Optional[Tuple[str, int, Tuple[int, int, int]]]]] = []
+                    segment_start = 0
+                    current_color = color_map[0]
+                    for idx in range(1, value_len):
+                        if color_map[idx] != current_color:
+                            segments.append((segment_start, idx - segment_start, current_color))
+                            segment_start = idx
+                            current_color = color_map[idx]
+                    segments.append((segment_start, value_len - segment_start, current_color))
+
+                    for seg_start, seg_length, color_info in segments:
+                        if seg_length <= 0:
                             continue
+                        if color_info is None:
+                            continue
+
+                        color_kind, color_value, color_tuple = color_info
+                        start_position = seg_start + 1
 
                         span_applied = False
                         try:
-                            cell.api.Characters(start_position, length_val).Font.Color = color_value
+                            cell.api.Characters(start_position, seg_length).Font.Color = color_value
                             span_applied = True
                         except Exception as primary_error:
                             _diff_debug(
@@ -461,7 +487,7 @@ class ExcelActions:
 
                         if not span_applied:
                             try:
-                                cell.characters[start_position - 1, length_val].font.color = color_tuple
+                                cell.characters[start_position - 1, seg_length].font.color = color_tuple
                                 span_applied = True
                             except Exception as span_fallback_error:
                                 _diff_debug(
@@ -471,12 +497,12 @@ class ExcelActions:
                         if span_applied:
                             color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
                             _diff_debug(
-                                f"apply_diff_highlight_colors applied span type={span_type} kind={color_kind} start={start_idx} length={length_val} color={color_hex}"
+                                f"apply_diff_highlight_colors applied span type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
                             )
                             continue
 
                         applied = True
-                        for char_offset in range(length_val):
+                        for char_offset in range(seg_length):
                             char_position = start_position + char_offset
                             colored = False
                             if api_char_supported:
@@ -504,54 +530,12 @@ class ExcelActions:
                                 )
                                 break
 
-                        if not span_applied and not applied:
-                            continue
-
-                        if not applied:
-                            try:
-                                cell.characters[start_position - 1, length_val].font.color = color_tuple
-                                applied = True
-                            except Exception as span_fallback_error:
-                                _diff_debug(
-                                    f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters span color error {span_fallback_error}"
-                                )
-
-                        if not applied:
-                            applied = True
-                            for char_offset in range(length_val):
-                                char_position = start_position + char_offset
-                                colored = False
-                                if api_char_supported:
-                                    try:
-                                        cell.api.Characters(char_position, 1).Font.Color = color_value
-                                        colored = True
-                                    except Exception as per_char_error:
-                                        api_char_supported = False
-                                        _diff_debug(
-                                            f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api single char error {per_char_error}"
-                                        )
-                                if not colored and characters_char_supported:
-                                    try:
-                                        cell.characters[char_position - 1].font.color = color_tuple
-                                        colored = True
-                                    except Exception as per_char_fallback_error:
-                                        characters_char_supported = False
-                                        _diff_debug(
-                                            f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters single char error {per_char_fallback_error}"
-                                        )
-                                if not colored:
-                                    applied = False
-                                    _diff_debug(
-                                        f"apply_diff_highlight_colors cell({r_idx},{c_idx}) unable to color char at {char_position}"
-                                    )
-                                    break
-
                         if not applied:
                             continue
 
                         color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
                         _diff_debug(
-                            f"apply_diff_highlight_colors applied charwise type={span_type} kind={color_kind} start={start_idx} length={length_val} color={color_hex}"
+                            f"apply_diff_highlight_colors applied charwise type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
                         )
 
         except Exception as e:
