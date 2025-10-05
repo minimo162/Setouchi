@@ -1289,7 +1289,8 @@ class CopilotApp:
             return
 
         now = time.monotonic()
-        follow_up_delays = (0.02, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.2, 3.0, 4.0)
+        # Keep early follow-ups snappy without overwhelming Excel COM calls.
+        follow_up_delays = (0.05, 0.12, 0.25, 0.4, 0.6, 0.9, 1.3, 2.0, 3.0, 4.0)
         self._dropdown_refresh_deadline = max(self._dropdown_refresh_deadline, now + follow_up_delays[-1] + 0.1)
 
         for delay in follow_up_delays:
