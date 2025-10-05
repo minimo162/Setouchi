@@ -1096,7 +1096,11 @@ class CopilotApp:
                     if not workbook_names:
                         raise ExcelConnectionError("開いているExcelブックが見つかりません。")
 
-                    if target_workbook and target_workbook in workbook_names:
+                    if (
+                        target_workbook
+                        and target_workbook in workbook_names
+                        and not auto_triggered
+                    ):
                         try:
                             manager.activate_workbook(target_workbook)
                         except Exception as activate_err:
@@ -1113,6 +1117,7 @@ class CopilotApp:
                         preferred_sheet
                         and preferred_sheet in sheet_names
                         and preferred_sheet != active_sheet
+                        and not auto_triggered
                     ):
                         try:
                             active_sheet = manager.activate_sheet(preferred_sheet)
@@ -1120,11 +1125,10 @@ class CopilotApp:
                             print(
                                 f"前回選択したシート '{preferred_sheet}' の復元に失敗しました: {activate_err}"
                             )
-                            if not auto_triggered:
-                                self._add_message(
-                                    ResponseType.INFO,
-                                    f"保存済みシート『{preferred_sheet}』を開けませんでした: {activate_err}",
-                                )
+                            self._add_message(
+                                ResponseType.INFO,
+                                f"保存済みシート『{preferred_sheet}』を開けませんでした: {activate_err}"
+                            )
 
                 snapshot = {
                     "workbooks": tuple(workbook_names),
