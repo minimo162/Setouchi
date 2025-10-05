@@ -343,6 +343,11 @@ _CLOSING_PUNCTUATION = ")]},。、？！「」『』'\"》】〕〉"
 _MAX_DIFF_SEGMENT_TOKENS = 10
 _MAX_DIFF_SEGMENT_CHARS = 48
 
+_HIGHLIGHT_LABELS = {
+    "DEL": "【削除】",
+    "ADD": "【追加】",
+}
+
 REFUSAL_PATTERNS = (
     "申し訳ございません。これには対応できません。",
     "申し訳ございません。これには対応できません",
@@ -728,7 +733,7 @@ def _attach_highlight_labels(text: str, spans: List[Dict[str, int]]) -> Tuple[st
 
     for span in sorted_spans:
         span_type = (span.get("type") or "").upper()
-        label = "【削除】" if span_type == "DEL" else "【追加】" if span_type == "ADD" else ""
+        label = _HIGHLIGHT_LABELS.get(span_type, "")
         label_len = len(label)
         original_start = int(span.get("start", 0))
         original_length = int(span.get("length", 0))

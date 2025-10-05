@@ -391,12 +391,16 @@ class ExcelActions:
                     try:
                         cell.api.Font.ColorIndex = 1
                         cell.api.Font.Color = 0
+                        cell.api.Font.Strikethrough = False
+                        cell.api.Font.Underline = 0
                     except Exception as reset_error:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) reset color failed {reset_error}")
                     try:
                         entire_chars = cell.api.Characters()
                         entire_chars.Font.ColorIndex = 1
                         entire_chars.Font.Color = 0
+                        entire_chars.Font.Strikethrough = False
+                        entire_chars.Font.Underline = 0
                     except Exception as chars_reset_err:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters reset failed {chars_reset_err}")
                     if not spans:
