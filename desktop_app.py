@@ -663,7 +663,6 @@ class CopilotApp:
             options=[],
             width=180,
             on_change=self._on_workbook_change,
-            on_focus=self._on_workbook_focus,
             hint_text="\u30d6\u30c3\u30af\u3092\u9078\u629e",
             border_radius=8,
             fill_color="#2C2A3A",
@@ -671,11 +670,16 @@ class CopilotApp:
             disabled=True,
         )
 
+        self.workbook_selector_wrapper = ft.GestureDetector(
+            content=self.workbook_selector,
+            on_tap_down=self._on_workbook_dropdown_tap,
+            behavior=ft.HitTestBehavior.translucent,
+        )
+
         self.sheet_selector = ft.Dropdown(
             options=[],
             width=180,
             on_change=self._on_sheet_change,
-            on_focus=self._on_sheet_focus,
             hint_text="\u30b7\u30fc\u30c8\u3092\u9078\u629e",
             border_radius=8,
             fill_color="#2C2A3A",
@@ -683,13 +687,19 @@ class CopilotApp:
             disabled=True,
         )
 
+        self.sheet_selector_wrapper = ft.GestureDetector(
+            content=self.sheet_selector,
+            on_tap_down=self._on_sheet_dropdown_tap,
+            behavior=ft.HitTestBehavior.translucent,
+        )
+
         sidebar_content = ft.Column(
             [
                 self.title_label,
                 self.status_label,
                 ft.Divider(color="#4A4458"),
-                self.workbook_selector,
-                self.sheet_selector,
+                self.workbook_selector_wrapper,
+                self.sheet_selector_wrapper,
                 ft.Container(
                     self.save_log_button,
                     alignment=ft.alignment.center_left,
@@ -1264,13 +1274,8 @@ class CopilotApp:
             except Exception:
                 pass
 
-    def _on_workbook_focus(self, e: Optional[ft.ControlEvent]):
-        if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
-            return
-        self._refresh_excel_context(desired_workbook=self.current_workbook_name)
-
-    def _on_sheet_focus(self, e: Optional[ft.ControlEvent]):
-        if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+    def _on_workbook_dropdown_tap(self, e: Optional[ft.TapEvent]):
+        if not self.workbook_selector or self.workbook_selector.disabled:
             return
         self._refresh_excel_context(desired_workbook=self.current_workbook_name)
 
@@ -1315,6 +1320,11 @@ class CopilotApp:
                 self.user_input.focus()
             except Exception:
                 pass
+
+    def _on_sheet_dropdown_tap(self, e: Optional[ft.TapEvent]):
+        if not self.sheet_selector or self.sheet_selector.disabled:
+            return
+        self._refresh_excel_context(desired_workbook=self.current_workbook_name)
 
     def _process_response_queue_loop(self):
         while self.ui_loop_running:
