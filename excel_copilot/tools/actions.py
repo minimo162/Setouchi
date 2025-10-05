@@ -501,21 +501,21 @@ class ExcelActions:
                                 f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api span color error {primary_error}"
                             )
 
-                        if not span_applied:
-                            try:
-                                segment_font = cell.characters[start_position - 1, seg_length].font
-                                segment_font.color = color_tuple
-                                if color_kind == "deletion":
-                                    segment_font.strikethrough = True
-                                    segment_font.underline = 'None'
-                                elif color_kind == "addition":
-                                    segment_font.strikethrough = False
-                                    segment_font.underline = 'Single'
-                                else:
-                                    segment_font.strikethrough = False
-                                    segment_font.underline = 'None'
-                                span_applied = True
-                            except Exception as span_fallback_error:
+                        try:
+                            segment_font = cell.characters[start_position - 1, seg_length].font
+                            segment_font.color = color_tuple
+                            if color_kind == "deletion":
+                                segment_font.strikethrough = True
+                                segment_font.underline = 'None'
+                            elif color_kind == "addition":
+                                segment_font.strikethrough = False
+                                segment_font.underline = 'Single'
+                            else:
+                                segment_font.strikethrough = False
+                                segment_font.underline = 'None'
+                            span_applied = True
+                        except Exception as span_fallback_error:
+                            if not span_applied:
                                 _diff_debug(
                                     f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters span color error {span_fallback_error}"
                                 )
@@ -550,7 +550,7 @@ class ExcelActions:
                                     _diff_debug(
                                         f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api single char error {per_char_error}"
                                     )
-                            if not colored and characters_char_supported:
+                            if characters_char_supported:
                                 try:
                                     char_font = cell.characters[char_position - 1].font
                                     char_font.color = color_tuple
@@ -566,9 +566,10 @@ class ExcelActions:
                                     colored = True
                                 except Exception as per_char_fallback_error:
                                     characters_char_supported = False
-                                    _diff_debug(
-                                        f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters single char error {per_char_fallback_error}"
-                                    )
+                                    if not colored:
+                                        _diff_debug(
+                                            f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters single char error {per_char_fallback_error}"
+                                        )
                             if not colored:
                                 applied = False
                                 _diff_debug(
