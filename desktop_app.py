@@ -673,7 +673,6 @@ class CopilotApp:
         self.workbook_selector_wrapper = ft.GestureDetector(
             content=self.workbook_selector,
             on_tap_down=self._on_workbook_dropdown_tap,
-            behavior=ft.HitTestBehavior.translucent,
         )
 
         self.sheet_selector = ft.Dropdown(
@@ -690,7 +689,6 @@ class CopilotApp:
         self.sheet_selector_wrapper = ft.GestureDetector(
             content=self.sheet_selector,
             on_tap_down=self._on_sheet_dropdown_tap,
-            behavior=ft.HitTestBehavior.translucent,
         )
 
         sidebar_content = ft.Column(
