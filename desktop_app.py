@@ -35,6 +35,8 @@ if not logging.getLogger().handlers:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+FOCUS_WAIT_TIMEOUT_SECONDS = 15.0
+
 class AppState(Enum):
     INITIALIZING = auto()
     READY = auto()
@@ -557,6 +559,8 @@ class CopilotApp:
 
         self._browser_ready_for_focus = False
         self._pending_focus_action: Optional[str] = None
+        self._pending_focus_deadline: Optional[float] = None
+        self._focus_wait_timeout_sec = FOCUS_WAIT_TIMEOUT_SECONDS
 
         self._configure_page()
         self._build_layout()
@@ -790,6 +794,7 @@ class CopilotApp:
         if new_state is AppState.TASK_IN_PROGRESS:
             self._browser_ready_for_focus = False
             self._pending_focus_action = None
+            self._pending_focus_deadline = None
         is_ready = new_state is AppState.READY
         is_task_in_progress = new_state is AppState.TASK_IN_PROGRESS
         is_stopping = new_state is AppState.STOPPING
@@ -1102,12 +1107,23 @@ class CopilotApp:
     def _display_response(self, response: ResponseMessage):
         type_value = response.metadata.get("source_type", response.type.value)
 
+        if (
+            self._pending_focus_action == "focus_excel_window"
+            and self._pending_focus_deadline is not None
+            and time.monotonic() >= self._pending_focus_deadline
+        ):
+            print("Excel focus fallback triggered after waiting for browser readiness timeout.")
+            self._focus_excel_window()
+            self._pending_focus_action = None
+            self._pending_focus_deadline = None
+
         browser_ready = bool(response.metadata.get("browser_ready"))
         if browser_ready:
             self._browser_ready_for_focus = True
             if self._pending_focus_action == "focus_excel_window":
                 self._focus_excel_window()
                 self._pending_focus_action = None
+                self._pending_focus_deadline = None
 
         if response.type is ResponseType.INITIALIZATION_COMPLETE:
             self._set_state(AppState.READY)
@@ -1137,11 +1153,14 @@ class CopilotApp:
                 wait_for_browser_ready = bool(response.metadata.get("wait_for_browser_ready")) if response.metadata else False
                 if wait_for_browser_ready and not self._browser_ready_for_focus:
                     self._pending_focus_action = "focus_excel_window"
+                    self._pending_focus_deadline = time.monotonic() + self._focus_wait_timeout_sec
                 else:
                     self._focus_excel_window()
                     self._pending_focus_action = None
+                    self._pending_focus_deadline = None
             elif action == "focus_app_window":
                 self._pending_focus_action = None
+                self._pending_focus_deadline = None
                 self._focus_app_window()
             elif response.content:
                 self._add_message(type_value, response.content)
