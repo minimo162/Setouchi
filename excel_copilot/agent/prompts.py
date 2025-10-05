@@ -88,7 +88,9 @@ _REVIEW_PROMPT = (
     "Formatting\n"
     "- The `Action:` JSON must be `{ \"tool_name\": \"...\", \"arguments\": { ... } }`.\n"
     "- Example: `Action: {\"tool_name\": \"check_translation_quality\", \"arguments\": {\"source_range\": \"A1:A7\", ...}}`.\n"
-    "- Use `Final Answer:` only after you have reviewed the tool observation. Summarize the outcome in natural Japanese: report how many items were OK vs REVISE, where the results were written (e.g., `C列~E列`), and highlight any significant issues or next steps. Do not repeat the raw JSON.\n\n"
+    "- Use `Final Answer:` only after you have reviewed the tool observation. Summarize the outcome in自然な日本語: 合格/要修正の件数、書き込み先の列（例: `C列~E列`）、主な気付きやフォローアップを報告してください。\n"
+    "- さらに、`REVISE` になった行については `・C3: 語順が不自然 → 提案: ...` のように、セル範囲または行番号と課題/提案を1行ずつ列挙してください。\n"
+    "- 生のJSONやツール観測結果をそのまま貼り付けないでください。\n\n"
     "Available tools:\n"
     "TOOLS\n"
 )
