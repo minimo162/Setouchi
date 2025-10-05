@@ -1278,10 +1278,18 @@ class CopilotApp:
 
     def _refresh_excel_context_before_dropdown(self):
         # Refresh workbook/sheet lists right before the dropdown overlay opens.
-        self._refresh_excel_context(
-            desired_workbook=self.current_workbook_name,
-            auto_triggered=True,
-        )
+        initial_snapshot = self._last_excel_snapshot
+        deadline = time.monotonic() + 0.6
+        while True:
+            self._refresh_excel_context(
+                desired_workbook=self.current_workbook_name,
+                auto_triggered=True,
+            )
+            if self._last_excel_snapshot != initial_snapshot:
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
         self._schedule_follow_up_excel_refreshes()
 
     def _schedule_follow_up_excel_refreshes(self):
