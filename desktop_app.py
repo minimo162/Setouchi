@@ -660,9 +660,9 @@ class CopilotApp:
             disabled=True,
             style=ft.ButtonStyle(
                 color={
-                    ft.MaterialState.DEFAULT: ft.Colors.GREY_400,
-                    ft.MaterialState.HOVERED: ft.Colors.GREY_200,
-                    ft.MaterialState.DISABLED: ft.Colors.GREY_700,
+                    ft.ControlState.DEFAULT: ft.Colors.GREY_400,
+                    ft.ControlState.HOVERED: ft.Colors.GREY_200,
+                    ft.ControlState.DISABLED: ft.Colors.GREY_700,
                 },
                 padding=ft.Padding(left=4, top=6, right=4, bottom=6),
             ),
