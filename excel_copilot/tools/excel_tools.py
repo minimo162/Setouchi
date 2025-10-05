@@ -717,6 +717,38 @@ def _parse_highlight_markup(raw_text: str) -> Tuple[str, List[Dict[str, int]]]:
     return clean_text, spans
 
 
+def _attach_highlight_labels(text: str, spans: List[Dict[str, int]]) -> Tuple[str, List[Dict[str, int]]]:
+    if not spans:
+        return text, spans
+
+    sorted_spans = sorted(spans, key=lambda span: span.get("start", 0))
+    offset = 0
+    modified_text = text
+    updated_spans: List[Dict[str, int]] = []
+
+    for span in sorted_spans:
+        span_type = (span.get("type") or "").upper()
+        label = "【削除】" if span_type == "DEL" else "【追加】" if span_type == "ADD" else ""
+        label_len = len(label)
+        original_start = int(span.get("start", 0))
+        original_length = int(span.get("length", 0))
+        insert_position = original_start + offset
+
+        if label_len:
+            modified_text = modified_text[:insert_position] + label + modified_text[insert_position:]
+            offset += label_len
+            new_span = dict(span)
+            new_span["start"] = original_start + (offset - label_len)
+            new_span["length"] = original_length + label_len
+            updated_spans.append(new_span)
+        else:
+            new_span = dict(span)
+            new_span["start"] = original_start + offset
+            updated_spans.append(new_span)
+
+    return modified_text, updated_spans
+
+
 def writetocell(actions: ExcelActions, cell: str, value: Any, sheetname: Optional[str] = None) -> str:
     """Write a value into a single Excel cell.
 
@@ -2380,6 +2412,7 @@ def check_translation_quality(
                                 highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
                         else:
                             highlight_text, highlight_spans = _build_diff_highlight(sanitized_base_text, corrected_text_str)
+                        highlight_text, highlight_spans = _attach_highlight_labels(highlight_text, highlight_spans)
                         highlight_text = _maybe_fix_mojibake(highlight_text)
                         highlight_matrix[row_idx][col_idx] = highlight_text
                         if highlight_styles is not None:
