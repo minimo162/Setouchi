@@ -88,7 +88,7 @@ _REVIEW_PROMPT = (
     "Formatting\n"
     "- The `Action:` JSON must be `{ \"tool_name\": \"...\", \"arguments\": { ... } }`.\n"
     "- Example: `Action: {\"tool_name\": \"check_translation_quality\", \"arguments\": {\"source_range\": \"A1:A7\", ...}}`.\n"
-    "- Use `Final Answer:` only for completion reports or to request clarification strictly needed to finish the current review. Never invite the user to continue the conversation.\n\n"
+    "- Use `Final Answer:` only after you have reviewed the tool observation. Summarize the outcome in natural Japanese: report how many items were OK vs REVISE, where the results were written (e.g., `C列~E列`), and highlight any significant issues or next steps. Do not repeat the raw JSON.\n\n"
     "Available tools:\n"
     "TOOLS\n"
 )
