@@ -72,9 +72,19 @@ class ReActAgent:
     ReAct (Reasoning and Acting) フレームワークに基づいたAIエージェント。
     UIからの停止要求(stop_event)に対応し、構造化された辞書をyieldします。
     """
-    def __init__(self, tools: List[callable], tool_schemas: List[Dict], browser_manager: BrowserCopilotManager, sheet_name: Optional[str] = None, mode: CopilotMode = CopilotMode.TRANSLATION, progress_callback: Optional[Callable[[str], None]] = None):
+    def __init__(
+        self,
+        tools: List[callable],
+        tool_schemas: List[Dict],
+        browser_manager: BrowserCopilotManager,
+        sheet_name: Optional[str] = None,
+        workbook_name: Optional[str] = None,
+        mode: CopilotMode = CopilotMode.TRANSLATION,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ):
         self.browser_manager = browser_manager
         self.sheet_name = sheet_name
+        self.workbook_name = workbook_name
         self.mode = mode
         self.tools = {tool.__name__: tool for tool in tools}
         self.tool_schemas_str = json.dumps(tool_schemas, indent=2, ensure_ascii=False)
@@ -95,6 +105,9 @@ class ReActAgent:
         self.mode = mode
         self.system_prompt = build_system_prompt(self.mode, self.tool_schemas_str)
         self.reset()
+
+    def set_workbook(self, workbook_name: Optional[str]):
+        self.workbook_name = workbook_name
 
     def _initialize_messages(self, user_query: str):
         """会話履歴を初期化する"""
@@ -231,7 +244,7 @@ class ReActAgent:
         self._initialize_messages(user_query)
 
         try:
-            with ExcelManager() as manager:
+            with ExcelManager(self.workbook_name) as manager:
                 excel_actions = ExcelActions(manager, progress_callback=self.progress_callback)
                 for i in range(MAX_ITERATIONS):
                     if stop_event.is_set():

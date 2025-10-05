@@ -36,6 +36,7 @@ if not logging.getLogger().handlers:
     )
 
 FOCUS_WAIT_TIMEOUT_SECONDS = 15.0
+PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
 
 class AppState(Enum):
     INITIALIZING = auto()
@@ -109,13 +110,20 @@ class ResponseMessage:
         return cls(type=response_type, content=content, metadata=metadata)
 
 class CopilotWorker:
-    def __init__(self, request_q: queue.Queue, response_q: queue.Queue, sheet_name: Optional[str] = None):
+    def __init__(
+        self,
+        request_q: queue.Queue,
+        response_q: queue.Queue,
+        sheet_name: Optional[str] = None,
+        workbook_name: Optional[str] = None,
+    ):
         self.request_queue = request_q
         self.response_queue = response_q
         self.browser_manager: Optional[BrowserCopilotManager] = None
         self.agent: Optional[ReActAgent] = None
         self.stop_event = threading.Event()
         self.sheet_name = sheet_name
+        self.workbook_name = workbook_name
         self.mode = CopilotMode.TRANSLATION_WITH_REFERENCES
         self.tool_functions: List[callable] = []
         self.tool_schemas: List[Dict[str, Any]] = []
@@ -146,6 +154,7 @@ class CopilotWorker:
             tool_schemas=self.tool_schemas,
             browser_manager=self.browser_manager,
             sheet_name=self.sheet_name,
+            workbook_name=self.workbook_name,
             mode=self.mode,
             progress_callback=lambda msg: self._emit_response(ResponseMessage(ResponseType.OBSERVATION, msg)),
         )
@@ -302,6 +311,20 @@ class CopilotWorker:
     def _update_context(self, payload: Optional[Dict[str, Any]]):
         if not isinstance(payload, dict):
             return
+
+        new_workbook_name = payload.get("workbook_name")
+        if isinstance(new_workbook_name, str) and new_workbook_name.strip():
+            normalized_workbook = new_workbook_name.strip()
+            if normalized_workbook != self.workbook_name:
+                self.workbook_name = normalized_workbook
+                if self.agent:
+                    self.agent.set_workbook(normalized_workbook)
+                self._emit_response(
+                    ResponseMessage(
+                        ResponseType.INFO,
+                        f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30d6\u30c3\u30af\u3092\u300e{normalized_workbook}\u300f\u306b\u5909\u66f4\u3057\u307e\u3057\u305f\u3002",
+                    )
+                )
 
         new_sheet_name = payload.get("sheet_name")
         if new_sheet_name:
@@ -538,6 +561,7 @@ class CopilotApp:
         self.current_workbook_name: Optional[str] = None
         self.current_sheet_name: Optional[str] = None
         self.sheet_selection_updating = False
+        self.workbook_selection_updating = False
 
         self.mode = CopilotMode.TRANSLATION_WITH_REFERENCES
         self.mode_selector: Optional[ft.RadioGroup] = None
@@ -546,6 +570,7 @@ class CopilotApp:
         self.status_label: Optional[ft.Text] = None
         self.excel_info_label: Optional[ft.Text] = None
         self.refresh_button: Optional[ft.ElevatedButton] = None
+        self.workbook_selector: Optional[ft.Dropdown] = None
         self.sheet_selector: Optional[ft.Dropdown] = None
         self.chat_list: Optional[ft.ListView] = None
         self.user_input: Optional[ft.TextField] = None
@@ -573,7 +598,12 @@ class CopilotApp:
         self._update_ui()
         sheet_name = self._refresh_excel_context(is_initial_start=True)
 
-        self.worker = CopilotWorker(self.request_queue, self.response_queue, sheet_name)
+        self.worker = CopilotWorker(
+            self.request_queue,
+            self.response_queue,
+            sheet_name,
+            self.current_workbook_name,
+        )
         self.worker_thread = threading.Thread(target=self.worker.run, daemon=True)
         self.worker_thread.start()
 
@@ -606,7 +636,7 @@ class CopilotApp:
 
     def _focus_excel_window(self):
         try:
-            with ExcelManager() as manager:
+            with ExcelManager(self.current_workbook_name) as manager:
                 manager.focus_application_window()
         except Exception as focus_err:
             print(f"Excelウィンドウの前面表示に失敗しました: {focus_err}")
@@ -638,6 +668,17 @@ class CopilotApp:
             on_hover=self._handle_button_hover,
         )
 
+        self.workbook_selector = ft.Dropdown(
+            options=[],
+            width=180,
+            on_change=self._on_workbook_change,
+            hint_text="\u30d6\u30c3\u30af\u3092\u9078\u629e",
+            border_radius=8,
+            fill_color="#2C2A3A",
+            text_style=ft.TextStyle(color=ft.Colors.WHITE),
+            disabled=True,
+        )
+
         self.sheet_selector = ft.Dropdown(
             options=[],
             width=180,
@@ -657,6 +698,7 @@ class CopilotApp:
                 self.excel_info_label,
                 self.refresh_button,
                 self.save_log_button,
+                self.workbook_selector,
                 self.sheet_selector,
             ],
             width=220,
@@ -938,6 +980,46 @@ class CopilotApp:
         file_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         return file_path
 
+    def _load_last_workbook_preference(self) -> Optional[str]:
+        with self.preference_lock:
+            if not self.preference_file.exists():
+                return None
+            try:
+                raw_text = self.preference_file.read_text(encoding="utf-8")
+                data = json.loads(raw_text) if raw_text else {}
+            except (OSError, json.JSONDecodeError) as err:
+                print(f"Failed to load workbook preference: {err}")
+                return None
+
+        if isinstance(data, dict):
+            value = data.get(PREFERENCE_LAST_WORKBOOK_KEY)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    def _save_last_workbook_preference(self, workbook_name: Optional[str]):
+        if not workbook_name:
+            return
+        with self.preference_lock:
+            try:
+                if self.preference_file.exists():
+                    raw_text = self.preference_file.read_text(encoding="utf-8")
+                    loaded = json.loads(raw_text) if raw_text else {}
+                    preferences = dict(loaded) if isinstance(loaded, dict) else {}
+                else:
+                    preferences = {}
+            except (OSError, json.JSONDecodeError) as err:
+                print(f"Failed to read workbook preference: {err}")
+                preferences = {}
+
+            preferences[PREFERENCE_LAST_WORKBOOK_KEY] = workbook_name
+
+            try:
+                self.preference_file.parent.mkdir(parents=True, exist_ok=True)
+                self.preference_file.write_text(json.dumps(preferences, ensure_ascii=False, indent=2), encoding="utf-8")
+            except OSError as err:
+                print(f"Failed to write workbook preference: {err}")
+
     def _load_last_sheet_preference(self, workbook_name: Optional[str]) -> Optional[str]:
         if not workbook_name:
             return None
@@ -964,7 +1046,7 @@ class CopilotApp:
                     raw_text = self.preference_file.read_text(encoding="utf-8")
                     loaded = json.loads(raw_text) if raw_text else {}
                     if isinstance(loaded, dict):
-                        preferences = {k: v for k, v in loaded.items() if isinstance(k, str) and isinstance(v, str)}
+                        preferences = dict(loaded)
                     else:
                         preferences = {}
                 else:
@@ -973,61 +1055,114 @@ class CopilotApp:
                 print(f"Failed to read sheet preference: {err}")
                 preferences = {}
 
-            preferences[workbook_name] = sheet_name
-            trimmed_items = list(preferences.items())[-50:]
-            preferences = dict(trimmed_items)
+            reserved_entries = {
+                key: value for key, value in preferences.items() if isinstance(key, str) and key.startswith("__")
+            }
+            mutable_pairs = [
+                (key, value)
+                for key, value in preferences.items()
+                if isinstance(key, str) and not key.startswith("__") and isinstance(value, str)
+            ]
+            mutable_pairs = [(key, value) for key, value in mutable_pairs if key != workbook_name]
+            mutable_pairs.append((workbook_name, sheet_name))
+            trimmed_items = mutable_pairs[-50:]
+            trimmed_data = dict(trimmed_items)
+            trimmed_data.update(reserved_entries)
 
             try:
                 self.preference_file.parent.mkdir(parents=True, exist_ok=True)
-                self.preference_file.write_text(json.dumps(preferences, ensure_ascii=False, indent=2), encoding="utf-8")
+                self.preference_file.write_text(json.dumps(trimmed_data, ensure_ascii=False, indent=2), encoding="utf-8")
             except OSError as err:
                 print(f"Failed to write sheet preference: {err}")
 
     def _handle_refresh_click(self, e: Optional[ft.ControlEvent]):
-        self._refresh_excel_context()
+        self._refresh_excel_context(desired_workbook=self.current_workbook_name)
 
-    def _refresh_excel_context(self, is_initial_start: bool = False) -> Optional[str]:
-        if not self.sheet_selector or not self.refresh_button:
+    def _refresh_excel_context(
+        self,
+        is_initial_start: bool = False,
+        desired_workbook: Optional[str] = None,
+    ) -> Optional[str]:
+        if not self.sheet_selector or not self.refresh_button or not self.workbook_selector:
             return None
 
         self.sheet_selector.disabled = True
+        self.workbook_selector.disabled = True
         self.refresh_button.disabled = True
         self.refresh_button.text = "\u66f4\u65b0\u4e2d..."
         self._update_ui()
 
+        selected_workbook = None
+        selected_sheet = None
+
         try:
-            with ExcelManager() as manager:
+            target_workbook = desired_workbook or self.current_workbook_name or self._load_last_workbook_preference()
+            with ExcelManager(target_workbook) as manager:
+                workbook_names = manager.list_workbook_names()
+                if not workbook_names:
+                    raise ExcelConnectionError("\u958b\u3044\u3066\u3044\u308bExcel\u30d6\u30c3\u30af\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002")
+
+                if target_workbook and target_workbook in workbook_names:
+                    try:
+                        manager.activate_workbook(target_workbook)
+                    except Exception as activate_err:
+                        print(f"\u5bfe\u8c61\u30d6\u30c3\u30af '{target_workbook}' \u306e\u9078\u629e\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {activate_err}")
+
                 info_dict = manager.get_active_workbook_and_sheet()
+                selected_workbook = info_dict["workbook_name"]
+                selected_sheet = info_dict["sheet_name"]
+
                 sheet_names = manager.list_sheet_names()
 
-                preferred_sheet = self._load_last_sheet_preference(info_dict["workbook_name"])
-                if preferred_sheet and preferred_sheet in sheet_names and preferred_sheet != info_dict["sheet_name"]:
+                preferred_sheet = self._load_last_sheet_preference(selected_workbook)
+                if (
+                    preferred_sheet
+                    and preferred_sheet in sheet_names
+                    and preferred_sheet != selected_sheet
+                ):
                     try:
-                        activated_name = manager.activate_sheet(preferred_sheet)
-                        info_dict["sheet_name"] = activated_name
+                        selected_sheet = manager.activate_sheet(preferred_sheet)
                     except Exception as activate_err:
-                        print(f"\u524d\u56de\u9078\u629e\u3057\u305f\u30b7\u30fc\u30c8 '{preferred_sheet}' \u306e\u5fa9\u5143\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {activate_err}")
-                        self._add_message(ResponseType.INFO, f"\u4fdd\u5b58\u6e08\u307f\u30b7\u30fc\u30c8\u300e{preferred_sheet}\u300f\u3092\u958b\u3051\u307e\u305b\u3093\u3067\u3057\u305f: {activate_err}")
+                        print(
+                            f"\u524d\u56de\u9078\u629e\u3057\u305f\u30b7\u30fc\u30c8 '{preferred_sheet}' \u306e\u5fa9\u5143\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {activate_err}"
+                        )
+                        self._add_message(
+                            ResponseType.INFO,
+                            f"\u4fdd\u5b58\u6e08\u307f\u30b7\u30fc\u30c8\u300e{preferred_sheet}\u300f\u3092\u958b\u3051\u307e\u305b\u3093\u3067\u3057\u305f: {activate_err}",
+                        )
+                        selected_sheet = info_dict["sheet_name"]
 
-                self.current_workbook_name = info_dict["workbook_name"]
-                self.current_sheet_name = info_dict["sheet_name"]
+                self.current_workbook_name = selected_workbook
+                self.current_sheet_name = selected_sheet
+
+                self.workbook_selection_updating = True
+                self.workbook_selector.options = [ft.dropdown.Option(name) for name in workbook_names]
+                self.workbook_selector.value = selected_workbook
+                self.workbook_selector.disabled = False
+                self.workbook_selection_updating = False
 
                 self.sheet_selection_updating = True
-                info_text = f"\u5bfe\u8c61\u30d6\u30c3\u30af: {info_dict['workbook_name']}\n\u5bfe\u8c61\u30b7\u30fc\u30c8: {info_dict['sheet_name']}"
+                info_text = f"\u5bfe\u8c61\u30d6\u30c3\u30af: {selected_workbook}\n\u5bfe\u8c61\u30b7\u30fc\u30c8: {selected_sheet}"
                 if self.excel_info_label:
                     self.excel_info_label.value = info_text
 
                 self.sheet_selector.options = [ft.dropdown.Option(name) for name in sheet_names]
-                self.sheet_selector.value = info_dict["sheet_name"]
+                self.sheet_selector.value = selected_sheet
                 self.sheet_selector.disabled = False
+                self.sheet_selection_updating = False
 
+                if self.current_workbook_name:
+                    self._save_last_workbook_preference(self.current_workbook_name)
                 if self.current_workbook_name and self.current_sheet_name:
                     self._save_last_sheet_preference(self.current_workbook_name, self.current_sheet_name)
 
-                if not is_initial_start:
-                    self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"sheet_name": info_dict["sheet_name"]}))
+                if not is_initial_start and self.request_queue:
+                    payload: Dict[str, Any] = {"workbook_name": self.current_workbook_name}
+                    if self.current_sheet_name:
+                        payload["sheet_name"] = self.current_sheet_name
+                    self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, payload))
 
-                return info_dict["sheet_name"]
+                return selected_sheet
         except Exception as ex:
             error_message = f"Excel\u306e\u60c5\u5831\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {ex}"
             if self.excel_info_label:
@@ -1035,11 +1170,15 @@ class CopilotApp:
             self.sheet_selector.disabled = True
             self.sheet_selector.options = []
             self.sheet_selector.value = None
+            self.workbook_selector.disabled = True
+            self.workbook_selector.options = []
+            self.workbook_selector.value = None
             if not is_initial_start:
                 self._add_message(ResponseType.ERROR, error_message)
             return None
         finally:
             self.sheet_selection_updating = False
+            self.workbook_selection_updating = False
             self.refresh_button.disabled = False
             self.refresh_button.text = "\u66f4\u65b0"
             self._update_ui()
@@ -1067,6 +1206,15 @@ class CopilotApp:
             self.worker.stop_event.set()
         self.request_queue.put(RequestMessage(RequestType.STOP))
 
+    def _on_workbook_change(self, e: ft.ControlEvent):
+        if self.workbook_selection_updating:
+            return
+        selected_workbook = e.control.value if e and e.control else None
+        if not selected_workbook:
+            return
+        self._save_last_workbook_preference(selected_workbook)
+        self._refresh_excel_context(desired_workbook=selected_workbook)
+
     def _on_sheet_change(self, e: ft.ControlEvent):
         if self.sheet_selection_updating:
             return
@@ -1076,7 +1224,12 @@ class CopilotApp:
 
         previous_sheet = self.current_sheet_name
         try:
-            with ExcelManager() as manager:
+            with ExcelManager(self.current_workbook_name) as manager:
+                if self.current_workbook_name:
+                    try:
+                        manager.activate_workbook(self.current_workbook_name)
+                    except Exception:
+                        pass
                 manager.activate_sheet(selected_sheet)
         except Exception as ex:
             error_message = f"\u30b7\u30fc\u30c8\u306e\u5207\u308a\u66ff\u3048\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {ex}"
@@ -1090,13 +1243,17 @@ class CopilotApp:
             self._update_ui()
             return
 
-        self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"sheet_name": selected_sheet}))
+        payload: Dict[str, Any] = {"sheet_name": selected_sheet}
+        if self.current_workbook_name:
+            payload["workbook_name"] = self.current_workbook_name
+        self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, payload))
         self.current_sheet_name = selected_sheet
         if self.current_workbook_name:
             self._save_last_sheet_preference(self.current_workbook_name, selected_sheet)
+            self._save_last_workbook_preference(self.current_workbook_name)
         workbook = self.current_workbook_name or "Unknown"
         if self.excel_info_label:
-            self.excel_info_label.value = f"Workbook: {workbook}\nSheet: {selected_sheet}"
+            self.excel_info_label.value = f"対象ブック: {workbook}\n対象シート: {selected_sheet}"
         self._add_message(ResponseType.INFO, f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30b7\u30fc\u30c8\u3092\u300e{selected_sheet}\u300f\u306b\u8a2d\u5b9a\u3057\u307e\u3057\u305f\u3002")
         self._update_ui()
 
