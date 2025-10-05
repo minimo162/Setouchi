@@ -390,6 +390,7 @@ class ExcelActions:
                     )
                     try:
                         cell.api.Font.ColorIndex = 0
+                        cell.api.Font.Color = -4142
                     except Exception as reset_error:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) reset color failed {reset_error}")
                     if not spans:
@@ -460,6 +461,13 @@ class ExcelActions:
                                 _diff_debug(
                                     f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters span color error {span_fallback_error}"
                                 )
+
+                        if span_applied:
+                            color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
+                            _diff_debug(
+                                f"apply_diff_highlight_colors applied span type={span_type} kind={color_kind} start={start_idx} length={length_val} color={color_hex}"
+                            )
+                            continue
 
                         applied = True
                         for char_offset in range(length_val):
@@ -537,7 +545,7 @@ class ExcelActions:
 
                         color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
                         _diff_debug(
-                            f"apply_diff_highlight_colors applied type={span_type} kind={color_kind} start={start_idx} length={length_val} color={color_hex}"
+                            f"apply_diff_highlight_colors applied charwise type={span_type} kind={color_kind} start={start_idx} length={length_val} color={color_hex}"
                         )
 
         except Exception as e:
