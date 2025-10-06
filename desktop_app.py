@@ -635,7 +635,6 @@ class CopilotApp:
         self.queue_thread.start()
 
         self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
-        self._start_background_excel_polling()
 
     def _configure_page(self):
         self.page.title = "Excel Co-pilot"
@@ -994,8 +993,6 @@ class CopilotApp:
                 self.action_button.disabled = not can_interact
 
         self._update_ui()
-        if new_state is AppState.READY:
-            self._request_background_excel_refresh()
 
     def _update_ui(self):
         try:
@@ -1449,9 +1446,8 @@ class CopilotApp:
         _run()
 
     def _request_background_excel_refresh(self):
-        if not self.ui_loop_running:
-            return
-        self._excel_refresh_event.set()
+        # Excel list updates are manual; background refresh triggers are disabled.
+        return
 
     def _run_copilot(self, e: Optional[ft.ControlEvent]):
         if not self.user_input:
@@ -1491,9 +1487,8 @@ class CopilotApp:
                 pass
 
     def _refresh_excel_context_before_dropdown(self):
-        # Refresh workbook/sheet lists right before the dropdown overlay opens.
-        self._invoke_excel_refresh(auto_triggered=True)
-        self._request_background_excel_refresh()
+        # Excel list updates are manual; skip automatic refresh on dropdown events.
+        return
 
     def _on_workbook_dropdown_focus(self, e: Optional[ft.ControlEvent]):
         if not self.workbook_selector or self.workbook_selector.disabled:
