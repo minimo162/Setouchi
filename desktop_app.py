@@ -587,6 +587,7 @@ class CopilotApp:
         self.user_input: Optional[ft.TextField] = None
         self.action_button: Optional[ft.Container] = None
         self.save_log_button: Optional[ft.TextButton] = None
+        self.workbook_refresh_button: Optional[ft.TextButton] = None
         self.browser_reset_button: Optional[ft.TextButton] = None
 
         self.chat_history: list[dict[str, str]] = []
@@ -608,6 +609,8 @@ class CopilotApp:
         self._excel_refresh_event = threading.Event()
         self._excel_poll_interval = 0.8
         self._browser_reset_in_progress = False
+        self._manual_refresh_in_progress = False
+        self._workbook_refresh_button_default_text = "\u30d6\u30c3\u30af\u4e00\u89a7\u3092\u66f4\u65b0"
 
         self._configure_page()
         self._build_layout()
@@ -730,6 +733,21 @@ class CopilotApp:
             on_tap_down=self._on_sheet_dropdown_tap,
         )
 
+        self.workbook_refresh_button = ft.TextButton(
+            text=self._workbook_refresh_button_default_text,
+            icon=ft.Icons.SYNC,
+            on_click=self._handle_workbook_refresh_click,
+            disabled=True,
+            style=ft.ButtonStyle(
+                color={
+                    ft.ControlState.DEFAULT: ft.Colors.GREY_400,
+                    ft.ControlState.HOVERED: ft.Colors.GREY_200,
+                    ft.ControlState.DISABLED: ft.Colors.GREY_700,
+                },
+                padding=ft.Padding(left=4, top=6, right=4, bottom=6),
+            ),
+        )
+
         sidebar_content = ft.Column(
             [
                 self.title_label,
@@ -737,6 +755,11 @@ class CopilotApp:
                 ft.Divider(color="#4A4458"),
                 self.workbook_selector_wrapper,
                 self.sheet_selector_wrapper,
+                ft.Container(
+                    self.workbook_refresh_button,
+                    alignment=ft.alignment.center_left,
+                    padding=ft.Padding(left=2, top=8, right=2, bottom=0),
+                ),
                 ft.Container(
                     self.save_log_button,
                     alignment=ft.alignment.center_left,
@@ -917,6 +940,14 @@ class CopilotApp:
             elif not self._browser_reset_in_progress and can_interact:
                 self.browser_reset_button.disabled = False
 
+        if self.workbook_refresh_button:
+            if self._manual_refresh_in_progress:
+                self.workbook_refresh_button.disabled = True
+            else:
+                self.workbook_refresh_button.disabled = not can_interact
+            if not self._manual_refresh_in_progress and can_interact:
+                self.workbook_refresh_button.text = self._workbook_refresh_button_default_text
+
         if self.status_label:
             self.status_label.opacity = 1
             self.status_label.scale = 1
@@ -1031,6 +1062,38 @@ class CopilotApp:
         self._add_message(ResponseType.INFO, "\u30d6\u30e9\u30a6\u30b6\u306e\u518d\u521d\u671f\u5316\u3092\u5b9f\u884c\u3057\u307e\u3059...")
         self.request_queue.put(RequestMessage(RequestType.RESET_BROWSER))
         self._update_ui()
+
+    def _handle_workbook_refresh_click(self, e: Optional[ft.ControlEvent]):
+        if self._manual_refresh_in_progress:
+            return
+        if self.app_state not in {AppState.READY, AppState.ERROR}:
+            return
+
+        self._manual_refresh_in_progress = True
+        if self.workbook_refresh_button:
+            self.workbook_refresh_button.disabled = True
+            self.workbook_refresh_button.text = "\u66f4\u65b0\u4e2d..."
+        self._update_ui()
+
+        def _run_refresh():
+            try:
+                self._refresh_excel_context(auto_triggered=False)
+            finally:
+                self._manual_refresh_in_progress = False
+                if self.workbook_refresh_button:
+                    self.workbook_refresh_button.text = self._workbook_refresh_button_default_text
+                    self.workbook_refresh_button.disabled = self.app_state not in {AppState.READY, AppState.ERROR}
+                self._update_ui()
+
+        invoke_later = getattr(self.page, "invoke_later", None)
+        if callable(invoke_later):
+            try:
+                invoke_later(_run_refresh)
+                return
+            except Exception as invoke_err:
+                print(f"invoke_later for manual refresh failed: {invoke_err}")
+        _run_refresh()
+
 
     def _export_chat_history(self) -> Path:
         with self.history_lock:
