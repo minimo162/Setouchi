@@ -479,16 +479,33 @@ class ExcelActions:
                                 continue
                         if applied:
                             is_deletion = color_kind == "deletion"
-                            color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex if color_kind == "deletion" else ""
+                            if color_kind == "addition":
+                                color_hex = addition_color_hex
+                                color_index = 5  # blue
+                            elif color_kind == "deletion":
+                                color_hex = deletion_color_hex
+                                color_index = 3  # red
+                            else:
+                                color_hex = ""
+                                color_index = None
                             if color_hex:
                                 _diff_debug(
                                     f"apply_diff_highlight_colors applied span type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
                                 )
+                                _review_debug(
+                                    f"apply_diff_highlight_colors span success cell=({r_idx},{c_idx}) kind={color_kind} start={seg_start} length={seg_length}"
+                                )
                                 try:
+                                    if color_index is not None:
+                                        char_range.Font.ColorIndex = color_index
+                                    char_range.Font.Color = color_value
                                     char_range.Font.Strikethrough = is_deletion
                                 except Exception:
                                     pass
                                 try:
+                                    if color_index is not None:
+                                        segment_font.color = color_tuple
+                                        segment_font.color_index = color_index
                                     segment_font.strikethrough = is_deletion
                                 except Exception:
                                     pass
