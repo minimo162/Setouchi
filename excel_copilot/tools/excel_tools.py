@@ -14,6 +14,15 @@ from .actions import ExcelActions
 
 _logger = logging.getLogger(__name__)
 _DIFF_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_DIFF', '').lower() in {'1', 'true', 'yes'}
+_REVIEW_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_REVIEW', '').lower() in {'1', 'true', 'yes', 'on'}
+
+
+
+def _review_debug(message: str) -> None:
+    if _REVIEW_DEBUG_ENABLED:
+        print(f"[review-debug] {message}")
+
+
 
 _NO_QUOTES_PLACEHOLDER = "引用なし"
 
@@ -1954,6 +1963,9 @@ def check_translation_quality(
 
     """
     try:
+        def _log_debug(message: str) -> None:
+            _review_debug(f"[check_translation_quality] {message}")
+
         def _ensure_not_stopped() -> None:
             if stop_event and stop_event.is_set():
                 raise UserStopRequested("ユーザーによって処理が中断されました。")
@@ -2042,20 +2054,37 @@ def check_translation_quality(
             incremental_updates = True
             row_width = src_cols
             status_row_ref = _row_reference(status_start_row, status_start_col, row_idx, row_width)
+            _log_debug(f"write_range status -> {status_row_ref}")
             actions.write_range(status_row_ref, [status_matrix[row_idx]], status_sheet_name)
             issue_row_ref = _row_reference(issue_start_row, issue_start_col, row_idx, row_width)
+            _log_debug(f"write_range issues -> {issue_row_ref}")
             actions.write_range(issue_row_ref, [issue_matrix[row_idx]], issue_sheet_name)
             if highlight_matrix is not None and highlight_start_row is not None and highlight_start_col is not None:
                 highlight_row_ref = _row_reference(highlight_start_row, highlight_start_col, row_idx, row_width)
+                _log_debug(f"write_range highlight -> {highlight_row_ref}")
                 actions.write_range(highlight_row_ref, [highlight_matrix[row_idx]], highlight_sheet_name)
                 if highlight_styles is not None:
-                    actions.apply_diff_highlight_colors(
-                        highlight_row_ref,
-                        [highlight_styles[row_idx]],
-                        highlight_sheet_name,
-                        addition_color_hex="#1565C0",
-                        deletion_color_hex="#C62828",
-                    )
+                    try:
+                        _log_debug(f"apply_diff_highlight_colors row={row_idx} ref={highlight_row_ref}")
+                        actions.apply_diff_highlight_colors(
+                            highlight_row_ref,
+                            [highlight_styles[row_idx]],
+                            highlight_sheet_name,
+                            addition_color_hex="#1565C0",
+                            deletion_color_hex="#C62828",
+                        )
+                    except ToolExecutionError as color_err:
+                        error_message = (
+                            f"Diff coloring failed for row {row_idx + 1} ({highlight_row_ref}): {color_err}"
+                        )
+                        _log_debug(error_message)
+                        actions.log_progress(error_message)
+                    except Exception as unexpected_color_err:
+                        error_message = (
+                            f"Diff coloring raised unexpected error for row {row_idx + 1} ({highlight_row_ref}): {unexpected_color_err}"
+                        )
+                        _log_debug(error_message)
+                        actions.log_progress(error_message)
             if col_idx == src_cols - 1:
                 row_number = status_start_row + row_idx + 1
                 status_summaries: List[str] = []
@@ -2458,16 +2487,31 @@ def check_translation_quality(
         if highlight_matrix is not None and highlight_output_range:
             if not incremental_updates:
                 _ensure_not_stopped()
+                _log_debug(f"write_range highlight bulk -> {highlight_output_range}")
                 actions.write_range(highlight_output_range, highlight_matrix, sheet_name)
                 if highlight_styles is not None:
                     _ensure_not_stopped()
-                    actions.apply_diff_highlight_colors(
-                        highlight_output_range,
-                        highlight_styles,
-                        sheet_name,
-                        addition_color_hex="#1565C0",
-                        deletion_color_hex="#C62828",
-                    )
+                    try:
+                        _log_debug(f"apply_diff_highlight_colors bulk ref={highlight_output_range}")
+                        actions.apply_diff_highlight_colors(
+                            highlight_output_range,
+                            highlight_styles,
+                            sheet_name,
+                            addition_color_hex="#1565C0",
+                            deletion_color_hex="#C62828",
+                        )
+                    except ToolExecutionError as color_err:
+                        error_message = (
+                            f"Diff coloring failed for range {highlight_output_range}: {color_err}"
+                        )
+                        _log_debug(error_message)
+                        actions.log_progress(error_message)
+                    except Exception as unexpected_color_err:
+                        error_message = (
+                            f"Diff coloring raised unexpected error for range {highlight_output_range}: {unexpected_color_err}"
+                        )
+                        _log_debug(error_message)
+                        actions.log_progress(error_message)
             message += f" Highlight output written to '{highlight_output_range}'."
         if correction_note:
             message += f" {correction_note}"
