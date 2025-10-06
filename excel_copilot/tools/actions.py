@@ -381,6 +381,7 @@ class ExcelActions:
                 f"apply_diff_highlight_colors target_range rows={rows} cols={cols} addition={addition_color_hex} deletion={deletion_color_hex}"
             )
 
+            skipped_cells: List[str] = []
 
             max_rows = min(rows, len(style_matrix))
             for r_idx in range(max_rows):
@@ -417,6 +418,13 @@ class ExcelActions:
                         _diff_debug(
                             f"apply_diff_highlight_colors cell({r_idx},{c_idx}) skipped rich text due to limits len={value_len} spans={len(spans)} total_span={total_span_length} line_breaks={line_breaks}"
                         )
+                        try:
+                            cell_address = cell.get_address(row_absolute=False, column_absolute=False, include_sheet=False)
+                        except Exception:
+                            cell_address = None
+                        if not cell_address:
+                            cell_address = f"{r_idx}:{c_idx}"
+                        skipped_cells.append(cell_address)
                         continue
                     if value_len <= 0:
                         continue
@@ -537,6 +545,16 @@ class ExcelActions:
                                     f"apply_diff_highlight_colors applied span type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
                                 )
 
+            if skipped_cells:
+                unique_cells = list(dict.fromkeys(skipped_cells))
+                preview = ", ".join(unique_cells[:5])
+                message = f"Skipped diff highlighting for {len(skipped_cells)} cell(s) due to size limits"
+                if preview:
+                    if len(unique_cells) > 5:
+                        message += f": {preview}, ..."
+                    else:
+                        message += f": {preview}"
+                self.log_progress(message)
         except Exception as e:
             _diff_debug(f"apply_diff_highlight_colors exception={e}")
             raise ToolExecutionError(f"差分ハイライトの色適用中にエラーが発生しました: {e}") from e
