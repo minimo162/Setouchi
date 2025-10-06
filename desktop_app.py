@@ -422,48 +422,69 @@ class ChatMessage(ft.ResponsiveRow):
         self.offset = ft.Offset(0, 0.1)
         self.animate_offset = 300
 
+        palette = {
+            "primary_container": "#4F378B",
+            "on_primary_container": "#EADDFF",
+            "secondary_container": "#4A4458",
+            "on_secondary_container": "#E8DEF8",
+            "tertiary_container": "#633B48",
+            "on_tertiary_container": "#FFD8E4",
+            "neutral_container": "#332D41",
+            "on_neutral_container": "#E8DEF8",
+            "surface_variant": "#49454F",
+            "on_surface_variant": "#CAC4D0",
+            "error_container": "#8C1D18",
+            "on_error_container": "#F9DEDC",
+        }
+
         type_map = {
             "user": {
-                "bgcolor": "#3C3A4A",
+                "bgcolor": palette["primary_container"],
                 "icon": ft.Icons.PERSON_ROUNDED,
-                "icon_color": "#FFFFFF",
-                "text_style": {"color": "#FFFFFF", "size": 14},
+                "icon_color": palette["on_primary_container"],
+                "text_style": {"color": palette["on_primary_container"], "size": 14},
             },
             "thought": {
+                "bgcolor": palette["secondary_container"],
                 "icon": ft.Icons.LIGHTBULB_OUTLINE,
-                "icon_color": "#D1C4E9",
-                "text_style": {"italic": True, "color": "#D1C4E9", "size": 13},
-                "bgcolor": "transparent",
+                "icon_color": palette["on_secondary_container"],
+                "text_style": {"color": palette["on_secondary_container"], "size": 13},
+                "title": "AI Thought",
             },
             "action": {
+                "bgcolor": palette["surface_variant"],
                 "icon": ft.Icons.CODE,
-                "icon_color": "#B39DDB",
-                "text_style": {"font_family": "monospace", "color": "#E0E0E0", "size": 13},
-                "bgcolor": "#2C2A3A",
+                "icon_color": palette["on_surface_variant"],
+                "text_style": {"font_family": "monospace", "color": palette["on_surface_variant"], "size": 13},
                 "title": "Action",
             },
             "observation": {
+                "bgcolor": palette["neutral_container"],
                 "icon": ft.Icons.FIND_IN_PAGE_OUTLINED,
-                "icon_color": "#B39DDB",
-                "bgcolor": "#2C2A3A",
+                "icon_color": palette["on_neutral_container"],
+                "text_style": {"color": palette["on_neutral_container"], "size": 13},
                 "title": "Observation",
             },
             "final_answer": {
+                "bgcolor": palette["tertiary_container"],
                 "icon": ft.Icons.CHECK_CIRCLE_OUTLINE,
-                "icon_color": "#81C784",
-                "bgcolor": "#2E4434",
+                "icon_color": palette["on_tertiary_container"],
+                "text_style": {"color": palette["on_tertiary_container"], "size": 14},
                 "title": "Answer",
             },
             "info": {
-                "text_style": {"color": "#90A4AE", "size": 12},
+                "text_style": {"color": palette["on_surface_variant"], "size": 12},
+                "icon": ft.Icons.INFO_OUTLINE,
+                "icon_color": palette["on_surface_variant"],
             },
             "status": {
-                "text_style": {"color": "#90A4AE", "size": 12},
+                "text_style": {"color": palette["on_surface_variant"], "size": 12},
             },
             "error": {
                 "icon": ft.Icons.ERROR_OUTLINE_ROUNDED,
-                "icon_color": "#E57373",
-                "bgcolor": "#5E2A2A",
+                "icon_color": palette["on_error_container"],
+                "bgcolor": palette["error_container"],
+                "text_style": {"color": palette["on_error_container"], "size": 13},
                 "title": "Error",
             },
         }
@@ -522,16 +543,16 @@ class ChatMessage(ft.ResponsiveRow):
         content_controls.extend(line_controls if line_controls else [ft.Text(msg_content, **text_style, selectable=True)])
 
         message_bubble = ft.Container(
-            content=ft.Column(content_controls, spacing=5, tight=True),
+            content=ft.Column(content_controls, spacing=6, tight=True),
             bgcolor=config.get("bgcolor"),
-            border_radius=12,
-            padding=12,
+            border_radius=16,
+            padding=16,
             expand=True,
             shadow=ft.BoxShadow(
                 spread_radius=1,
-                blur_radius=10,
-                color="#1A000000",
-                offset=ft.Offset(2, 2),
+                blur_radius=18,
+                color="#33000000",
+                offset=ft.Offset(2, 4),
             ),
         )
 
@@ -642,8 +663,10 @@ class CopilotApp:
         self.page.window.height = 768
         self.page.window.min_width = 960
         self.page.window.min_height = 600
+        self.page.theme = ft.Theme(color_scheme_seed="#6750A4", use_material3=True)
         self.page.theme_mode = ft.ThemeMode.DARK
-        self.page.bgcolor = "#141218"
+        self.page.bgcolor = "#1D1B20"
+        self.page.padding = ft.Padding(24, 24, 24, 24)
         self.page.window.center()
         self.page.window.prevent_close = True
 
@@ -666,49 +689,68 @@ class CopilotApp:
             print(f"Excelウィンドウの前面表示に失敗しました: {focus_err}")
 
     def _build_layout(self):
-        self.title_label = ft.Text("Excel\nCo-pilot", size=26, weight=ft.FontWeight.BOLD, color="#FFFFFF")
-        self.status_label = ft.Text("\u521d\u671f\u5316\u4e2d...", size=15, color=ft.Colors.GREY_500, animate_opacity=300, animate_scale=600)
+        self.title_label = ft.Text(
+            "Excel Co-pilot",
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color="#EADDFF",
+        )
+        self.status_label = ft.Text(
+            "\u521d\u671f\u5316\u4e2d...",
+            size=12,
+            color="#CAC4D0",
+            animate_opacity=300,
+            animate_scale=600,
+        )
 
-        self.save_log_button = ft.TextButton(
+        self.page.appbar = ft.AppBar(
+            leading=ft.Icon(ft.Icons.TABLE_CHART_OUTLINED, color="#EADDFF"),
+            title=ft.Column(
+                [self.title_label, self.status_label],
+                spacing=4,
+                alignment=ft.MainAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.START,
+            ),
+            center_title=False,
+            bgcolor="#211F26",
+            elevation=2,
+        )
+
+        button_shape = ft.RoundedRectangleBorder(radius=12)
+        self.save_log_button = ft.FilledTonalButton(
             text="\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58",
             icon=ft.Icons.SAVE_OUTLINED,
             on_click=self._handle_save_log_click,
             disabled=True,
-            style=ft.ButtonStyle(
-                color={
-                    ft.ControlState.DEFAULT: ft.Colors.GREY_400,
-                    ft.ControlState.HOVERED: ft.Colors.GREY_200,
-                    ft.ControlState.DISABLED: ft.Colors.GREY_700,
-                },
-                padding=ft.Padding(left=4, top=6, right=4, bottom=6),
-            ),
+            style=ft.ButtonStyle(shape=button_shape),
         )
 
-        self.browser_reset_button = ft.TextButton(
+        self.browser_reset_button = ft.OutlinedButton(
             text="\u30d6\u30e9\u30a6\u30b6\u3092\u518d\u521d\u671f\u5316",
             icon=ft.Icons.REFRESH,
             on_click=self._handle_browser_reset_click,
             disabled=True,
-            style=ft.ButtonStyle(
-                color={
-                    ft.ControlState.DEFAULT: ft.Colors.GREY_400,
-                    ft.ControlState.HOVERED: ft.Colors.GREY_200,
-                    ft.ControlState.DISABLED: ft.Colors.GREY_700,
-                },
-                padding=ft.Padding(left=4, top=6, right=4, bottom=6),
-            ),
+            style=ft.ButtonStyle(shape=button_shape),
         )
+
+        dropdown_style = {
+            "width": 240,
+            "border_radius": 12,
+            "border_color": "#4F378B",
+            "focused_border_color": "#D0BCFF",
+            "fill_color": "#2B2930",
+            "text_style": ft.TextStyle(color="#E6E0E9"),
+            "hint_style": ft.TextStyle(color="#9A8FAE"),
+            "disabled": True,
+            "filled": True,
+        }
 
         self.workbook_selector = ft.Dropdown(
             options=[],
-            width=180,
             on_change=self._on_workbook_change,
             on_focus=self._on_workbook_dropdown_focus,
             hint_text="\u30d6\u30c3\u30af\u3092\u9078\u629e",
-            border_radius=8,
-            fill_color="#2C2A3A",
-            text_style=ft.TextStyle(color=ft.Colors.WHITE),
-            disabled=True,
+            **dropdown_style,
         )
 
         self.workbook_selector_wrapper = ft.GestureDetector(
@@ -718,14 +760,10 @@ class CopilotApp:
 
         self.sheet_selector = ft.Dropdown(
             options=[],
-            width=180,
             on_change=self._on_sheet_change,
             on_focus=self._on_sheet_dropdown_focus,
             hint_text="\u30b7\u30fc\u30c8\u3092\u9078\u629e",
-            border_radius=8,
-            fill_color="#2C2A3A",
-            text_style=ft.TextStyle(color=ft.Colors.WHITE),
-            disabled=True,
+            **dropdown_style,
         )
 
         self.sheet_selector_wrapper = ft.GestureDetector(
@@ -733,77 +771,77 @@ class CopilotApp:
             on_tap_down=self._on_sheet_dropdown_tap,
         )
 
-        self.workbook_refresh_button = ft.TextButton(
+        self.workbook_refresh_button = ft.FilledTonalButton(
             text=self._workbook_refresh_button_default_text,
             icon=ft.Icons.SYNC,
             on_click=self._handle_workbook_refresh_click,
             disabled=True,
-            style=ft.ButtonStyle(
-                color={
-                    ft.ControlState.DEFAULT: ft.Colors.GREY_400,
-                    ft.ControlState.HOVERED: ft.Colors.GREY_200,
-                    ft.ControlState.DISABLED: ft.Colors.GREY_700,
-                },
-                padding=ft.Padding(left=4, top=6, right=4, bottom=6),
+            style=ft.ButtonStyle(shape=button_shape),
+        )
+
+        context_card = ft.Card(
+            content=ft.Container(
+                padding=ft.Padding(20, 20, 20, 20),
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "\u30b3\u30f3\u30c6\u30ad\u30b9\u30c8",
+                            size=16,
+                            weight=ft.FontWeight.BOLD,
+                            color="#E8DEF8",
+                        ),
+                        ft.Text(
+                            "\u51e6\u7406\u5bfe\u8c61\u3092\u9078\u629e\u3057\u307e\u3059",
+                            size=12,
+                            color="#CAC4D0",
+                        ),
+                        ft.Divider(color="#332D41", height=24),
+                        ft.Column(
+                            [
+                                ft.Text("\u30d6\u30c3\u30af", size=13, color="#CAC4D0"),
+                                self.workbook_selector_wrapper,
+                                ft.Text("\u30b7\u30fc\u30c8", size=13, color="#CAC4D0"),
+                                self.sheet_selector_wrapper,
+                            ],
+                            spacing=12,
+                        ),
+                        ft.Row(
+                            [self.workbook_refresh_button],
+                            alignment=ft.MainAxisAlignment.END,
+                        ),
+                        ft.Row(
+                            [
+                                ft.Container(content=self.save_log_button, expand=True),
+                                ft.Container(content=self.browser_reset_button, expand=True),
+                            ],
+                            spacing=12,
+                        ),
+                    ],
+                    spacing=16,
+                    tight=True,
+                ),
             ),
         )
 
-        sidebar_content = ft.Column(
-            [
-                self.title_label,
-                self.status_label,
-                ft.Divider(color="#4A4458"),
-                self.workbook_selector_wrapper,
-                self.sheet_selector_wrapper,
-                ft.Container(
-                    self.workbook_refresh_button,
-                    alignment=ft.alignment.center_left,
-                    padding=ft.Padding(left=2, top=8, right=2, bottom=0),
-                ),
-                ft.Container(
-                    self.save_log_button,
-                    alignment=ft.alignment.center_left,
-                    padding=ft.Padding(left=2, top=8, right=2, bottom=0),
-                ),
-                ft.Container(
-                    self.browser_reset_button,
-                    alignment=ft.alignment.center_left,
-                    padding=ft.Padding(left=2, top=0, right=2, bottom=0),
-                ),
-            ],
-            width=220,
-            spacing=20,
-            horizontal_alignment=ft.CrossAxisAlignment.START,
+        self.chat_list = ft.ListView(
+            expand=True,
+            spacing=16,
+            auto_scroll=True,
+            padding=ft.Padding(0, 12, 0, 12),
         )
 
-        sidebar = ft.Container(
-            sidebar_content,
-            padding=15,
-            border_radius=15,
-            gradient=ft.LinearGradient(
-                begin=ft.alignment.top_center,
-                end=ft.alignment.bottom_center,
-                colors=["#2A243A", "#1C1A24"],
-            ),
-            shadow=ft.BoxShadow(
-                spread_radius=1,
-                blur_radius=15,
-                color="#1A000000",
-                offset=ft.Offset(5, 5),
-            ),
-        )
-
-        self.chat_list = ft.ListView(expand=True, spacing=15, auto_scroll=True, padding=20)
         self.user_input = ft.TextField(
             hint_text="",
             expand=True,
             multiline=True,
-            min_lines=2,
-            max_lines=4,
+            min_lines=3,
+            max_lines=5,
             on_submit=self._run_copilot,
-            border_color="#4A4458",
-            focused_border_color="#B39DDB",
-            border_radius=10,
+            border_radius=14,
+            border_color="#4F378B",
+            focused_border_color="#D0BCFF",
+            filled=True,
+            fill_color="#2B2930",
         )
         self._apply_mode_to_input_placeholder()
 
@@ -817,56 +855,136 @@ class CopilotApp:
                     ft.Radio(value=CopilotMode.REVIEW.value, label="\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af"),
                 ],
                 alignment=ft.MainAxisAlignment.START,
-                spacing=16,
+                spacing=18,
             ),
-        )
-        mode_selector_container = ft.Container(
-            content=self.mode_selector,
-            padding=ft.Padding(left=8, top=4, right=8, bottom=8),
         )
 
         action_button_content = self._make_send_button()
         self.action_button = ft.Container(
             content=action_button_content,
-            scale=1,
-            animate_scale=100,
+            width=56,
+            height=56,
+            bgcolor="#6750A4",
+            border_radius=28,
+            alignment=ft.alignment.center,
+            ink=True,
             on_hover=self._handle_button_hover,
-            bgcolor="#2C2A3A",
-            border_radius=30,
+            animate_scale=100,
+            scale=1,
         )
 
-        input_row = ft.Row([self.user_input, self.action_button], alignment=ft.MainAxisAlignment.CENTER)
+        chat_card = ft.Card(
+            expand=True,
+            content=ft.Container(
+                expand=True,
+                padding=ft.Padding(20, 20, 20, 20),
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, size=20, color="#E8DEF8"),
+                                ft.Text(
+                                    "\u30c1\u30e3\u30c3\u30c8",
+                                    size=16,
+                                    weight=ft.FontWeight.BOLD,
+                                    color="#E8DEF8",
+                                ),
+                            ],
+                            spacing=8,
+                        ),
+                        ft.Divider(color="#332D41"),
+                        self.chat_list,
+                    ],
+                    spacing=16,
+                    expand=True,
+                ),
+            ),
+        )
 
-        main_content = ft.Column(
-            [
-                self.chat_list,
-                mode_selector_container,
-                input_row,
+        composer_card = ft.Card(
+            content=ft.Container(
+                padding=ft.Padding(20, 20, 20, 20),
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.TUNE_ROUNDED, size=20, color="#E8DEF8"),
+                                ft.Text(
+                                    "\u30e2\u30fc\u30c9\u3068\u6307\u793a",
+                                    size=16,
+                                    weight=ft.FontWeight.BOLD,
+                                    color="#E8DEF8",
+                                ),
+                            ],
+                            spacing=8,
+                        ),
+                        ft.Container(
+                            content=self.mode_selector,
+                            bgcolor="#2B2930",
+                            border_radius=18,
+                            padding=ft.Padding(12, 8, 12, 8),
+                        ),
+                        self.user_input,
+                        ft.Row([self.action_button], alignment=ft.MainAxisAlignment.END),
+                    ],
+                    spacing=18,
+                ),
+            ),
+        )
+
+        main_column = ft.Column(
+            controls=[chat_card, composer_card],
+            expand=True,
+            spacing=16,
+        )
+
+        layout = ft.ResponsiveRow(
+            controls=[
+                ft.Container(
+                    content=ft.Column([context_card], spacing=16),
+                    col={"sm": 12, "md": 4, "lg": 3},
+                ),
+                ft.Container(
+                    content=main_column,
+                    col={"sm": 12, "md": 8, "lg": 9},
+                ),
             ],
+            spacing=20,
+            run_spacing=20,
             expand=True,
         )
 
-        self.page.add(
-            ft.Row(
-                [
-                    sidebar,
-                    main_content,
-                ],
-                expand=True,
-                spacing=20,
-                vertical_alignment=ft.CrossAxisAlignment.STRETCH,
-            )
-        )
+        self.page.add(layout)
 
     def _register_window_handlers(self):
         self.page.window.on_event = self._on_window_event
         self.page.on_disconnect = self._on_page_disconnect
 
     def _make_send_button(self) -> ft.IconButton:
-        return ft.IconButton(icon=ft.Icons.SEND_ROUNDED, on_click=self._run_copilot, icon_color="#B39DDB", tooltip="\u9001\u4fe1")
+        return ft.IconButton(
+            icon=ft.Icons.SEND_ROUNDED,
+            icon_color="#FFFFFF",
+            icon_size=24,
+            tooltip="\u9001\u4fe1",
+            on_click=self._run_copilot,
+            style=ft.ButtonStyle(
+                shape=ft.CircleBorder(),
+                padding=ft.Padding(0, 0, 0, 0),
+            ),
+        )
 
     def _make_stop_button(self) -> ft.IconButton:
-        return ft.IconButton(icon=ft.Icons.STOP_ROUNDED, on_click=self._stop_task, icon_color="#B39DDB", tooltip="\u51e6\u7406\u3092\u505c\u6b62")
+        return ft.IconButton(
+            icon=ft.Icons.STOP_ROUNDED,
+            icon_color="#FFFFFF",
+            icon_size=24,
+            tooltip="\u51e6\u7406\u3092\u505c\u6b62",
+            on_click=self._stop_task,
+            style=ft.ButtonStyle(
+                shape=ft.CircleBorder(),
+                padding=ft.Padding(0, 0, 0, 0),
+            ),
+        )
 
     def _handle_button_hover(self, e: ft.ControlEvent):
         if e.data == "true":
@@ -919,6 +1037,14 @@ class CopilotApp:
         is_stopping = new_state is AppState.STOPPING
         is_error = new_state is AppState.ERROR
         can_interact = is_ready or is_error
+        status_palette = {
+            "base": "#CAC4D0",
+            "ready": "#D0BCFF",
+            "busy": "#B69DF8",
+            "error": "#F2B8B5",
+            "stopping": "#B69DF8",
+            "info": "#CAC4D0",
+        }
 
         if self.user_input:
             self.user_input.disabled = not can_interact
@@ -955,29 +1081,29 @@ class CopilotApp:
                 self._status_message_override = None
                 self._status_color_override = None
                 self.status_label.value = "\u521d\u671f\u5316\u4e2d..."
-                self.status_label.color = ft.Colors.GREY_500
+                self.status_label.color = status_palette["base"]
             elif is_ready:
                 if self._status_message_override:
                     self.status_label.value = self._status_message_override
-                    self.status_label.color = self._status_color_override or ft.Colors.GREY_400
+                    self.status_label.color = self._status_color_override or status_palette["ready"]
                 else:
                     self.status_label.value = "\u5f85\u6a5f\u4e2d"
-                    self.status_label.color = ft.Colors.GREEN_300
+                    self.status_label.color = status_palette["ready"]
             elif is_error:
                 self._status_message_override = None
                 self._status_color_override = None
                 self.status_label.value = "\u30a8\u30e9\u30fc"
-                self.status_label.color = ft.Colors.RED_300
+                self.status_label.color = status_palette["error"]
             else:
                 self._status_message_override = None
                 self._status_color_override = None
-                self.status_label.color = ft.Colors.GREY_500
+                self.status_label.color = status_palette["base"]
 
         if self.action_button:
             if is_task_in_progress:
                 if self.status_label:
                     self.status_label.value = "\u51e6\u7406\u3092\u5b9f\u884c\u4e2d..."
-                    self.status_label.color = ft.Colors.DEEP_PURPLE_300
+                    self.status_label.color = status_palette["busy"]
                     self.status_label.opacity = 0.5
                     self.status_label.scale = 0.95
                 self.action_button.content = self._make_stop_button()
@@ -985,7 +1111,7 @@ class CopilotApp:
             elif is_stopping:
                 if self.status_label:
                     self.status_label.value = "\u51e6\u7406\u3092\u505c\u6b62\u3057\u3066\u3044\u307e\u3059..."
-                    self.status_label.color = ft.Colors.DEEP_PURPLE_200
+                    self.status_label.color = status_palette["stopping"]
                 self.action_button.content = ft.ProgressRing(width=18, height=18, stroke_width=2)
                 self.action_button.disabled = True
             else:
@@ -1571,6 +1697,11 @@ class CopilotApp:
 
     def _display_response(self, response: ResponseMessage):
         type_value = response.metadata.get("source_type", response.type.value)
+        status_palette = {
+            "base": "#CAC4D0",
+            "info": "#D0BCFF",
+            "error": "#F2B8B5",
+        }
 
         if (
             self._pending_focus_action == "focus_excel_window"
@@ -1603,19 +1734,19 @@ class CopilotApp:
             status_text = (response.content or "").strip()
             if status_text:
                 self._status_message_override = status_text
-                self._status_color_override = ft.Colors.GREY_400
+                self._status_color_override = status_palette["info"]
             else:
                 self._status_message_override = None
                 self._status_color_override = None
             if self.status_label:
                 self.status_label.value = status_text
                 if status_text:
-                    self.status_label.color = self._status_color_override or ft.Colors.GREY_400
+                    self.status_label.color = self._status_color_override or status_palette["info"]
         elif response.type is ResponseType.ERROR:
             if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
                 if self.status_label:
                     self.status_label.value = response.content or "\u51e6\u7406\u4e2d\u306b\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f"
-                    self.status_label.color = ft.Colors.RED_200
+                    self.status_label.color = status_palette["error"]
                     self.status_label.opacity = 0.9
                 if response.content:
                     self._add_message(response.type, response.content)
