@@ -14,10 +14,10 @@ _DIFF_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_DIFF', '').lower() in {'1',
 if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
     logging.basicConfig(level=logging.DEBUG)
 
-_MAX_RICH_TEXT_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LENGTH', '800'))
-_MAX_RICH_TEXT_SPANS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_SPANS', '48'))
-_MAX_RICH_TEXT_TOTAL_SPAN_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_TOTAL', '1200'))
-_MAX_RICH_TEXT_LINE_BREAKS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BREAKS', '12'))
+_MAX_RICH_TEXT_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LENGTH', '3200'))
+_MAX_RICH_TEXT_SPANS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_SPANS', '96'))
+_MAX_RICH_TEXT_TOTAL_SPAN_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_TOTAL', '6400'))
+_MAX_RICH_TEXT_LINE_BREAKS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BREAKS', '24'))
 _ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '1').lower() in {'1', 'true', 'yes', 'on'}
 
 
@@ -533,24 +533,28 @@ class ExcelActions:
                                         _review_debug(f"apply_diff_highlight_colors segment font assign failed: {segment_block_error}")
                                 if (not block_colored) or seg_length <= _MAX_CHARWISE_DIFF_SPAN:
                                     charwise_success = True
-                                    max_chars = min(seg_length, _MAX_CHARWISE_DIFF_SPAN)
-                                    for offset in range(max_chars):
-                                        absolute_idx = segment_start + offset
-                                        try:
-                                            char_segment = cell.characters[absolute_idx:absolute_idx + 1]
-                                            char_segment_api = getattr(char_segment, 'api', None)
-                                            if char_segment_api is not None:
-                                                if color_index is not None:
-                                                    char_segment_api.Font.ColorIndex = color_index
-                                                char_segment_api.Font.Color = color_value
-                                                char_segment_api.Font.Strikethrough = is_deletion
-                                            char_segment_font = getattr(char_segment, 'font', None)
-                                            if char_segment_font is not None:
-                                                char_segment_font.color = color_tuple
-                                                char_segment_font.strikethrough = is_deletion
-                                        except Exception as char_error:
-                                            charwise_success = False
-                                            _review_debug(f"apply_diff_highlight_colors charwise error pos={absolute_idx + 1} err={char_error}")
+                                    chunk_size = _MAX_CHARWISE_DIFF_SPAN if not block_colored else seg_length
+                                    for chunk_start in range(0, seg_length, chunk_size):
+                                        chunk_length = min(chunk_size, seg_length - chunk_start)
+                                        for offset in range(chunk_length):
+                                            absolute_idx = segment_start + chunk_start + offset
+                                            try:
+                                                char_segment = cell.characters[absolute_idx:absolute_idx + 1]
+                                                char_segment_api = getattr(char_segment, 'api', None)
+                                                if char_segment_api is not None:
+                                                    if color_index is not None:
+                                                        char_segment_api.Font.ColorIndex = color_index
+                                                    char_segment_api.Font.Color = color_value
+                                                    char_segment_api.Font.Strikethrough = is_deletion
+                                                char_segment_font = getattr(char_segment, 'font', None)
+                                                if char_segment_font is not None:
+                                                    char_segment_font.color = color_tuple
+                                                    char_segment_font.strikethrough = is_deletion
+                                            except Exception as char_error:
+                                                charwise_success = False
+                                                _review_debug(f"apply_diff_highlight_colors charwise error pos={absolute_idx + 1} err={char_error}")
+                                                break
+                                        if not charwise_success:
                                             break
                                     if seg_length > _MAX_CHARWISE_DIFF_SPAN and not block_colored and not charwise_success:
                                         _review_debug(f"apply_diff_highlight_colors charwise fallback skipped due to span length {seg_length}")
