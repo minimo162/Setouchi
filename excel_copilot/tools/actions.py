@@ -234,9 +234,19 @@ class ExcelActions:
                 flat_values = [str(cell or '') for row in values for cell in row]
             else:
                 flat_values = [str(values or '')]
+            width_chars = max(1, self._preferred_column_width - 2)
+            max_lines_cap = max(1, self._max_row_height // self._line_height)
             for text in flat_values:
-                if text:
-                    approx_lines = max(approx_lines, min(len(text) // max(1, self._preferred_column_width - 2) + 1, self._max_row_height // self._line_height))
+                if not text:
+                    continue
+                normalized = text.replace('\r\n', '\n').replace('\r', '\n')
+                segments = normalized.split('\n')
+                total_lines = 0
+                for segment in segments:
+                    segment_len = len(segment)
+                    wrapped_lines = 1 + ((segment_len - 1) // width_chars) if segment_len else 1
+                    total_lines += wrapped_lines
+                approx_lines = max(approx_lines, min(total_lines, max_lines_cap))
             desired_height = max(self._min_row_height, min(self._max_row_height, approx_lines * self._line_height))
             _safe_call(setattr, target_range, 'row_height', desired_height)
             target_api = getattr(target_range, 'api', None)
