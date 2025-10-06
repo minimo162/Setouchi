@@ -376,12 +376,18 @@ class ExcelActions:
                     try:
                         cell.api.Font.ColorIndex = 1
                         cell.api.Font.Color = 0
+                        cell.api.Font.Strikethrough = False
                     except Exception as reset_error:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) reset color failed {reset_error}")
                     try:
-                        entire_chars = cell.api.Characters()
-                        entire_chars.Font.ColorIndex = 1
-                        entire_chars.Font.Color = 0
+                        entire_chars = cell.characters[:]
+                        entire_chars_api = getattr(entire_chars, 'api', None)
+                        if entire_chars_api is not None:
+                            entire_chars_api.Font.ColorIndex = 1
+                            entire_chars_api.Font.Color = 0
+                            entire_chars_api.Font.Strikethrough = False
+                        entire_chars.font.color = (0, 0, 0)
+                        entire_chars.font.strikethrough = False
                     except Exception as chars_reset_err:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters reset failed {chars_reset_err}")
                     if not spans:
@@ -458,28 +464,39 @@ class ExcelActions:
                         if color_info is None:
                             continue
                         color_kind, color_value, color_tuple = color_info
-                        start_position = seg_start + 1
+                        segment_start = seg_start
+                        segment_end = seg_start + seg_length
                         applied = False
-                        char_range = None
+                        char_slice = None
+                        slice_api = None
                         segment_font = None
                         try:
-                            char_range = cell.api.Characters(start_position, seg_length)
-                            char_range.Font.Color = color_value
-                            applied = True
-                        except Exception as primary_error:
+                            char_slice = cell.characters[segment_start:segment_end]
+                            slice_api = getattr(char_slice, 'api', None)
+                            segment_font = getattr(char_slice, 'font', None)
+                        except Exception as slice_error:
                             _diff_debug(
-                                f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api span color error {primary_error}"
+                                f"apply_diff_highlight_colors cell({r_idx},{c_idx}) segment slice error {slice_error}"
                             )
-                        try:
-                            segment_font = cell.characters[start_position - 1, seg_length].font
-                            segment_font.color = color_tuple
-                            applied = True
-                        except Exception as span_fallback_error:
-                            if not applied:
+                            continue
+                        if slice_api is not None:
+                            try:
+                                slice_api.Font.Color = color_value
+                                applied = True
+                            except Exception as primary_error:
                                 _diff_debug(
-                                    f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters span color error {span_fallback_error}"
+                                    f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api span color error {primary_error}"
                                 )
-                                continue
+                        if segment_font is not None:
+                            try:
+                                segment_font.color = color_tuple
+                                applied = True
+                            except Exception as span_fallback_error:
+                                if not applied:
+                                    _diff_debug(
+                                        f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters span color error {span_fallback_error}"
+                                    )
+                                    continue
                         if applied:
                             is_deletion = color_kind == "deletion"
                             if color_kind == "addition":
@@ -499,34 +516,41 @@ class ExcelActions:
                                     f"apply_diff_highlight_colors span success cell=({r_idx},{c_idx}) kind={color_kind} start={seg_start} length={seg_length}"
                                 )
                                 block_colored = False
-                                try:
-                                    if color_index is not None:
-                                        char_range.Font.ColorIndex = color_index
-                                    char_range.Font.Color = color_value
-                                    char_range.Font.Strikethrough = is_deletion
-                                    block_colored = True
-                                except Exception as span_block_error:
-                                    _review_debug(f"apply_diff_highlight_colors span block color failed: {span_block_error}")
-                                try:
-                                    if color_index is not None:
+                                if slice_api is not None:
+                                    try:
+                                        if color_index is not None:
+                                            slice_api.Font.ColorIndex = color_index
+                                        slice_api.Font.Color = color_value
+                                        slice_api.Font.Strikethrough = is_deletion
+                                        block_colored = True
+                                    except Exception as span_block_error:
+                                        _review_debug(f"apply_diff_highlight_colors span block color failed: {span_block_error}")
+                                if segment_font is not None:
+                                    try:
                                         segment_font.color = color_tuple
-                                    segment_font.strikethrough = is_deletion
-                                except Exception as segment_block_error:
-                                    _review_debug(f"apply_diff_highlight_colors segment font assign failed: {segment_block_error}")
+                                        segment_font.strikethrough = is_deletion
+                                    except Exception as segment_block_error:
+                                        _review_debug(f"apply_diff_highlight_colors segment font assign failed: {segment_block_error}")
                                 if (not block_colored) or seg_length <= _MAX_CHARWISE_DIFF_SPAN:
                                     charwise_success = True
                                     max_chars = min(seg_length, _MAX_CHARWISE_DIFF_SPAN)
                                     for offset in range(max_chars):
-                                        char_position = start_position + offset
+                                        absolute_idx = segment_start + offset
                                         try:
-                                            char_obj = cell.api.Characters(char_position, 1)
-                                            if color_index is not None:
-                                                char_obj.Font.ColorIndex = color_index
-                                            char_obj.Font.Color = color_value
-                                            char_obj.Font.Strikethrough = is_deletion
+                                            char_segment = cell.characters[absolute_idx:absolute_idx + 1]
+                                            char_segment_api = getattr(char_segment, 'api', None)
+                                            if char_segment_api is not None:
+                                                if color_index is not None:
+                                                    char_segment_api.Font.ColorIndex = color_index
+                                                char_segment_api.Font.Color = color_value
+                                                char_segment_api.Font.Strikethrough = is_deletion
+                                            char_segment_font = getattr(char_segment, 'font', None)
+                                            if char_segment_font is not None:
+                                                char_segment_font.color = color_tuple
+                                                char_segment_font.strikethrough = is_deletion
                                         except Exception as char_error:
                                             charwise_success = False
-                                            _review_debug(f"apply_diff_highlight_colors charwise error pos={char_position} err={char_error}")
+                                            _review_debug(f"apply_diff_highlight_colors charwise error pos={absolute_idx + 1} err={char_error}")
                                             break
                                     if seg_length > _MAX_CHARWISE_DIFF_SPAN and not block_colored and not charwise_success:
                                         _review_debug(f"apply_diff_highlight_colors charwise fallback skipped due to span length {seg_length}")
