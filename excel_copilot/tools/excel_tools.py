@@ -2456,6 +2456,7 @@ def check_translation_quality(
                             highlight_text = corrected_text_str
                         highlight_text, highlight_spans = _attach_highlight_labels(highlight_text, highlight_spans)
                         highlight_text = _maybe_fix_mojibake(highlight_text)
+                        _log_debug(f"highlight entry r={row_idx} c={col_idx} text={highlight_text} spans={highlight_spans}")
                         highlight_matrix[row_idx][col_idx] = highlight_text
                         if highlight_styles is not None:
                             highlight_styles[row_idx][col_idx] = highlight_spans

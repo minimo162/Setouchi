@@ -303,18 +303,22 @@ class ExcelActions:
                 for c_idx in range(max_cols):
                     spans = row_styles[c_idx] if isinstance(row_styles[c_idx], list) else []
                     cell = target_range[r_idx, c_idx]
+                    _review_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) spans={spans}")
                     try:
                         cell_value = cell.value or ""
                     except Exception as value_error:
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value error {value_error}")
+                        _review_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value error {value_error}")
                         continue
                     if not isinstance(cell_value, str):
                         _diff_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) skipped non-str value")
+                        _review_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) skipped non-str value")
                         continue
                     value_len = len(cell_value)
                     _diff_debug(
                         f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value_len={value_len} spans={spans}"
                     )
+                    _review_debug(f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value_len={value_len}")
                     line_breaks = cell_value.count("\n")
                     total_span_length = sum(
                         max(0, _safe_span_length(span)) for span in spans if isinstance(span, dict)
@@ -467,4 +471,7 @@ class ExcelActions:
                 self.log_progress(message)
         except Exception as e:
             _diff_debug(f"apply_diff_highlight_colors exception={e}")
+            _review_debug(f"apply_diff_highlight_colors exception range={cell_range} error={e}")
             raise ToolExecutionError(f"差分ハイライトの色適用中にエラーが発生しました: {e}") from e
+        else:
+            _review_debug(f"apply_diff_highlight_colors completed range={cell_range} skipped_cells={len(skipped_cells)}")
