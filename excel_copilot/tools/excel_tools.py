@@ -604,19 +604,8 @@ def _build_diff_highlight(original: str, corrected: str) -> Tuple[str, List[Dict
                 prefix = ''
                 suffix = ''
 
-            if trimmed_removed and not trimmed_added and suffix:
-                suffix_leading = 0
-                while suffix_leading < len(suffix) and suffix[suffix_leading].isspace():
-                    suffix_leading += 1
-                suffix_end = suffix_leading
-                while suffix_end < len(suffix) and not suffix[suffix_end].isspace():
-                    suffix_end += 1
-                if suffix_end > 0:
-                    trimmed_added = suffix[:suffix_end]
-                    suffix = suffix[suffix_end:]
-
             if trimmed_removed and not trimmed_added:
-                trimmed_added = '（追加なし）'
+                _diff_debug("_build_diff_highlight replace segment has removal without addition; highlighting deletion only")
 
             if prefix:
                 result_parts.append(prefix)
