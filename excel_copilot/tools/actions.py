@@ -14,6 +14,11 @@ _DIFF_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_DIFF', '').lower() in {'1',
 if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
     logging.basicConfig(level=logging.DEBUG)
 
+_MAX_RICH_TEXT_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LENGTH', '800'))
+_MAX_RICH_TEXT_SPANS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_SPANS', '48'))
+_MAX_RICH_TEXT_TOTAL_SPAN_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_TOTAL', '1200'))
+_MAX_RICH_TEXT_LINE_BREAKS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BREAKS', '12'))
+
 
 def _diff_debug(message: str) -> None:
     if _DIFF_DEBUG_ENABLED:
@@ -359,12 +364,23 @@ class ExcelActions:
                 "removed": "deletion",
                 "削除": "deletion",
             }
+
+            def _safe_span_length(span: Dict[str, Any]) -> int:
+                if not isinstance(span, dict):
+                    return 0
+                raw_length = span.get("length", 0)
+                try:
+                    return int(raw_length or 0)
+                except Exception:
+                    try:
+                        return int(float(raw_length))
+                    except Exception:
+                        return 0
+
             _diff_debug(
                 f"apply_diff_highlight_colors target_range rows={rows} cols={cols} addition={addition_color_hex} deletion={deletion_color_hex}"
             )
 
-            api_char_supported = True
-            characters_char_supported = True
 
             max_rows = min(rows, len(style_matrix))
             for r_idx in range(max_rows):
@@ -388,6 +404,22 @@ class ExcelActions:
                     _diff_debug(
                         f"apply_diff_highlight_colors cell({r_idx},{c_idx}) value_len={value_len} spans={spans}"
                     )
+                    line_breaks = cell_value.count("\n")
+                    total_span_length = sum(
+                        max(0, _safe_span_length(span)) for span in spans if isinstance(span, dict)
+                    )
+                    if (
+                        value_len > _MAX_RICH_TEXT_LENGTH
+                        or len(spans) > _MAX_RICH_TEXT_SPANS
+                        or total_span_length > _MAX_RICH_TEXT_TOTAL_SPAN_LENGTH
+                        or line_breaks > _MAX_RICH_TEXT_LINE_BREAKS
+                    ):
+                        _diff_debug(
+                            f"apply_diff_highlight_colors cell({r_idx},{c_idx}) skipped rich text due to limits len={value_len} spans={len(spans)} total_span={total_span_length} line_breaks={line_breaks}"
+                        )
+                        continue
+                    if value_len <= 0:
+                        continue
                     try:
                         cell.api.Font.ColorIndex = 1
                         cell.api.Font.Color = 0
@@ -471,80 +503,39 @@ class ExcelActions:
                         if seg_length <= 0:
                             continue
                         if color_info is None:
-                            color_kind = "default"
-                            color_value = 0
-                            color_tuple = (0, 0, 0)
-                        else:
-                            color_kind, color_value, color_tuple = color_info
+                            continue
+                        color_kind, color_value, color_tuple = color_info
                         start_position = seg_start + 1
-
-                        span_applied = False
+                        applied = False
                         try:
                             char_range = cell.api.Characters(start_position, seg_length)
                             char_range.Font.Color = color_value
-                            span_applied = True
+                            applied = True
                         except Exception as primary_error:
                             _diff_debug(
                                 f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api span color error {primary_error}"
                             )
-
                         try:
                             segment_font = cell.characters[start_position - 1, seg_length].font
                             segment_font.color = color_tuple
-                            span_applied = True
+                            applied = True
                         except Exception as span_fallback_error:
-                            if not span_applied:
+                            if not applied:
                                 _diff_debug(
                                     f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters span color error {span_fallback_error}"
                                 )
-
-                        if span_applied:
-                            color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
-                            _diff_debug(
-                                f"apply_diff_highlight_colors applied span type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
-                            )
-                            continue
-
-                        applied = True
-                        for char_offset in range(seg_length):
-                            char_position = start_position + char_offset
-                            colored = False
-                            if api_char_supported:
-                                try:
-                                    char_obj = cell.api.Characters(char_position, 1)
-                                    char_obj.Font.Color = color_value
-                                    colored = True
-                                except Exception as per_char_error:
-                                    api_char_supported = False
-                                    _diff_debug(
-                                        f"apply_diff_highlight_colors cell({r_idx},{c_idx}) api single char error {per_char_error}"
-                                    )
-                            if characters_char_supported:
-                                try:
-                                    char_font = cell.characters[char_position - 1].font
-                                    char_font.color = color_tuple
-                                    colored = True
-                                except Exception as per_char_fallback_error:
-                                    characters_char_supported = False
-                                    if not colored:
-                                        _diff_debug(
-                                            f"apply_diff_highlight_colors cell({r_idx},{c_idx}) characters single char error {per_char_fallback_error}"
-                                        )
-                            if not colored:
-                                applied = False
+                                continue
+                        if applied:
+                            if color_kind == "addition":
+                                color_hex = addition_color_hex
+                            elif color_kind == "deletion":
+                                color_hex = deletion_color_hex
+                            else:
+                                color_hex = ""
+                            if color_hex:
                                 _diff_debug(
-                                    f"apply_diff_highlight_colors cell({r_idx},{c_idx}) unable to color char at {char_position}"
+                                    f"apply_diff_highlight_colors applied span type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
                                 )
-                                break
-
-                        if not applied:
-                            continue
-
-                        if color_kind != "default":
-                            color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex
-                            _diff_debug(
-                                f"apply_diff_highlight_colors applied charwise type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
-                            )
 
         except Exception as e:
             _diff_debug(f"apply_diff_highlight_colors exception={e}")

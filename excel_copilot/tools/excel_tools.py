@@ -2345,7 +2345,7 @@ def check_translation_quality(
                 else:
                     if candidate_id and candidate_id.isdigit():
                         numeric_index = int(candidate_id) - 1
-                        if 0 <= numeric_index < len(ordered_positions) and numeric_index not in assigned_indices:
+                        if 0 <= numeric_index < len(ordered_ids) and numeric_index not in assigned_indices:
                             candidate_index = numeric_index
                     if candidate_index is None:
                         for idx, entry_id in enumerate(ordered_ids):
