@@ -18,7 +18,7 @@ _MAX_RICH_TEXT_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LENGTH', '800
 _MAX_RICH_TEXT_SPANS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_SPANS', '48'))
 _MAX_RICH_TEXT_TOTAL_SPAN_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_TOTAL', '1200'))
 _MAX_RICH_TEXT_LINE_BREAKS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BREAKS', '12'))
-_ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '0').lower() in {'1', 'true', 'yes', 'on'}
+_ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '1').lower() in {'1', 'true', 'yes', 'on'}
 
 
 def _diff_debug(message: str) -> None:

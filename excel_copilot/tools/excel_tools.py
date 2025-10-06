@@ -2223,7 +2223,7 @@ def check_translation_quality(
                     if removed:
                         _diff_debug("check_translation_quality stripped markdown code fences before parsing")
 
-                decoder = json.JSONDecoder()
+                decoder = json.JSONDecoder(strict=False)
                 marker = "Review item (JSON):"
                 candidate_texts = [cleaned]
                 if marker in cleaned:
