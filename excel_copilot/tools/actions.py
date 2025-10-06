@@ -21,6 +21,17 @@ _MAX_RICH_TEXT_LINE_BREAKS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BRE
 _ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '1').lower() in {'1', 'true', 'yes', 'on'}
 
 
+_REVIEW_DEBUG_ENABLED = True
+
+
+
+def _review_debug(message: str) -> None:
+    try:
+        print(f"[review-debug] {message}")
+    except Exception:
+        pass
+
+
 def _diff_debug(message: str) -> None:
     if _DIFF_DEBUG_ENABLED:
         _ACTIONS_LOGGER.debug(message)
@@ -133,21 +144,27 @@ class ExcelActions:
             
             data_rows = len(data)
             data_cols = len(data[0]) if data_rows > 0 else 0
+            _review_debug(f"actions.write_range start range={cell_range} rows={data_rows} cols={data_cols}")
 
             range_rows = target_range.rows.count
             range_cols = target_range.columns.count
+            _review_debug(f"actions.write_range target dims rows={range_rows} cols={range_cols}")
 
             if data_rows != range_rows or data_cols != range_cols:
                 error_msg = (
                     f"データの次元が一致しません。書き込み先範囲 ({cell_range}) は {range_rows}行 x {range_cols}列ですが、"
                     f"提供されたデータは {data_rows}行 x {data_cols}列です。読み取ったデータと同じ次元のデータを渡してください。"
                 )
+                _review_debug(f"actions.write_range dimension mismatch: {error_msg}")
                 raise ToolExecutionError(error_msg)
 
             target_range.value = data
+            _review_debug(f"actions.write_range wrote values range={cell_range}")
             self._apply_text_wrapping(target_range)
+            _review_debug(f"actions.write_range completed range={cell_range}")
             return f"範囲 '{cell_range}' にデータを正常に書き込みました。"
         except Exception as e:
+            _review_debug(f"actions.write_range error range={cell_range} error={e}")
             if isinstance(e, ToolExecutionError):
                 raise e
             raise ToolExecutionError(f"範囲 '{cell_range}' への書き込み中に予期せぬエラーが発生しました: {e}")
@@ -155,6 +172,7 @@ class ExcelActions:
     def _apply_text_wrapping(self, target_range: xw.Range) -> None:
         """Turn on wrapping, align to top-left, and auto-fit within sensible bounds."""
 
+        _review_debug(f"_apply_text_wrapping start address={target_range.address}")
         try:
             target_range.api.HorizontalAlignment = -4131  # xlLeft
             target_range.api.VerticalAlignment = -4160  # xlTop
@@ -314,6 +332,8 @@ class ExcelActions:
         except Exception:
             pass
 
+        _review_debug(f"_apply_text_wrapping end address={target_range.address}")
+
     def apply_diff_highlight_colors(self,
                                     cell_range: str,
                                     style_matrix: List[List[List[Dict[str, Any]]]],
@@ -324,10 +344,12 @@ class ExcelActions:
         try:
             if not style_matrix:
                 _diff_debug("apply_diff_highlight_colors empty style matrix")
+                _review_debug(f"apply_diff_highlight_colors start range={cell_range} skipped (empty style matrix)")
                 return
             _diff_debug(
                 f"apply_diff_highlight_colors start range={cell_range} sheet={sheet_name} rows={len(style_matrix)}"
             )
+            _review_debug(f"apply_diff_highlight_colors start range={cell_range} sheet={sheet_name} rows={len(style_matrix)}")
             if not _ENABLE_RICH_DIFF_COLORS:
                 _diff_debug('apply_diff_highlight_colors disabled via configuration')
                 self.log_progress(

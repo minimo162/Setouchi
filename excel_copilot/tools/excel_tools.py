@@ -14,7 +14,7 @@ from .actions import ExcelActions
 
 _logger = logging.getLogger(__name__)
 _DIFF_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_DIFF', '').lower() in {'1', 'true', 'yes'}
-_REVIEW_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_REVIEW', '').lower() in {'1', 'true', 'yes', 'on'}
+_REVIEW_DEBUG_ENABLED = True
 
 
 
