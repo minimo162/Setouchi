@@ -521,7 +521,7 @@ def _format_diff_segment(tokens: List[str], label: str) -> Tuple[str, Optional[i
         _diff_debug(f"_format_diff_segment segment without content label={label}")
         return segment, None, None
     leading_len = len(segment) - len(segment.lstrip())
-    trailing_len = len(segment.rstrip()) - len(segment.strip())
+    trailing_len = len(segment) - len(segment.rstrip())
     core_start = leading_len
     core_end = len(segment) - trailing_len if trailing_len else len(segment)
     core = segment[core_start:core_end]
