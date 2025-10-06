@@ -24,11 +24,13 @@ _ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '1
 _MAX_CHARWISE_DIFF_SPAN = 400
 
 
-_REVIEW_DEBUG_ENABLED = True
+_REVIEW_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_REVIEW', '').lower() in {'1', 'true', 'yes', 'on'}
 
 
 
 def _review_debug(message: str) -> None:
+    if not _REVIEW_DEBUG_ENABLED:
+        return
     try:
         print(f"[review-debug] {message}")
     except Exception:
@@ -531,9 +533,9 @@ class ExcelActions:
                                         segment_font.strikethrough = is_deletion
                                     except Exception as segment_block_error:
                                         _review_debug(f"apply_diff_highlight_colors segment font assign failed: {segment_block_error}")
-                                if (not block_colored) or seg_length <= _MAX_CHARWISE_DIFF_SPAN:
+                                if not block_colored:
                                     charwise_success = True
-                                    chunk_size = _MAX_CHARWISE_DIFF_SPAN if not block_colored else seg_length
+                                    chunk_size = _MAX_CHARWISE_DIFF_SPAN
                                     for chunk_start in range(0, seg_length, chunk_size):
                                         chunk_length = min(chunk_size, seg_length - chunk_start)
                                         for offset in range(chunk_length):
@@ -556,7 +558,7 @@ class ExcelActions:
                                                 break
                                         if not charwise_success:
                                             break
-                                    if seg_length > _MAX_CHARWISE_DIFF_SPAN and not block_colored and not charwise_success:
+                                    if seg_length > _MAX_CHARWISE_DIFF_SPAN and not charwise_success:
                                         _review_debug(f"apply_diff_highlight_colors charwise fallback skipped due to span length {seg_length}")
 
             if skipped_cells:
