@@ -170,7 +170,7 @@ class ExcelActions:
             raise ToolExecutionError(f"範囲 '{cell_range}' への書き込み中に予期せぬエラーが発生しました: {e}")
 
     def _apply_text_wrapping(self, target_range: xw.Range) -> None:
-        """Turn on wrapping and align text without heavy COM operations."""
+        """Turn on wrapping, align to top-left, and auto-fit within sensible bounds."""
 
         range_address = None
         try:
@@ -179,38 +179,66 @@ class ExcelActions:
             pass
         _review_debug(f"_apply_text_wrapping start address={range_address}")
 
-        def _try_setattr(obj, attr, value):
+        def _safe_call(callable_obj, *args, **kwargs):
             try:
-                setattr(obj, attr, value)
+                callable_obj(*args, **kwargs)
                 return True
             except Exception:
                 return False
 
-        # Try the API object first for alignment.
         target_api = getattr(target_range, 'api', None)
         if target_api is not None:
-            _try_setattr(target_api, 'HorizontalAlignment', -4131)  # xlLeft
-            _try_setattr(target_api, 'VerticalAlignment', -4160)    # xlTop
-        _try_setattr(target_range, 'horizontal_alignment', 'left')
-        _try_setattr(target_range, 'vertical_alignment', 'top')
+            _safe_call(setattr, target_api, 'HorizontalAlignment', -4131)
+            _safe_call(setattr, target_api, 'VerticalAlignment', -4160)
+        _safe_call(setattr, target_range, 'horizontal_alignment', 'left')
+        _safe_call(setattr, target_range, 'vertical_alignment', 'top')
 
-        # Enable wrap text; avoid iterating over every cell/column to keep COM calls minimal.
         wrap_applied = False
         if hasattr(target_range, 'wrap_text'):
-            try:
-                target_range.wrap_text = True
-                wrap_applied = True
-            except Exception:
-                wrap_applied = False
-
+            wrap_applied = _safe_call(setattr, target_range, 'wrap_text', True)
         if not wrap_applied and target_api is not None:
-            if _try_setattr(target_api, 'WrapText', True):
-                wrap_applied = True
-            else:
+            wrap_applied = _safe_call(setattr, target_api, 'WrapText', True)
+            if not wrap_applied:
                 cells_api = getattr(target_api, 'Cells', None)
                 if cells_api is not None:
-                    _try_setattr(cells_api, 'WrapText', True)
-                    wrap_applied = True
+                    wrap_applied = _safe_call(setattr, cells_api, 'WrapText', True)
+
+        # Restore moderate column width adjustments.
+        try:
+            for column in target_range.columns:
+                try:
+                    existing_width = column.column_width
+                except Exception:
+                    existing_width = None
+                desired = self._preferred_column_width
+                if existing_width is not None and existing_width > 0:
+                    desired = max(existing_width, self._preferred_column_width)
+                desired = max(self._column_width_floor, min(desired, self._column_width_cap))
+                if not _safe_call(setattr, column, 'column_width', desired):
+                    column_api = getattr(column, 'api', None)
+                    if column_api is not None:
+                        _safe_call(setattr, column_api, 'ColumnWidth', desired)
+        except Exception:
+            pass
+
+        # Restore moderate row height adjustments.
+        try:
+            approx_lines = 1
+            values = target_range.value
+            if isinstance(values, list) and values and isinstance(values[0], list):
+                flat_values = [str(cell or '') for row in values for cell in row]
+            else:
+                flat_values = [str(values or '')]
+            for text in flat_values:
+                if text:
+                    approx_lines = max(approx_lines, min(len(text) // max(1, self._preferred_column_width - 2) + 1, self._max_row_height // self._line_height))
+            desired_height = max(self._min_row_height, min(self._max_row_height, approx_lines * self._line_height))
+            _safe_call(setattr, target_range, 'row_height', desired_height)
+            target_api = getattr(target_range, 'api', None)
+            if target_api is not None:
+                _safe_call(setattr, target_api, 'RowHeight', desired_height)
+        except Exception:
+            pass
 
         _review_debug(f"_apply_text_wrapping end address={range_address} wrap_applied={wrap_applied}")
 
@@ -429,6 +457,8 @@ class ExcelActions:
                         color_kind, color_value, color_tuple = color_info
                         start_position = seg_start + 1
                         applied = False
+                        char_range = None
+                        segment_font = None
                         try:
                             char_range = cell.api.Characters(start_position, seg_length)
                             char_range.Font.Color = color_value
@@ -448,16 +478,20 @@ class ExcelActions:
                                 )
                                 continue
                         if applied:
-                            if color_kind == "addition":
-                                color_hex = addition_color_hex
-                            elif color_kind == "deletion":
-                                color_hex = deletion_color_hex
-                            else:
-                                color_hex = ""
+                            is_deletion = color_kind == "deletion"
+                            color_hex = addition_color_hex if color_kind == "addition" else deletion_color_hex if color_kind == "deletion" else ""
                             if color_hex:
                                 _diff_debug(
                                     f"apply_diff_highlight_colors applied span type={color_kind} start={seg_start} length={seg_length} color={color_hex}"
                                 )
+                                try:
+                                    char_range.Font.Strikethrough = is_deletion
+                                except Exception:
+                                    pass
+                                try:
+                                    segment_font.strikethrough = is_deletion
+                                except Exception:
+                                    pass
 
             if skipped_cells:
                 unique_cells = list(dict.fromkeys(skipped_cells))

@@ -353,8 +353,8 @@ _MAX_DIFF_SEGMENT_TOKENS = 10
 _MAX_DIFF_SEGMENT_CHARS = 48
 
 _HIGHLIGHT_LABELS = {
-    "DEL": "【削除】",
-    "ADD": "【追加】",
+    "DEL": "",
+    "ADD": "",
 }
 
 REFUSAL_PATTERNS = (
