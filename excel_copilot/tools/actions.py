@@ -21,6 +21,9 @@ _MAX_RICH_TEXT_LINE_BREAKS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BRE
 _ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '1').lower() in {'1', 'true', 'yes', 'on'}
 
 
+_MAX_CHARWISE_DIFF_SPAN = 400
+
+
 _REVIEW_DEBUG_ENABLED = True
 
 
@@ -495,20 +498,38 @@ class ExcelActions:
                                 _review_debug(
                                     f"apply_diff_highlight_colors span success cell=({r_idx},{c_idx}) kind={color_kind} start={seg_start} length={seg_length}"
                                 )
+                                block_colored = False
                                 try:
                                     if color_index is not None:
                                         char_range.Font.ColorIndex = color_index
                                     char_range.Font.Color = color_value
                                     char_range.Font.Strikethrough = is_deletion
-                                except Exception:
-                                    pass
+                                    block_colored = True
+                                except Exception as span_block_error:
+                                    _review_debug(f"apply_diff_highlight_colors span block color failed: {span_block_error}")
                                 try:
                                     if color_index is not None:
                                         segment_font.color = color_tuple
-                                        segment_font.color_index = color_index
                                     segment_font.strikethrough = is_deletion
-                                except Exception:
-                                    pass
+                                except Exception as segment_block_error:
+                                    _review_debug(f"apply_diff_highlight_colors segment font assign failed: {segment_block_error}")
+                                if (not block_colored) or seg_length <= _MAX_CHARWISE_DIFF_SPAN:
+                                    charwise_success = True
+                                    max_chars = min(seg_length, _MAX_CHARWISE_DIFF_SPAN)
+                                    for offset in range(max_chars):
+                                        char_position = start_position + offset
+                                        try:
+                                            char_obj = cell.api.Characters(char_position, 1)
+                                            if color_index is not None:
+                                                char_obj.Font.ColorIndex = color_index
+                                            char_obj.Font.Color = color_value
+                                            char_obj.Font.Strikethrough = is_deletion
+                                        except Exception as char_error:
+                                            charwise_success = False
+                                            _review_debug(f"apply_diff_highlight_colors charwise error pos={char_position} err={char_error}")
+                                            break
+                                    if seg_length > _MAX_CHARWISE_DIFF_SPAN and not block_colored and not charwise_success:
+                                        _review_debug(f"apply_diff_highlight_colors charwise fallback skipped due to span length {seg_length}")
 
             if skipped_cells:
                 unique_cells = list(dict.fromkeys(skipped_cells))
