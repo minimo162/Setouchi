@@ -1,6 +1,7 @@
 # desktop_app.py
 
 import flet as ft
+import argparse
 import threading
 import queue
 import inspect
@@ -1744,5 +1745,28 @@ def main(page: ft.Page):
     page.copilot_app = app
     app.mount()
 
+def _parse_cli_args():
+    parser = argparse.ArgumentParser(
+        description="Launch the Excel Copilot Flet application.")
+    parser.add_argument("--host", help="Host interface to bind the Flet web server.")
+    parser.add_argument("--port", type=int, help="Port to bind the Flet web server.")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="Run without launching the bundled Flet viewer.")
+    parser.add_argument("--web-renderer", choices=["auto", "html", "canvaskit"],
+                        help="Select the Flet web renderer variant.")
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    ft.app(target=main, view=ft.AppView.WEB_BROWSER)
+    args = _parse_cli_args()
+    app_kwargs = dict(target=main)
+    if args.host:
+        app_kwargs["host"] = args.host
+    if args.port:
+        app_kwargs["port"] = args.port
+    if args.web_renderer:
+        app_kwargs["web_renderer"] = args.web_renderer
+    if args.no_browser or COPILOT_HEADLESS:
+        app_kwargs["view"] = None
+    else:
+        app_kwargs["view"] = ft.AppView.WEB_BROWSER
+    ft.app(**app_kwargs)
