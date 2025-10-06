@@ -18,6 +18,7 @@ _MAX_RICH_TEXT_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LENGTH', '800
 _MAX_RICH_TEXT_SPANS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_SPANS', '48'))
 _MAX_RICH_TEXT_TOTAL_SPAN_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_TOTAL', '1200'))
 _MAX_RICH_TEXT_LINE_BREAKS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BREAKS', '12'))
+_ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '0').lower() in {'1', 'true', 'yes', 'on'}
 
 
 def _diff_debug(message: str) -> None:
@@ -327,6 +328,13 @@ class ExcelActions:
             _diff_debug(
                 f"apply_diff_highlight_colors start range={cell_range} sheet={sheet_name} rows={len(style_matrix)}"
             )
+            if not _ENABLE_RICH_DIFF_COLORS:
+                _diff_debug('apply_diff_highlight_colors disabled via configuration')
+                self.log_progress(
+                    "Skipped diff coloring; EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS is disabled. Text markers remain."
+                )
+                return
+
             sheet = self._get_sheet(sheet_name)
             target_range = sheet.range(cell_range)
             rows = target_range.rows.count
