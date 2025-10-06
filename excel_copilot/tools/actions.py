@@ -170,169 +170,49 @@ class ExcelActions:
             raise ToolExecutionError(f"範囲 '{cell_range}' への書き込み中に予期せぬエラーが発生しました: {e}")
 
     def _apply_text_wrapping(self, target_range: xw.Range) -> None:
-        """Turn on wrapping, align to top-left, and auto-fit within sensible bounds."""
+        """Turn on wrapping and align text without heavy COM operations."""
 
-        _review_debug(f"_apply_text_wrapping start address={target_range.address}")
+        range_address = None
         try:
-            target_range.api.HorizontalAlignment = -4131  # xlLeft
-            target_range.api.VerticalAlignment = -4160  # xlTop
+            range_address = target_range.address
         except Exception:
+            pass
+        _review_debug(f"_apply_text_wrapping start address={range_address}")
+
+        def _try_setattr(obj, attr, value):
             try:
-                for cell in target_range.cells:
-                    try:
-                        cell.api.HorizontalAlignment = -4131
-                        cell.api.VerticalAlignment = -4160
-                    except Exception:
-                        continue
+                setattr(obj, attr, value)
+                return True
             except Exception:
-                pass
+                return False
 
-        try:
-            for column in target_range.columns:
-                try:
-                    existing_width = column.column_width
-                except Exception:
-                    existing_width = None
-                desired = self._preferred_column_width
-                if existing_width is not None and existing_width > 0:
-                    desired = max(existing_width, self._preferred_column_width)
-                desired = max(self._column_width_floor, min(desired, self._column_width_cap))
-                try:
-                    column.column_width = desired
-                except Exception:
-                    try:
-                        column.api.ColumnWidth = desired
-                    except Exception:
-                        continue
-        except Exception:
-            pass
+        # Try the API object first for alignment.
+        target_api = getattr(target_range, 'api', None)
+        if target_api is not None:
+            _try_setattr(target_api, 'HorizontalAlignment', -4131)  # xlLeft
+            _try_setattr(target_api, 'VerticalAlignment', -4160)    # xlTop
+        _try_setattr(target_range, 'horizontal_alignment', 'left')
+        _try_setattr(target_range, 'vertical_alignment', 'top')
 
-        try:
-            target_range.rows.autofit()
-        except Exception:
+        # Enable wrap text; avoid iterating over every cell/column to keep COM calls minimal.
+        wrap_applied = False
+        if hasattr(target_range, 'wrap_text'):
             try:
-                target_range.api.EntireRow.AutoFit()
+                target_range.wrap_text = True
+                wrap_applied = True
             except Exception:
-                pass
+                wrap_applied = False
 
-        try:
-            row_iterable = list(target_range.rows)
-        except Exception:
-            row_iterable = []
+        if not wrap_applied and target_api is not None:
+            if _try_setattr(target_api, 'WrapText', True):
+                wrap_applied = True
+            else:
+                cells_api = getattr(target_api, 'Cells', None)
+                if cells_api is not None:
+                    _try_setattr(cells_api, 'WrapText', True)
+                    wrap_applied = True
 
-        def _effective_width(cell: xw.Range) -> float:
-            try:
-                width_value = cell.column_width
-            except Exception:
-                width_value = None
-            if width_value is None or width_value <= 0:
-                width_value = self._preferred_column_width
-            return max(self._column_width_floor, min(width_value, self._column_width_cap))
-
-        for row in row_iterable:
-            try:
-                cells_iterable = list(row.cells)
-            except Exception:
-                cells_iterable = []
-
-            max_lines = 1
-            for cell in cells_iterable:
-                try:
-                    value = cell.value
-                except Exception:
-                    value = None
-                if value is None:
-                    continue
-                text = str(value)
-                if not text:
-                    continue
-                width_hint = _effective_width(cell)
-                approx_lines = max(1, math.ceil(len(text) / max(1, width_hint - 2)))
-                max_lines = max(max_lines, min(approx_lines, self._max_row_height // self._line_height))
-
-            desired_height = max(self._min_row_height, min(self._max_row_height, max_lines * self._line_height))
-            try:
-                current_height = row.row_height
-            except Exception:
-                current_height = None
-
-            if current_height is None or current_height < desired_height - 1:
-                try:
-                    row.row_height = desired_height
-                except Exception:
-                    try:
-                        row.api.RowHeight = desired_height
-                    except Exception:
-                        continue
-
-        try:
-            target_range.wrap_text = True
-        except Exception:
-            pass
-
-        try:
-            target_range.api.WrapText = True
-        except Exception:
-            pass
-
-        try:
-            target_range.api.Cells.WrapText = True
-        except Exception:
-            pass
-
-        try:
-            target_range.api.wrap_text.set(True)
-        except Exception:
-            pass
-
-        try:
-            target_range.api.cells.wrap_text.set(True)
-        except Exception:
-            pass
-
-        try:
-            for column in target_range.columns:
-                try:
-                    column.wrap_text = True
-                except Exception:
-                    try:
-                        column.api.WrapText = True
-                    except Exception:
-                        try:
-                            column.api.wrap_text.set(True)
-                        except Exception:
-                            continue
-        except Exception:
-            pass
-
-        try:
-            sheet_obj = target_range.sheet
-            address = target_range.address
-            if sheet_obj is not None and address:
-                try:
-                    sheet_range = sheet_obj.range(address)
-                    sheet_range.wrap_text = True
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        try:
-            for cell in target_range.cells:
-                try:
-                    cell.wrap_text = True
-                except Exception:
-                    try:
-                        cell.api.WrapText = True
-                    except Exception:
-                        try:
-                            cell.api.wrap_text.set(True)
-                        except Exception:
-                            continue
-        except Exception:
-            pass
-
-        _review_debug(f"_apply_text_wrapping end address={target_range.address}")
+        _review_debug(f"_apply_text_wrapping end address={range_address} wrap_applied={wrap_applied}")
 
     def apply_diff_highlight_colors(self,
                                     cell_range: str,
