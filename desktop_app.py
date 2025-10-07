@@ -163,10 +163,19 @@ class CopilotApp:
             animate_opacity=300,
             animate_scale=600,
         )
-
-        header_section = ft.Container(
-            content=self.status_label,
-            padding=ft.Padding(0, 0, 0, 12),
+        status_chip = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=18, color=palette["primary"]),
+                    self.status_label,
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            bgcolor=palette["surface_variant"],
+            border_radius=18,
+            padding=ft.Padding(16, 12, 16, 12),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
         )
 
         button_shape = ft.RoundedRectangleBorder(radius=18)
@@ -248,6 +257,7 @@ class CopilotApp:
             ),
             content=ft.Column(
                 [
+                    status_chip,
                     ft.Column(
                         [
                             ft.Text("\u30d6\u30c3\u30af", size=13, color=palette["on_surface_variant"]),
@@ -266,7 +276,7 @@ class CopilotApp:
                         alignment=ft.MainAxisAlignment.END,
                     ),
                 ],
-                spacing=20,
+                spacing=28,
                 tight=True,
             ),
         )
@@ -323,6 +333,7 @@ class CopilotApp:
 
         chat_panel = ft.Container(
             expand=True,
+            height=540,
             bgcolor=palette["surface_high"],
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
@@ -334,7 +345,6 @@ class CopilotApp:
                 offset=ft.Offset(0, 10),
             ),
             clip_behavior=ft.ClipBehavior.NONE,
-            min_height=520,
             content=ft.Column(
                 [
                     self.chat_list,
@@ -384,7 +394,6 @@ class CopilotApp:
             controls=[chat_panel, composer_panel],
             expand=True,
             spacing=24,
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
         layout = ft.ResponsiveRow(
@@ -406,14 +415,8 @@ class CopilotApp:
         )
 
         page_body = ft.Column(
-            controls=[
-                ft.Container(
-                    content=header_section,
-                    padding=ft.Padding(0, 0, 0, 12),
-                ),
-                layout,
-            ],
-            spacing=28,
+            controls=[layout],
+            spacing=0,
             expand=True,
         )
 
