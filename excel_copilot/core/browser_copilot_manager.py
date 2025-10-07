@@ -306,18 +306,50 @@ class BrowserCopilotManager:
         except Exception:
             print("警告: クリップボードへのコピーに失敗したためキーボード挿入にフォールバックします。")
 
-        if clipboard_ready:
-            try:
-                chat_input.press(f"{modifier}+V")
-            except Exception:
-                try:
-                    self.page.keyboard.press(f"{modifier}+V")
-                except Exception:
-                    clipboard_ready = False
-                    print("警告: 貼り付けに失敗したためキーボード挿入にフォールバックします。")
+        current_text = ""
 
-        self.page.wait_for_timeout(400)
-        current_text = self._read_chat_input_text(chat_input)
+        if clipboard_ready:
+            clipboard_success = False
+            for attempt in range(3):
+                try:
+                    chat_input.focus()
+                except Exception:
+                    pass
+                pasted = False
+                try:
+                    chat_input.press(f"{modifier}+V")
+                    pasted = True
+                except Exception:
+                    try:
+                        self.page.keyboard.press(f"{modifier}+V")
+                        pasted = True
+                    except Exception as paste_error:
+                        print(f"警告: クリップボード貼り付けに失敗しました: {paste_error}")
+                if pasted:
+                    try:
+                        self.page.wait_for_timeout(200)
+                    except Exception:
+                        time.sleep(0.2)
+                    current_text = self._read_chat_input_text(chat_input)
+                    if current_text:
+                        clipboard_success = True
+                        break
+                try:
+                    pyperclip.copy(clipboard_value)
+                except Exception as recopy_error:
+                    print(f"警告: クリップボードの再コピーに失敗しました: {recopy_error}")
+                    clipboard_ready = False
+                    break
+            if not clipboard_success and clipboard_ready:
+                print("警告: クリップボード貼り付け結果が空だったため代替手段を試みます。")
+        else:
+            try:
+                self.page.wait_for_timeout(200)
+            except Exception:
+                time.sleep(0.2)
+
+        if not current_text:
+            current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
             try:
@@ -335,22 +367,10 @@ class BrowserCopilotManager:
                 chat_input.focus()
             except Exception:
                 pass
-            self.page.wait_for_timeout(200)
-            current_text = self._read_chat_input_text(chat_input)
-
-        if not current_text:
             try:
-                chat_input.focus()
+                self.page.wait_for_timeout(200)
             except Exception:
-                pass
-            try:
-                self.page.keyboard.type(prompt, delay=0.015)
-            except Exception:
-                try:
-                    chat_input.type(prompt, delay=0.015)
-                except Exception:
-                    pass
-            self.page.wait_for_timeout(200)
+                time.sleep(0.2)
             current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
@@ -382,8 +402,29 @@ class BrowserCopilotManager:
             except Exception:
                 injected = False
             if injected:
-                self.page.wait_for_timeout(200)
+                try:
+                    self.page.wait_for_timeout(200)
+                except Exception:
+                    time.sleep(0.2)
                 current_text = self._read_chat_input_text(chat_input)
+
+        if not current_text:
+            try:
+                chat_input.focus()
+            except Exception:
+                pass
+            try:
+                self.page.keyboard.type(prompt, delay=0.015)
+            except Exception:
+                try:
+                    chat_input.type(prompt, delay=0.015)
+                except Exception:
+                    pass
+            try:
+                self.page.wait_for_timeout(200)
+            except Exception:
+                time.sleep(0.2)
+            current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
             raise RuntimeError("Failed to populate the chat input with the prompt.")
