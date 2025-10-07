@@ -48,6 +48,7 @@ _MAX_RICH_TEXT_TOTAL_SPAN_LENGTH = _read_int_env(
 )
 _MAX_RICH_TEXT_LINE_BREAKS = _read_int_env('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BREAKS', 256, minimum=0, maximum=2048)
 _ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '1').lower() in {'1', 'true', 'yes', 'on'}
+_FORCE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_FORCE_RICH_DIFF_COLORS', '').lower() in {'1', 'true', 'yes', 'on'}
 
 
 _MAX_CHARWISE_DIFF_SPAN = 400
@@ -117,6 +118,9 @@ class ExcelActions:
         self._min_row_height = 16
         self._line_height = 14
         self._max_row_height = 360
+        self._diff_colors_platform_ready = _FORCE_RICH_DIFF_COLORS or sys.platform.lower() != 'darwin'
+        self._diff_colors_supported = _ENABLE_RICH_DIFF_COLORS and self._diff_colors_platform_ready
+        self._diff_color_warning_sent = False
 
     def set_progress_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         self._progress_callback = callback
@@ -135,6 +139,19 @@ class ExcelActions:
         messages = self._progress_buffer[:]
         self._progress_buffer.clear()
         return messages
+
+    def supports_diff_highlight_colors(self) -> bool:
+        """Return True if rich diff coloring is supported on this platform."""
+        return self._diff_colors_supported
+
+    def notify_diff_colors_unavailable(self) -> None:
+        """Log a warning once when diff coloring is not supported."""
+        if self._diff_colors_platform_ready or self._diff_color_warning_sent:
+            return
+        self.log_progress(
+            "Diff coloring skipped: この環境のExcelはセル内の部分的な文字色変更をサポートしていません。テキストマーカーを残します。"
+        )
+        self._diff_color_warning_sent = True
 
     def _get_sheet(self, sheet_name: Optional[str] = None) -> xw.Sheet:
         try:
@@ -320,16 +337,26 @@ class ExcelActions:
                 _diff_debug("apply_diff_highlight_colors empty style matrix")
                 _review_debug(f"apply_diff_highlight_colors start range={cell_range} skipped (empty style matrix)")
                 return
-            _diff_debug(
-                f"apply_diff_highlight_colors start range={cell_range} sheet={sheet_name} rows={len(style_matrix)}"
-            )
-            _review_debug(f"apply_diff_highlight_colors start range={cell_range} sheet={sheet_name} rows={len(style_matrix)}")
             if not _ENABLE_RICH_DIFF_COLORS:
                 _diff_debug('apply_diff_highlight_colors disabled via configuration')
                 self.log_progress(
                     "Skipped diff coloring; EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS is disabled. Text markers remain."
                 )
                 return
+            if not self._diff_colors_platform_ready:
+                has_spans = any(
+                    isinstance(row_styles, list) and any(isinstance(cell_spans, list) and cell_spans for cell_spans in row_styles)
+                    for row_styles in style_matrix
+                )
+                if has_spans:
+                    self.notify_diff_colors_unavailable()
+                _diff_debug("apply_diff_highlight_colors skipped: diff colors unsupported on this platform")
+                _review_debug(f"apply_diff_highlight_colors skipped range={cell_range} unsupported platform")
+                return
+            _diff_debug(
+                f"apply_diff_highlight_colors start range={cell_range} sheet={sheet_name} rows={len(style_matrix)}"
+            )
+            _review_debug(f"apply_diff_highlight_colors start range={cell_range} sheet={sheet_name} rows={len(style_matrix)}")
 
             sheet = self._get_sheet(sheet_name)
             target_range = sheet.range(cell_range)

@@ -752,6 +752,76 @@ def _attach_highlight_labels(text: str, spans: List[Dict[str, int]]) -> Tuple[st
     return modified_text, updated_spans
 
 
+def _render_textual_diff_markup(
+    text: str,
+    spans: List[Dict[str, int]],
+    addition_marker: str = "[ADD]",
+    deletion_marker: str = "[DEL]",
+) -> str:
+    """
+    Wrap diff spans with textual markers when rich text coloring is unavailable.
+    """
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    if not spans:
+        return text
+
+    text_len = len(text)
+    normalized_spans: List[Tuple[int, int, str]] = []
+
+    for span in spans:
+        if not isinstance(span, dict):
+            continue
+        try:
+            start = int(span.get("start", 0))
+            length = int(span.get("length", 0))
+        except Exception:
+            continue
+        if length <= 0:
+            continue
+        span_type = str(span.get("type", "")).strip().upper()
+        if span_type in {"ADD", "ADDITION", "INSERT", "INSERTED", "追加"}:
+            marker = addition_marker
+        elif span_type in {"DEL", "DELETION", "DELETE", "REMOVED", "削除"}:
+            marker = deletion_marker
+        else:
+            continue
+        start = max(start, 0)
+        end = start + length
+        if start >= text_len:
+            continue
+        if end > text_len:
+            end = text_len
+        if end <= start:
+            continue
+        normalized_spans.append((start, end, marker))
+
+    if not normalized_spans:
+        return text
+
+    normalized_spans.sort(key=lambda item: item[0])
+    pieces: List[str] = []
+    cursor = 0
+
+    for start, end, marker in normalized_spans:
+        if cursor < start:
+            pieces.append(text[cursor:start])
+            segment_start = start
+        else:
+            segment_start = cursor
+        if segment_start >= end:
+            continue
+        pieces.append(marker)
+        pieces.append(text[segment_start:end])
+        pieces.append(marker)
+        cursor = max(cursor, end)
+
+    if cursor < text_len:
+        pieces.append(text[cursor:])
+
+    return ''.join(pieces)
+
+
 def writetocell(actions: ExcelActions, cell: str, value: Any, sheetname: Optional[str] = None) -> str:
     """Write a value into a single Excel cell.
 
@@ -2157,6 +2227,8 @@ def check_translation_quality(
         highlight_matrix = [] if highlight_output_range else None
         highlight_styles = [] if highlight_output_range else None
 
+        supports_rich_diff_colors = getattr(actions, "supports_diff_highlight_colors", lambda: True)()
+
         if highlight_matrix is not None:
             for r in range(src_rows):
                 _ensure_not_stopped()
@@ -2599,6 +2671,12 @@ def check_translation_quality(
                         if not highlight_text:
                             highlight_text = corrected_text_str
                         highlight_text, highlight_spans = _attach_highlight_labels(highlight_text, highlight_spans)
+                        if highlight_spans and not supports_rich_diff_colors:
+                            notify_unavailable = getattr(actions, "notify_diff_colors_unavailable", None)
+                            if callable(notify_unavailable):
+                                notify_unavailable()
+                            highlight_text = _render_textual_diff_markup(highlight_text, highlight_spans)
+                            highlight_spans = []
                         # Keep highlight_text unchanged after span generation so offsets stay accurate.
                         _log_debug(f"highlight entry r={row_idx} c={col_idx} text={highlight_text} spans={highlight_spans}")
                         highlight_matrix[row_idx][col_idx] = highlight_text
@@ -2701,6 +2779,7 @@ def highlight_text_differences(
 
         highlight_matrix: List[List[str]] = []
         highlight_styles: List[List[List[Dict[str, int]]]] = []
+        supports_rich_diff_colors = getattr(actions, "supports_diff_highlight_colors", lambda: True)()
 
         for r in range(original_rows):
             text_row: List[str] = []
@@ -2711,6 +2790,12 @@ def highlight_text_differences(
                 _diff_debug(f"highlight_text_differences cell=({r},{c}) before={_shorten_debug(before_text)} after={_shorten_debug(after_text)}")
                 highlight_text, spans = _build_diff_highlight(before_text, after_text)
                 _diff_debug(f"highlight_text_differences spans= {spans}")
+                if spans and not supports_rich_diff_colors:
+                    notify_unavailable = getattr(actions, "notify_diff_colors_unavailable", None)
+                    if callable(notify_unavailable):
+                        notify_unavailable()
+                    highlight_text = _render_textual_diff_markup(highlight_text, spans)
+                    spans = []
                 text_row.append(highlight_text)
                 style_row.append(spans)
             highlight_matrix.append(text_row)
