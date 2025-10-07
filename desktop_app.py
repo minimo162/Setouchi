@@ -77,6 +77,7 @@ class CopilotApp:
         self.save_log_button: Optional[ft.TextButton] = None
         self.workbook_refresh_button: Optional[ft.TextButton] = None
         self.browser_reset_button: Optional[ft.TextButton] = None
+        self.quick_prompts_panel: Optional[ft.Control] = None
 
         self.chat_history: list[dict[str, str]] = []
         self.history_lock = threading.Lock()
@@ -354,6 +355,7 @@ class CopilotApp:
             fill_color=palette["surface_variant"],
             text_style=ft.TextStyle(color=palette["on_surface"]),
             hint_style=ft.TextStyle(color=palette["on_surface_variant"]),
+            content_padding=ft.Padding(18, 16, 18, 16),
         )
         self._apply_mode_to_input_placeholder()
 
@@ -394,16 +396,17 @@ class CopilotApp:
 
         chat_panel = ft.Container(
             expand=True,
-            gradient=elevated_surface_gradient(),
+            bgcolor=palette["surface_high"],
             border_radius=28,
             padding=ft.Padding(28, 28, 28, 24),
-            border=ft.border.all(1, palette["outline_variant"]),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.12, palette["outline"])),
             shadow=ft.BoxShadow(
                 spread_radius=0,
-                blur_radius=32,
-                color="#10152F99",
-                offset=ft.Offset(0, 18),
+                blur_radius=28,
+                color="#080C1A66",
+                offset=ft.Offset(0, 16),
             ),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
                 [
                     ft.Row(
@@ -455,17 +458,37 @@ class CopilotApp:
             spacing=18,
         )
 
+        quick_prompt_panel = self._build_quick_prompt_cards()
+        self.quick_prompts_panel = quick_prompt_panel
+
+        composer_subtext = ft.Column(
+            [
+                ft.Text(
+                    "Enterで送信・Shift+Enterで改行できます。",
+                    size=11,
+                    color=palette["on_surface_variant"],
+                ),
+                ft.Text(
+                    "AIの回答には誤りが含まれる場合があります。重要な判断は必ず確認してください。",
+                    size=11,
+                    color=ft.Colors.with_opacity(0.8, palette["on_surface_variant"]),
+                ),
+            ],
+            spacing=4,
+        )
+
         composer_panel = ft.Container(
-            gradient=elevated_surface_gradient(),
+            bgcolor=palette["surface_high"],
             border_radius=28,
             padding=ft.Padding(28, 28, 28, 28),
-            border=ft.border.all(1, palette["outline_variant"]),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.12, palette["outline"])),
             shadow=ft.BoxShadow(
                 spread_radius=0,
-                blur_radius=32,
-                color="#10152F99",
-                offset=ft.Offset(0, 18),
+                blur_radius=28,
+                color="#080C1A66",
+                offset=ft.Offset(0, 16),
             ),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
                 [
                     ft.Row(
@@ -508,7 +531,9 @@ class CopilotApp:
                         padding=ft.Padding(16, 12, 16, 12),
                         border=ft.border.all(1, palette["outline_variant"]),
                     ),
+                    quick_prompt_panel,
                     composer_input,
+                    composer_subtext,
                 ],
                 spacing=24,
             ),
@@ -594,6 +619,90 @@ class CopilotApp:
         else:
             e.control.scale = 1
         e.control.update()
+
+    def _build_quick_prompt_cards(self) -> ft.ResponsiveRow:
+        palette = EXPRESSIVE_PALETTE
+        suggestions = [
+            {
+                "title": "\u30b7\u30fc\u30c8\u3092\u8981\u7d04",
+                "description": "\u30c7\u30fc\u30bf\u306e\u30cf\u30a4\u30e9\u30a4\u30c8\u3068\u8907\u6570\u306e\u8981\u70b9\u3092\u6559\u3048\u3066",
+                "prompt": "\u3053\u306e\u30b7\u30fc\u30c8\u5168\u4f53\u306e\u30c7\u30fc\u30bf\u3092\u8981\u7d04\u3057\u3001\u4e3b\u8981\u306a\u5897\u6e1b\u3068\u6c17\u306b\u306a\u308b\u30d1\u30bf\u30fc\u30f3\u3092\u5c55\u958b\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+            },
+            {
+                "title": "\u7ffb\u8a33\u3092\u8981\u6c42",
+                "description": "\u9078\u629e\u7bc4\u56f2\u3092\u5229\u7528\u3057\u3066\u81ea\u52d5\u7ffb\u8a33",
+                "prompt": "\u9078\u629e\u4e2d\u306e\u30bb\u30eb\u5185\u5bb9\u3092\u65e5\u672c\u8a9e\u304b\u3089\u82f1\u8a9e\u306b\u7ffb\u8a33\u3057\u3001\u7ffb\u8a33\u7d50\u679c\u3092\u96a0\u308c\u306a\u304f\u5c55\u958b\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+            },
+            {
+                "title": "\u30c7\u30fc\u30bf\u691c\u8a3c",
+                "description": "\u975e\u4e00\u81f4\u30fb\u30d7\u30ec\u30b9\u3092\u78ba\u8a8d",
+                "prompt": "\u30c7\u30fc\u30bf\u306b\u4e0d\u6b63\u786c\u76f4\u3084\u591a\u6570\u306e\u30b9\u30da\u30eb\u30df\u30b9\u304c\u3042\u308b\u304b\u691c\u8a3c\u3057\u3001\u30aa\u30d5\u30ec\u30dd\u30fc\u30c8\u3092\u4f5c\u6210\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+            },
+        ]
+        cards: list[ft.Control] = []
+        for item in suggestions:
+            prompt = item["prompt"]
+            card_body = ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Container(
+                                    width=24,
+                                    height=24,
+                                    bgcolor=ft.Colors.with_opacity(0.18, palette["primary"]),
+                                    border_radius=12,
+                                    alignment=ft.alignment.center,
+                                    content=ft.Icon(ft.Icons.BOLT, size=14, color=palette["on_primary"]),
+                                ),
+                                ft.Text(item["title"], size=13, weight=ft.FontWeight.BOLD, color=palette["on_surface"]),
+                            ],
+                            spacing=10,
+                            alignment=ft.MainAxisAlignment.START,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Text(
+                            item["description"],
+                            size=11,
+                            color=palette["on_surface_variant"],
+                        ),
+                    ],
+                    spacing=8,
+                    tight=True,
+                ),
+                bgcolor=palette["surface_variant"],
+                border_radius=20,
+                padding=ft.Padding(18, 16, 18, 16),
+                border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline_variant"])),
+                ink=True,
+                on_click=lambda e, text=prompt: self._apply_quick_prompt(text),
+            )
+            cards.append(
+                ft.Container(
+                    content=card_body,
+                    col={"sm": 12, "md": 6, "lg": 4},
+                )
+            )
+
+        return ft.ResponsiveRow(
+            controls=cards,
+            spacing=16,
+            run_spacing=16,
+        )
+
+    def _apply_quick_prompt(self, prompt: str):
+        if not self.user_input:
+            return
+        current_value = self.user_input.value or ""
+        if current_value.strip():
+            self.user_input.value = f"{current_value.rstrip()}\n{prompt}"
+        else:
+            self.user_input.value = prompt
+        try:
+            self.user_input.focus()
+        except Exception:
+            pass
+        self.user_input.update()
 
     def _apply_mode_to_input_placeholder(self):
         if not self.user_input:
