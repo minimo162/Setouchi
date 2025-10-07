@@ -5,6 +5,7 @@ from typing import Union
 import flet as ft
 
 from .messages import ResponseType
+from .theme import EXPRESSIVE_PALETTE, primary_surface_gradient
 
 
 class ChatMessage(ft.ResponsiveRow):
@@ -18,55 +19,66 @@ class ChatMessage(ft.ResponsiveRow):
         self.offset = ft.Offset(0, 0.1)
         self.animate_offset = 300
 
-        palette = {
-            "primary_container": "#4F378B",
-            "on_primary_container": "#EADDFF",
-            "secondary_container": "#4A4458",
-            "on_secondary_container": "#E8DEF8",
-            "tertiary_container": "#633B48",
-            "on_tertiary_container": "#FFD8E4",
-            "neutral_container": "#332D41",
-            "on_neutral_container": "#E8DEF8",
-            "surface_variant": "#49454F",
-            "on_surface_variant": "#CAC4D0",
-            "error_container": "#8C1D18",
-            "on_error_container": "#F9DEDC",
-        }
+        palette = EXPRESSIVE_PALETTE
+
+        def _final_answer_gradient() -> ft.LinearGradient:
+            return ft.LinearGradient(
+                begin=ft.alignment.top_left,
+                end=ft.alignment.bottom_right,
+                colors=[
+                    palette["tertiary"],
+                    palette["primary"],
+                ],
+            )
 
         type_map = {
             "user": {
-                "bgcolor": palette["primary_container"],
+                "gradient_factory": primary_surface_gradient,
                 "icon": ft.Icons.PERSON_ROUNDED,
-                "icon_color": palette["on_primary_container"],
-                "text_style": {"color": palette["on_primary_container"], "size": 14},
+                "icon_color": palette["on_primary"],
+                "icon_gradient_factory": primary_surface_gradient,
+                "border_color": ft.Colors.with_opacity(0.2, palette["on_primary"]),
+                "text_style": {"color": palette["on_primary"], "size": 14},
             },
             "thought": {
                 "bgcolor": palette["secondary_container"],
                 "icon": ft.Icons.LIGHTBULB_OUTLINE,
                 "icon_color": palette["on_secondary_container"],
+                "icon_bgcolor": ft.Colors.with_opacity(0.22, palette["secondary"]),
                 "text_style": {"color": palette["on_secondary_container"], "size": 13},
                 "title": "AI Thought",
+                "border_color": ft.Colors.with_opacity(0.24, palette["secondary"]),
             },
             "action": {
                 "bgcolor": palette["surface_variant"],
                 "icon": ft.Icons.CODE,
                 "icon_color": palette["on_surface_variant"],
-                "text_style": {"font_family": "monospace", "color": palette["on_surface_variant"], "size": 13},
+                "icon_bgcolor": ft.Colors.with_opacity(0.18, palette["primary"]),
+                "text_style": {
+                    "font_family": "monospace",
+                    "color": palette["on_surface_variant"],
+                    "size": 13,
+                },
                 "title": "Action",
+                "border_color": ft.Colors.with_opacity(0.2, palette["outline"]),
             },
             "observation": {
-                "bgcolor": palette["neutral_container"],
+                "bgcolor": palette["surface"],
                 "icon": ft.Icons.FIND_IN_PAGE_OUTLINED,
-                "icon_color": palette["on_neutral_container"],
-                "text_style": {"color": palette["on_neutral_container"], "size": 13},
+                "icon_color": palette["on_surface"],
+                "icon_bgcolor": ft.Colors.with_opacity(0.16, palette["tertiary"]),
+                "text_style": {"color": palette["on_surface"], "size": 13},
                 "title": "Observation",
+                "border_color": ft.Colors.with_opacity(0.18, palette["outline_variant"]),
             },
             "final_answer": {
-                "bgcolor": palette["tertiary_container"],
+                "gradient_factory": _final_answer_gradient,
                 "icon": ft.Icons.CHECK_CIRCLE_OUTLINE,
-                "icon_color": palette["on_tertiary_container"],
-                "text_style": {"color": palette["on_tertiary_container"], "size": 14},
+                "icon_color": palette["inverse_surface"],
+                "icon_bgcolor": ft.Colors.with_opacity(0.24, palette["tertiary"]),
+                "text_style": {"color": palette["inverse_surface"], "size": 14},
                 "title": "Answer",
+                "border_color": ft.Colors.with_opacity(0.22, palette["tertiary"]),
             },
             "info": {
                 "text_style": {"color": palette["on_surface_variant"], "size": 12},
@@ -78,10 +90,12 @@ class ChatMessage(ft.ResponsiveRow):
             },
             "error": {
                 "icon": ft.Icons.ERROR_OUTLINE_ROUNDED,
-                "icon_color": palette["on_error_container"],
-                "bgcolor": palette["error_container"],
-                "text_style": {"color": palette["on_error_container"], "size": 13},
+                "icon_color": palette["on_error"],
+                "bgcolor": palette["error"],
+                "icon_bgcolor": ft.Colors.with_opacity(0.2, palette["error"]),
+                "text_style": {"color": palette["on_error"], "size": 13},
                 "title": "Error",
+                "border_color": ft.Colors.with_opacity(0.22, palette["on_error"]),
             },
         }
 
@@ -147,24 +161,43 @@ class ChatMessage(ft.ResponsiveRow):
             line_controls if line_controls else [ft.Text(msg_content, **text_style, selectable=True)]
         )
 
+        gradient_factory = config.get("gradient_factory")
+        gradient = gradient_factory() if callable(gradient_factory) else None
+        icon_gradient_factory = config.get("icon_gradient_factory")
+        icon_gradient = icon_gradient_factory() if callable(icon_gradient_factory) else None
+
+        border_color = config.get("border_color", ft.Colors.with_opacity(0.1, palette["outline_variant"]))
+
         message_bubble = ft.Container(
             content=ft.Column(content_controls, spacing=6, tight=True),
             bgcolor=config.get("bgcolor"),
-            border_radius=16,
-            padding=16,
+            gradient=gradient if gradient else None,
+            border_radius=20,
+            padding=ft.Padding(20, 18, 20, 18),
             expand=True,
             shadow=ft.BoxShadow(
                 spread_radius=1,
-                blur_radius=18,
-                color="#33000000",
-                offset=ft.Offset(2, 4),
+                blur_radius=24,
+                color="#10152F66",
+                offset=ft.Offset(0, 12),
             ),
+            border=ft.border.all(1, border_color),
         )
 
         icon_name = config.get("icon", ft.Icons.SMART_BUTTON)
-        icon_color = config.get("icon_color", "#CFD8DC")
+        icon_color = config.get("icon_color", palette["on_surface_variant"])
         icon = ft.Icon(name=icon_name, color=icon_color, size=20)
-        icon_container = ft.Container(icon, margin=ft.margin.only(right=8, left=8, top=3))
+        icon_container = ft.Container(
+            icon,
+            width=36,
+            height=36,
+            gradient=icon_gradient if icon_gradient else None,
+            bgcolor=config.get("icon_bgcolor"),
+            alignment=ft.alignment.center,
+            border_radius=12,
+            margin=ft.margin.only(right=12, left=12, top=4),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, icon_color)) if icon_gradient or config.get("icon_bgcolor") else None,
+        )
 
         bubble_and_icon_row = ft.Row(
             [icon_container, message_bubble] if msg_type_value != "user" else [message_bubble, icon_container],

@@ -30,6 +30,12 @@ from excel_copilot.ui.messages import (
     ResponseMessage,
     ResponseType,
 )
+from excel_copilot.ui.theme import (
+    EXPRESSIVE_PALETTE,
+    accent_glow_gradient,
+    elevated_surface_gradient,
+    primary_surface_gradient,
+)
 from excel_copilot.ui.worker import CopilotWorker
 
 if not logging.getLogger().handlers:
@@ -123,10 +129,12 @@ class CopilotApp:
         self.page.window.height = 768
         self.page.window.min_width = 960
         self.page.window.min_height = 600
-        self.page.theme = ft.Theme(color_scheme_seed="#6750A4", use_material3=True)
+        palette = EXPRESSIVE_PALETTE
+        self.page.theme = ft.Theme(color_scheme_seed=palette["primary"], use_material3=True)
         self.page.theme_mode = ft.ThemeMode.DARK
-        self.page.bgcolor = "#1D1B20"
-        self.page.padding = ft.Padding(24, 24, 24, 24)
+        self.page.bgcolor = palette["background"]
+        self.page.window.bgcolor = palette["background"]
+        self.page.padding = ft.Padding(0, 0, 0, 0)
         self.page.window.center()
         self.page.window.prevent_close = True
 
@@ -149,60 +157,87 @@ class CopilotApp:
             print(f"Excelウィンドウの前面表示に失敗しました: {focus_err}")
 
     def _build_layout(self):
+        palette = EXPRESSIVE_PALETTE
+
         self.title_label = ft.Text(
             "Excel Co-pilot",
-            size=24,
+            size=26,
             weight=ft.FontWeight.BOLD,
-            color="#EADDFF",
+            color=palette["on_surface"],
         )
         self.status_label = ft.Text(
             "\u521d\u671f\u5316\u4e2d...",
             size=12,
-            color="#CAC4D0",
+            color=palette["on_surface_variant"],
             animate_opacity=300,
             animate_scale=600,
         )
 
         self.page.appbar = ft.AppBar(
-            leading=ft.Icon(ft.Icons.TABLE_CHART_OUTLINED, color="#EADDFF"),
+            leading=ft.Container(
+                width=44,
+                height=44,
+                gradient=primary_surface_gradient(),
+                border_radius=14,
+                alignment=ft.alignment.center,
+                content=ft.Icon(
+                    ft.Icons.TABLE_CHART_OUTLINED,
+                    color=palette["on_primary"],
+                    size=24,
+                ),
+            ),
             title=ft.Column(
                 [self.title_label, self.status_label],
-                spacing=4,
+                spacing=2,
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.START,
             ),
             center_title=False,
-            bgcolor="#211F26",
-            elevation=2,
+            bgcolor=palette["surface"],
+            elevation=0,
         )
 
-        button_shape = ft.RoundedRectangleBorder(radius=12)
+        button_shape = ft.RoundedRectangleBorder(radius=18)
+        button_overlay = {
+            ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.1, palette["primary"]),
+            ft.MaterialState.PRESSED: ft.Colors.with_opacity(0.16, palette["primary"]),
+        }
+
         self.save_log_button = ft.FilledTonalButton(
             text="\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58",
             icon=ft.Icons.SAVE_OUTLINED,
             on_click=self._handle_save_log_click,
             disabled=True,
-            style=ft.ButtonStyle(shape=button_shape),
+            style=ft.ButtonStyle(
+                shape=button_shape,
+                padding=ft.Padding(18, 12, 18, 12),
+                overlay_color=button_overlay,
+            ),
         )
 
-        self.browser_reset_button = ft.OutlinedButton(
+        self.browser_reset_button = ft.FilledTonalButton(
             text="\u30d6\u30e9\u30a6\u30b6\u3092\u518d\u521d\u671f\u5316",
             icon=ft.Icons.REFRESH,
             on_click=self._handle_browser_reset_click,
             disabled=True,
-            style=ft.ButtonStyle(shape=button_shape),
+            style=ft.ButtonStyle(
+                shape=button_shape,
+                padding=ft.Padding(18, 12, 18, 12),
+                overlay_color=button_overlay,
+            ),
         )
 
         dropdown_style = {
-            "width": 240,
-            "border_radius": 12,
-            "border_color": "#4F378B",
-            "focused_border_color": "#D0BCFF",
-            "fill_color": "#2B2930",
-            "text_style": ft.TextStyle(color="#E6E0E9"),
-            "hint_style": ft.TextStyle(color="#9A8FAE"),
+            "width": 260,
+            "border_radius": 18,
+            "border_color": palette["outline_variant"],
+            "focused_border_color": palette["primary"],
+            "fill_color": palette["surface_variant"],
+            "text_style": ft.TextStyle(color=palette["on_surface"]),
+            "hint_style": ft.TextStyle(color=palette["on_surface_variant"]),
             "disabled": True,
             "filled": True,
+            "suffix_icon": ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, color=palette["on_surface_variant"]),
         }
 
         self.workbook_selector = ft.Dropdown(
@@ -236,58 +271,74 @@ class CopilotApp:
             icon=ft.Icons.SYNC,
             on_click=self._handle_workbook_refresh_click,
             disabled=True,
-            style=ft.ButtonStyle(shape=button_shape),
+            style=ft.ButtonStyle(
+                shape=button_shape,
+                padding=ft.Padding(18, 12, 18, 12),
+                overlay_color=button_overlay,
+            ),
         )
 
-        context_card = ft.Card(
-            content=ft.Container(
-                padding=ft.Padding(20, 20, 20, 20),
-                content=ft.Column(
-                    [
-                        ft.Text(
-                            "\u30b3\u30f3\u30c6\u30ad\u30b9\u30c8",
-                            size=16,
-                            weight=ft.FontWeight.BOLD,
-                            color="#E8DEF8",
-                        ),
-                        ft.Text(
-                            "\u51e6\u7406\u5bfe\u8c61\u3092\u9078\u629e\u3057\u307e\u3059",
-                            size=12,
-                            color="#CAC4D0",
-                        ),
-                        ft.Divider(color="#332D41", height=24),
-                        ft.Column(
-                            [
-                                ft.Text("\u30d6\u30c3\u30af", size=13, color="#CAC4D0"),
-                                self.workbook_selector_wrapper,
-                                ft.Text("\u30b7\u30fc\u30c8", size=13, color="#CAC4D0"),
-                                self.sheet_selector_wrapper,
-                            ],
-                            spacing=12,
-                        ),
-                        ft.Row(
-                            [self.workbook_refresh_button],
-                            alignment=ft.MainAxisAlignment.END,
-                        ),
-                        ft.Row(
-                            [
-                                ft.Container(content=self.save_log_button, expand=True),
-                                ft.Container(content=self.browser_reset_button, expand=True),
-                            ],
-                            spacing=12,
-                        ),
-                    ],
-                    spacing=16,
-                    tight=True,
-                ),
+        context_panel = ft.Container(
+            gradient=elevated_surface_gradient(),
+            border_radius=26,
+            padding=ft.Padding(24, 28, 24, 28),
+            border=ft.border.all(1, palette["outline_variant"]),
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=28,
+                color="#1A142F80",
+                offset=ft.Offset(0, 18),
+            ),
+            content=ft.Column(
+                [
+                    ft.Column(
+                        [
+                            ft.Text(
+                                "\u30b3\u30f3\u30c6\u30ad\u30b9\u30c8",
+                                size=17,
+                                weight=ft.FontWeight.BOLD,
+                                color=palette["on_surface"],
+                            ),
+                            ft.Text(
+                                "\u51e6\u7406\u5bfe\u8c61\u3092\u9078\u629e\u3057\u307e\u3059",
+                                size=12,
+                                color=palette["on_surface_variant"],
+                            ),
+                        ],
+                        spacing=4,
+                    ),
+                    ft.Divider(color=palette["outline_variant"], height=24),
+                    ft.Column(
+                        [
+                            ft.Text("\u30d6\u30c3\u30af", size=13, color=palette["on_surface_variant"]),
+                            self.workbook_selector_wrapper,
+                            ft.Text("\u30b7\u30fc\u30c8", size=13, color=palette["on_surface_variant"]),
+                            self.sheet_selector_wrapper,
+                        ],
+                        spacing=14,
+                    ),
+                    ft.Row(
+                        [self.workbook_refresh_button],
+                        alignment=ft.MainAxisAlignment.END,
+                    ),
+                    ft.Row(
+                        [
+                            ft.Container(content=self.save_log_button, expand=True),
+                            ft.Container(content=self.browser_reset_button, expand=True),
+                        ],
+                        spacing=12,
+                    ),
+                ],
+                spacing=18,
+                tight=True,
             ),
         )
 
         self.chat_list = ft.ListView(
             expand=True,
-            spacing=16,
+            spacing=18,
             auto_scroll=True,
-            padding=ft.Padding(0, 12, 0, 12),
+            padding=ft.Padding(0, 16, 0, 16),
         )
 
         self.user_input = ft.TextField(
@@ -297,11 +348,15 @@ class CopilotApp:
             min_lines=3,
             max_lines=5,
             on_submit=self._run_copilot,
-            border_radius=14,
-            border_color="#4F378B",
-            focused_border_color="#D0BCFF",
+            border_radius=18,
+            border_color=palette["outline_variant"],
+            focused_border_color=palette["primary"],
+            cursor_color=palette["primary"],
+            selection_color=ft.Colors.with_opacity(0.3, palette["primary"]),
             filled=True,
-            fill_color="#2B2930",
+            fill_color=palette["surface_variant"],
+            text_style=ft.TextStyle(color=palette["on_surface"]),
+            hint_style=ft.TextStyle(color=palette["on_surface_variant"]),
         )
         self._apply_mode_to_input_placeholder()
 
@@ -315,93 +370,156 @@ class CopilotApp:
                     ft.Radio(value=CopilotMode.REVIEW.value, label="\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af"),
                 ],
                 alignment=ft.MainAxisAlignment.START,
-                spacing=18,
+                spacing=24,
             ),
         )
 
         action_button_content = self._make_send_button()
         self.action_button = ft.Container(
             content=action_button_content,
-            width=56,
-            height=56,
-            bgcolor="#6750A4",
-            border_radius=28,
+            width=64,
+            height=64,
+            gradient=primary_surface_gradient(),
+            border_radius=32,
             alignment=ft.alignment.center,
             ink=True,
             on_hover=self._handle_button_hover,
             animate_scale=100,
             scale=1,
+            shadow=ft.BoxShadow(
+                spread_radius=2,
+                blur_radius=28,
+                color="#2A2BFF66",
+                offset=ft.Offset(0, 12),
+            ),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.2, palette["on_primary_container"])),
         )
 
-        chat_card = ft.Card(
+        chat_panel = ft.Container(
             expand=True,
-            content=ft.Container(
+            gradient=elevated_surface_gradient(),
+            border_radius=28,
+            padding=ft.Padding(28, 28, 28, 24),
+            border=ft.border.all(1, palette["outline_variant"]),
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=32,
+                color="#10152F99",
+                offset=ft.Offset(0, 18),
+            ),
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Container(
+                                width=38,
+                                height=38,
+                                gradient=primary_surface_gradient(),
+                                border_radius=14,
+                                alignment=ft.alignment.center,
+                                content=ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, size=20, color=palette["on_primary"]),
+                            ),
+                            ft.Column(
+                                [
+                                    ft.Text(
+                                        "\u30c1\u30e3\u30c3\u30c8",
+                                        size=18,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=palette["on_surface"],
+                                    ),
+                                    ft.Text(
+                                        "\u4f1a\u8a71\u3068\u5b9f\u884c\u5185\u5bb9\u304c\u8868\u793a\u3055\u308c\u307e\u3059",
+                                        size=12,
+                                        color=palette["on_surface_variant"],
+                                    ),
+                                ],
+                                spacing=4,
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                horizontal_alignment=ft.CrossAxisAlignment.START,
+                            ),
+                        ],
+                        spacing=14,
+                        alignment=ft.MainAxisAlignment.START,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Divider(color=palette["outline_variant"]),
+                    self.chat_list,
+                ],
+                spacing=20,
                 expand=True,
-                padding=ft.Padding(20, 20, 20, 20),
-                content=ft.Column(
-                    [
-                        ft.Row(
-                            [
-                                ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, size=20, color="#E8DEF8"),
-                                ft.Text(
-                                    "\u30c1\u30e3\u30c3\u30c8",
-                                    size=16,
-                                    weight=ft.FontWeight.BOLD,
-                                    color="#E8DEF8",
-                                ),
-                            ],
-                            spacing=8,
-                        ),
-                        ft.Divider(color="#332D41"),
-                        self.chat_list,
-                    ],
-                    spacing=16,
-                    expand=True,
-                ),
             ),
         )
 
-        composer_card = ft.Card(
-            content=ft.Container(
-                padding=ft.Padding(20, 20, 20, 20),
-                content=ft.Column(
-                    [
-                        ft.Row(
-                            [
-                                ft.Icon(ft.Icons.TUNE_ROUNDED, size=20, color="#E8DEF8"),
-                                ft.Text(
-                                    "\u30e2\u30fc\u30c9\u3068\u6307\u793a",
-                                    size=16,
-                                    weight=ft.FontWeight.BOLD,
-                                    color="#E8DEF8",
-                                ),
-                            ],
-                            spacing=8,
-                        ),
-                        ft.Container(
-                            content=self.mode_selector,
-                            bgcolor="#2B2930",
-                            border_radius=18,
-                            padding=ft.Padding(12, 8, 12, 8),
-                        ),
-                        self.user_input,
-                        ft.Row([self.action_button], alignment=ft.MainAxisAlignment.END),
-                    ],
-                    spacing=18,
-                ),
+        composer_panel = ft.Container(
+            gradient=elevated_surface_gradient(),
+            border_radius=28,
+            padding=ft.Padding(28, 28, 28, 28),
+            border=ft.border.all(1, palette["outline_variant"]),
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=32,
+                color="#10152F99",
+                offset=ft.Offset(0, 18),
+            ),
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Container(
+                                width=38,
+                                height=38,
+                                gradient=primary_surface_gradient(),
+                                border_radius=14,
+                                alignment=ft.alignment.center,
+                                content=ft.Icon(ft.Icons.TUNE_ROUNDED, size=20, color=palette["on_primary"]),
+                            ),
+                            ft.Column(
+                                [
+                                    ft.Text(
+                                        "\u30e2\u30fc\u30c9\u3068\u6307\u793a",
+                                        size=18,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=palette["on_surface"],
+                                    ),
+                                    ft.Text(
+                                        "\u51e6\u7406\u65b9\u91dd\u3092\u9078\u629e\u3057\u3001\u6307\u793a\u3092\u5165\u529b\u3057\u307e\u3059",
+                                        size=12,
+                                        color=palette["on_surface_variant"],
+                                    ),
+                                ],
+                                spacing=4,
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                horizontal_alignment=ft.CrossAxisAlignment.START,
+                            ),
+                        ],
+                        spacing=14,
+                        alignment=ft.MainAxisAlignment.START,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Container(
+                        content=self.mode_selector,
+                        bgcolor=palette["surface_variant"],
+                        border_radius=20,
+                        padding=ft.Padding(16, 12, 16, 12),
+                        border=ft.border.all(1, palette["outline_variant"]),
+                    ),
+                    self.user_input,
+                    ft.Row([self.action_button], alignment=ft.MainAxisAlignment.END),
+                ],
+                spacing=24,
             ),
         )
 
         main_column = ft.Column(
-            controls=[chat_card, composer_card],
+            controls=[chat_panel, composer_panel],
             expand=True,
-            spacing=16,
+            spacing=20,
         )
 
         layout = ft.ResponsiveRow(
             controls=[
                 ft.Container(
-                    content=ft.Column([context_card], spacing=16),
+                    content=ft.Column([context_panel], spacing=16),
                     col={"sm": 12, "md": 4, "lg": 3},
                 ),
                 ft.Container(
@@ -409,40 +527,66 @@ class CopilotApp:
                     col={"sm": 12, "md": 8, "lg": 9},
                 ),
             ],
-            spacing=20,
-            run_spacing=20,
+            spacing=24,
+            run_spacing=24,
             expand=True,
         )
 
-        self.page.add(layout)
+        background_overlay = ft.Container(
+            expand=True,
+            gradient=primary_surface_gradient(),
+            opacity=0.14,
+        )
+        glow_overlay = ft.Container(
+            expand=True,
+            gradient=accent_glow_gradient(),
+            opacity=0.25,
+        )
+        content_container = ft.Container(
+            content=layout,
+            expand=True,
+            padding=ft.Padding(32, 32, 32, 32),
+        )
+
+        self.page.add(ft.Stack([background_overlay, glow_overlay, content_container], expand=True))
 
     def _register_window_handlers(self):
         self.page.window.on_event = self._on_window_event
         self.page.on_disconnect = self._on_page_disconnect
 
     def _make_send_button(self) -> ft.IconButton:
+        palette = EXPRESSIVE_PALETTE
         return ft.IconButton(
             icon=ft.Icons.SEND_ROUNDED,
-            icon_color="#FFFFFF",
+            icon_color=palette["on_primary"],
             icon_size=24,
             tooltip="\u9001\u4fe1",
             on_click=self._run_copilot,
             style=ft.ButtonStyle(
                 shape=ft.CircleBorder(),
                 padding=ft.Padding(0, 0, 0, 0),
+                overlay_color={
+                    ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.1, palette["on_primary"]),
+                    ft.MaterialState.PRESSED: ft.Colors.with_opacity(0.18, palette["on_primary"]),
+                },
             ),
         )
 
     def _make_stop_button(self) -> ft.IconButton:
+        palette = EXPRESSIVE_PALETTE
         return ft.IconButton(
             icon=ft.Icons.STOP_ROUNDED,
-            icon_color="#FFFFFF",
+            icon_color=palette["on_error"],
             icon_size=24,
             tooltip="\u51e6\u7406\u3092\u505c\u6b62",
             on_click=self._stop_task,
             style=ft.ButtonStyle(
                 shape=ft.CircleBorder(),
                 padding=ft.Padding(0, 0, 0, 0),
+                overlay_color={
+                    ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.14, palette["error"]),
+                    ft.MaterialState.PRESSED: ft.Colors.with_opacity(0.2, palette["error"]),
+                },
             ),
         )
 
@@ -498,12 +642,12 @@ class CopilotApp:
         is_error = new_state is AppState.ERROR
         can_interact = is_ready or is_error
         status_palette = {
-            "base": "#CAC4D0",
-            "ready": "#D0BCFF",
-            "busy": "#B69DF8",
-            "error": "#F2B8B5",
-            "stopping": "#B69DF8",
-            "info": "#CAC4D0",
+            "base": EXPRESSIVE_PALETTE["on_surface_variant"],
+            "ready": EXPRESSIVE_PALETTE["primary"],
+            "busy": EXPRESSIVE_PALETTE["secondary"],
+            "error": EXPRESSIVE_PALETTE["error"],
+            "stopping": EXPRESSIVE_PALETTE["secondary"],
+            "info": EXPRESSIVE_PALETTE["on_surface_variant"],
         }
 
         if self.user_input:
@@ -1158,9 +1302,9 @@ class CopilotApp:
     def _display_response(self, response: ResponseMessage):
         type_value = response.metadata.get("source_type", response.type.value)
         status_palette = {
-            "base": "#CAC4D0",
-            "info": "#D0BCFF",
-            "error": "#F2B8B5",
+            "base": EXPRESSIVE_PALETTE["on_surface_variant"],
+            "info": EXPRESSIVE_PALETTE["primary"],
+            "error": EXPRESSIVE_PALETTE["error"],
         }
 
         if (
