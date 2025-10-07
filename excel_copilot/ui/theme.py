@@ -6,33 +6,33 @@ import flet as ft
 
 
 EXPRESSIVE_PALETTE: dict[str, str] = {
-    "primary": "#5A6BFF",
+    "primary": "#2C7BE5",
     "on_primary": "#FFFFFF",
-    "primary_container": "#2B2F7A",
-    "on_primary_container": "#E2E6FF",
-    "secondary": "#FF8A64",
-    "on_secondary": "#2A170F",
-    "secondary_container": "#442920",
-    "on_secondary_container": "#FFDACC",
-    "tertiary": "#20D3B9",
-    "on_tertiary": "#002922",
-    "tertiary_container": "#163F3A",
-    "on_tertiary_container": "#A5F5E8",
-    "background": "#0F172A",
-    "surface": "#131C31",
-    "surface_dim": "#0C1426",
-    "surface_high": "#1D2742",
-    "surface_variant": "#1F2A45",
-    "on_surface": "#E2E8F0",
-    "on_surface_variant": "#A3B2D8",
-    "outline": "#3E4B73",
-    "outline_variant": "#2C3759",
-    "inverse_surface": "#F4F7FF",
-    "inverse_on_surface": "#111321",
-    "error": "#FF5468",
+    "primary_container": "#D9E7FF",
+    "on_primary_container": "#082E5A",
+    "secondary": "#37A6C1",
+    "on_secondary": "#FFFFFF",
+    "secondary_container": "#C7F0FF",
+    "on_secondary_container": "#003441",
+    "tertiary": "#6CC68D",
+    "on_tertiary": "#00391C",
+    "tertiary_container": "#CFEFD7",
+    "on_tertiary_container": "#00210C",
+    "background": "#F5FAFF",
+    "surface": "#F7FBFF",
+    "surface_dim": "#E6EFF7",
+    "surface_high": "#FFFFFF",
+    "surface_variant": "#E0E7F5",
+    "on_surface": "#1F2A37",
+    "on_surface_variant": "#4A6075",
+    "outline": "#7A8EA2",
+    "outline_variant": "#C5D3E1",
+    "inverse_surface": "#1F2A37",
+    "inverse_on_surface": "#F0F4FA",
+    "error": "#BA1A1A",
     "on_error": "#FFFFFF",
-    "success": "#4ADE80",
-    "warning": "#FACC15",
+    "success": "#1C9A5B",
+    "warning": "#F7B628",
 }
 
 
@@ -42,9 +42,9 @@ def primary_surface_gradient() -> ft.LinearGradient:
         begin=ft.alignment.top_left,
         end=ft.alignment.bottom_right,
         colors=[
-            "#3B5BFF",
-            "#5A6BFF",
-            "#8A5BFF",
+            "#36A6FF",
+            "#2C7BE5",
+            "#37A6C1",
         ],
     )
 
@@ -55,8 +55,8 @@ def elevated_surface_gradient() -> ft.LinearGradient:
         begin=ft.alignment.top_center,
         end=ft.alignment.bottom_center,
         colors=[
-            "#1B2440",
-            "#1F2C4F",
+            "#EBF4FF",
+            "#DCE9F8",
         ],
     )
 
@@ -67,8 +67,8 @@ def accent_glow_gradient() -> ft.RadialGradient:
         center=ft.Alignment(0, 0),
         radius=1.2,
         colors=[
-            "#5A6BFF",
-            "#5A6BFF11",
+            "#2C7BE5",
+            "#2C7BE511",
         ],
     )
 
@@ -79,4 +79,3 @@ __all__ = [
     "elevated_surface_gradient",
     "accent_glow_gradient",
 ]
-
