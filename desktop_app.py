@@ -447,6 +447,14 @@ class CopilotApp:
             ),
         )
 
+        self.action_button.margin = ft.margin.only(left=18, bottom=6)
+
+        composer_input = ft.Row(
+            controls=[self.user_input, self.action_button],
+            vertical_alignment=ft.CrossAxisAlignment.END,
+            spacing=18,
+        )
+
         composer_panel = ft.Container(
             gradient=elevated_surface_gradient(),
             border_radius=28,
@@ -500,8 +508,7 @@ class CopilotApp:
                         padding=ft.Padding(16, 12, 16, 12),
                         border=ft.border.all(1, palette["outline_variant"]),
                     ),
-                    self.user_input,
-                    ft.Row([self.action_button], alignment=ft.MainAxisAlignment.END),
+                    composer_input,
                 ],
                 spacing=24,
             ),
