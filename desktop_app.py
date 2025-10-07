@@ -278,20 +278,6 @@ class CopilotApp:
             ),
             content=ft.Column(
                 [
-                    ft.Row(
-                        [
-                            ft.Container(
-                                width=34,
-                                height=34,
-                                gradient=primary_surface_gradient(),
-                                border_radius=12,
-                                alignment=ft.alignment.center,
-                                content=ft.Icon(ft.Icons.TABLE_ROWS_ROUNDED, size=18, color=palette["on_primary"]),
-                            ),
-                        ],
-                        alignment=ft.MainAxisAlignment.START,
-                    ),
-                    ft.Divider(color=palette["outline_variant"], height=20),
                     ft.Column(
                         [
                             ft.Text("\u30d6\u30c3\u30af", size=13, color=palette["on_surface_variant"]),
@@ -310,7 +296,7 @@ class CopilotApp:
                         alignment=ft.MainAxisAlignment.END,
                     ),
                 ],
-                spacing=18,
+                spacing=20,
                 tight=True,
             ),
         )
@@ -347,10 +333,10 @@ class CopilotApp:
         action_button_content = self._make_send_button()
         self.action_button = ft.Container(
             content=action_button_content,
-            width=56,
-            height=56,
+            width=48,
+            height=48,
             gradient=primary_surface_gradient(),
-            border_radius=28,
+            border_radius=24,
             alignment=ft.alignment.center,
             ink=True,
             on_hover=self._handle_button_hover,
@@ -369,7 +355,7 @@ class CopilotApp:
             expand=True,
             bgcolor=palette["surface_high"],
             border_radius=28,
-            padding=ft.Padding(28, 28, 28, 24),
+            padding=ft.Padding(28, 36, 28, 28),
             border=ft.border.all(1, ft.Colors.with_opacity(0.12, palette["outline"])),
             shadow=ft.BoxShadow(
                 spread_radius=0,
@@ -380,22 +366,6 @@ class CopilotApp:
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
                 [
-                    ft.Row(
-                        [
-                            ft.Container(
-                                width=38,
-                                height=38,
-                                gradient=primary_surface_gradient(),
-                                border_radius=14,
-                                alignment=ft.alignment.center,
-                                content=ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, size=20, color=palette["on_primary"]),
-                            ),
-                        ],
-                        spacing=14,
-                        alignment=ft.MainAxisAlignment.START,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    ft.Divider(color=palette["outline_variant"]),
                     self.chat_list,
                 ],
                 spacing=20,
@@ -403,7 +373,7 @@ class CopilotApp:
             ),
         )
 
-        self.action_button.margin = ft.margin.only(left=16, bottom=4)
+        self.action_button.margin = ft.margin.only(left=12, bottom=4)
 
         composer_input = ft.Row(
             controls=[self.user_input, self.action_button],
@@ -425,21 +395,6 @@ class CopilotApp:
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
                 [
-                    ft.Row(
-                        [
-                            ft.Container(
-                                width=38,
-                                height=38,
-                                gradient=primary_surface_gradient(),
-                                border_radius=14,
-                                alignment=ft.alignment.center,
-                                content=ft.Icon(ft.Icons.TUNE_ROUNDED, size=20, color=palette["on_primary"]),
-                            ),
-                        ],
-                        spacing=14,
-                        alignment=ft.MainAxisAlignment.START,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
                     ft.Container(
                         content=self.mode_card_row,
                         bgcolor=palette["surface_variant"],
@@ -540,19 +495,16 @@ class CopilotApp:
             {
                 "mode": CopilotMode.TRANSLATION_WITH_REFERENCES,
                 "title": "\u7ffb\u8a33\uff08\u53c2\u7167\u3042\u308a\uff09",
-                "description": "\u53c2\u7167URL\u3092\u4f7f\u3044\u306a\u304c\u3089\u7ffb\u8a33\u3057\u3001\u89e3\u8aac\u3084\u5f15\u7528\u3082\u4f5c\u6210",
                 "icon": ft.Icons.LINK,
             },
             {
                 "mode": CopilotMode.TRANSLATION,
                 "title": "\u7ffb\u8a33\uff08\u901a\u5e38\uff09",
-                "description": "\u5e38\u898f\u306e\u7ffb\u8a33\u30bf\u30b9\u30af\u3092\u5feb\u901f\u306b\u5b9f\u884c",
                 "icon": ft.Icons.SYNC_ALT,
             },
             {
                 "mode": CopilotMode.REVIEW,
                 "title": "\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af",
-                "description": "\u73fe\u5728\u306e\u7ffb\u8a33\u3092\u6bd4\u8f03\u691c\u8a3c\u3057\u3001\u6307\u6bdb\u3092\u63d0\u793a",
                 "icon": ft.Icons.SPELLCHECK,
             },
         ]
@@ -576,18 +528,13 @@ class CopilotApp:
                 content=ft.Column(
                     [
                         ft.Row(
-                            [icon_container, ft.Text(item["title"], size=14, weight=ft.FontWeight.BOLD, color=palette["on_surface"])],
-                            spacing=10,
+                            [ft.Text(item["title"], size=14, weight=ft.FontWeight.BOLD, color=palette["on_surface"])],
+                            spacing=0,
                             alignment=ft.MainAxisAlignment.START,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        ft.Text(
-                            item["description"],
-                            size=11,
-                            color=palette["on_surface_variant"],
-                        ),
                     ],
-                    spacing=10,
+                    spacing=8,
                     tight=True,
                 ),
             )
