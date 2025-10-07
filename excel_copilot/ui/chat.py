@@ -5,7 +5,7 @@ from typing import Union
 import flet as ft
 
 from .messages import ResponseType
-from .theme import EXPRESSIVE_PALETTE, primary_surface_gradient
+from .theme import EXPRESSIVE_PALETTE
 
 
 class ChatMessage(ft.ResponsiveRow):
@@ -33,12 +33,12 @@ class ChatMessage(ft.ResponsiveRow):
 
         type_map = {
             "user": {
-                "gradient_factory": primary_surface_gradient,
+                "bgcolor": palette["primary_container"],
                 "icon": ft.Icons.PERSON_ROUNDED,
-                "icon_color": palette["on_primary"],
-                "icon_gradient_factory": primary_surface_gradient,
-                "border_color": ft.Colors.with_opacity(0.2, palette["on_primary"]),
-                "text_style": {"color": palette["on_primary"], "size": 14},
+                "icon_color": palette["primary"],
+                "icon_bgcolor": ft.Colors.with_opacity(0.12, palette["primary"]),
+                "border_color": ft.Colors.with_opacity(0.16, palette["primary"]),
+                "text_style": {"color": palette["on_primary_container"], "size": 14},
             },
             "thought": {
                 "bgcolor": palette["secondary_container"],
@@ -74,9 +74,9 @@ class ChatMessage(ft.ResponsiveRow):
             "final_answer": {
                 "gradient_factory": _final_answer_gradient,
                 "icon": ft.Icons.CHECK_CIRCLE_OUTLINE,
-                "icon_color": palette["inverse_surface"],
+                "icon_color": palette["inverse_on_surface"],
                 "icon_bgcolor": ft.Colors.with_opacity(0.24, palette["tertiary"]),
-                "text_style": {"color": palette["inverse_surface"], "size": 14},
+                "text_style": {"color": palette["inverse_on_surface"], "size": 14},
                 "title": "Answer",
                 "border_color": ft.Colors.with_opacity(0.22, palette["tertiary"]),
             },
@@ -126,7 +126,7 @@ class ChatMessage(ft.ResponsiveRow):
         normalized_content = (msg_content or "").replace("\r\n", "\n")
         for raw_line in normalized_content.split("\n"):
             if raw_line.strip() == "":
-                line_controls.append(ft.Container(height=6))
+                line_controls.append(ft.Container(height=10))
                 continue
 
             stripped = raw_line.strip()
@@ -166,20 +166,20 @@ class ChatMessage(ft.ResponsiveRow):
         icon_gradient_factory = config.get("icon_gradient_factory")
         icon_gradient = icon_gradient_factory() if callable(icon_gradient_factory) else None
 
-        border_color = config.get("border_color", ft.Colors.with_opacity(0.1, palette["outline_variant"]))
+        border_color = config.get("border_color", ft.Colors.with_opacity(0.2, palette["outline"]))
 
         message_bubble = ft.Container(
-            content=ft.Column(content_controls, spacing=6, tight=True),
-            bgcolor=config.get("bgcolor"),
+            content=ft.Column(content_controls, spacing=8, tight=True),
+            bgcolor=config.get("bgcolor", palette["surface_high"]),
             gradient=gradient if gradient else None,
-            border_radius=20,
-            padding=ft.Padding(20, 18, 20, 18),
+            border_radius=18,
+            padding=ft.Padding(20, 16, 20, 16),
             expand=True,
             shadow=ft.BoxShadow(
-                spread_radius=1,
-                blur_radius=24,
-                color="#10152F66",
-                offset=ft.Offset(0, 12),
+                spread_radius=0,
+                blur_radius=16,
+                color=ft.Colors.with_opacity(0.08, palette["outline"]),
+                offset=ft.Offset(0, 6),
             ),
             border=ft.border.all(1, border_color),
         )
@@ -192,16 +192,17 @@ class ChatMessage(ft.ResponsiveRow):
             width=36,
             height=36,
             gradient=icon_gradient if icon_gradient else None,
-            bgcolor=config.get("icon_bgcolor"),
+            bgcolor=config.get("icon_bgcolor", palette["surface_variant"]),
             alignment=ft.alignment.center,
             border_radius=12,
-            margin=ft.margin.only(right=12, left=12, top=4),
+            margin=ft.margin.only(right=12, left=12, top=6),
             border=ft.border.all(1, ft.Colors.with_opacity(0.08, icon_color)) if icon_gradient or config.get("icon_bgcolor") else None,
         )
 
         bubble_and_icon_row = ft.Row(
             [icon_container, message_bubble] if msg_type_value != "user" else [message_bubble, icon_container],
             vertical_alignment=ft.CrossAxisAlignment.START,
+            spacing=16,
         )
 
         if msg_type_value == "user":

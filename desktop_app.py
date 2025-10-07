@@ -30,12 +30,7 @@ from excel_copilot.ui.messages import (
     ResponseMessage,
     ResponseType,
 )
-from excel_copilot.ui.theme import (
-    EXPRESSIVE_PALETTE,
-    accent_glow_gradient,
-    elevated_surface_gradient,
-    primary_surface_gradient,
-)
+from excel_copilot.ui.theme import EXPRESSIVE_PALETTE, primary_surface_gradient
 from excel_copilot.ui.worker import CopilotWorker
 
 if not logging.getLogger().handlers:
@@ -133,10 +128,11 @@ class CopilotApp:
         self.page.window.min_height = 600
         palette = EXPRESSIVE_PALETTE
         self.page.theme = ft.Theme(color_scheme_seed=palette["primary"], use_material3=True)
-        self.page.theme_mode = ft.ThemeMode.DARK
+        self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.bgcolor = palette["background"]
         self.page.window.bgcolor = palette["background"]
         self.page.padding = ft.Padding(0, 0, 0, 0)
+        self.page.scroll = ft.ScrollMode.AUTO
         self.page.window.center()
         self.page.window.prevent_close = True
 
@@ -175,28 +171,16 @@ class CopilotApp:
             animate_scale=600,
         )
 
-        self.page.appbar = ft.AppBar(
-            leading=ft.Container(
-                width=44,
-                height=44,
-                gradient=primary_surface_gradient(),
-                border_radius=14,
-                alignment=ft.alignment.center,
-                content=ft.Icon(
-                    ft.Icons.TABLE_CHART_OUTLINED,
-                    color=palette["on_primary"],
-                    size=24,
+        header_section = ft.Column(
+            controls=[
+                self.title_label,
+                ft.Container(
+                    content=self.status_label,
+                    margin=ft.margin.only(top=4),
                 ),
-            ),
-            title=ft.Column(
-                [self.title_label, self.status_label],
-                spacing=2,
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.START,
-            ),
-            center_title=False,
-            bgcolor=palette["surface"],
-            elevation=0,
+            ],
+            spacing=0,
+            horizontal_alignment=ft.CrossAxisAlignment.START,
         )
 
         button_shape = ft.RoundedRectangleBorder(radius=18)
@@ -266,15 +250,15 @@ class CopilotApp:
         )
 
         context_panel = ft.Container(
-            gradient=elevated_surface_gradient(),
-            border_radius=26,
-            padding=ft.Padding(24, 28, 24, 28),
-            border=ft.border.all(1, palette["outline_variant"]),
+            bgcolor=palette["surface"],
+            border_radius=24,
+            padding=ft.Padding(24, 32, 24, 32),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
             shadow=ft.BoxShadow(
                 spread_radius=0,
-                blur_radius=28,
-                color="#1A142F80",
-                offset=ft.Offset(0, 18),
+                blur_radius=14,
+                color=ft.Colors.with_opacity(0.06, "#0F172A"),
+                offset=ft.Offset(0, 8),
             ),
             content=ft.Column(
                 [
@@ -303,9 +287,9 @@ class CopilotApp:
 
         self.chat_list = ft.ListView(
             expand=True,
-            spacing=18,
+            spacing=24,
             auto_scroll=True,
-            padding=ft.Padding(0, 16, 0, 16),
+            padding=ft.Padding(0, 24, 0, 24),
         )
 
         self.user_input = ft.TextField(
@@ -354,21 +338,21 @@ class CopilotApp:
         chat_panel = ft.Container(
             expand=True,
             bgcolor=palette["surface_high"],
-            border_radius=28,
-            padding=ft.Padding(28, 36, 28, 28),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.12, palette["outline"])),
+            border_radius=24,
+            padding=ft.Padding(28, 32, 28, 32),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
             shadow=ft.BoxShadow(
                 spread_radius=0,
-                blur_radius=28,
-                color="#080C1A66",
-                offset=ft.Offset(0, 16),
+                blur_radius=18,
+                color=ft.Colors.with_opacity(0.06, "#0F172A"),
+                offset=ft.Offset(0, 10),
             ),
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            clip_behavior=ft.ClipBehavior.NONE,
             content=ft.Column(
                 [
                     self.chat_list,
                 ],
-                spacing=20,
+                spacing=24,
                 expand=True,
             ),
         )
@@ -383,35 +367,35 @@ class CopilotApp:
 
         composer_panel = ft.Container(
             bgcolor=palette["surface_high"],
-            border_radius=28,
-            padding=ft.Padding(28, 28, 28, 28),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.12, palette["outline"])),
+            border_radius=24,
+            padding=ft.Padding(28, 32, 28, 32),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
             shadow=ft.BoxShadow(
                 spread_radius=0,
-                blur_radius=28,
-                color="#080C1A66",
-                offset=ft.Offset(0, 16),
+                blur_radius=18,
+                color=ft.Colors.with_opacity(0.06, "#0F172A"),
+                offset=ft.Offset(0, 10),
             ),
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            clip_behavior=ft.ClipBehavior.NONE,
             content=ft.Column(
                 [
                     ft.Container(
                         content=self.mode_card_row,
                         bgcolor=palette["surface_variant"],
                         border_radius=20,
-                        padding=ft.Padding(16, 12, 16, 12),
-                        border=ft.border.all(1, palette["outline_variant"]),
+                        padding=ft.Padding(16, 14, 16, 14),
+                        border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
                     ),
                     composer_input,
                 ],
-                spacing=24,
+                spacing=28,
             ),
         )
 
         main_column = ft.Column(
             controls=[chat_panel, composer_panel],
             expand=True,
-            spacing=20,
+            spacing=28,
         )
 
         layout = ft.ResponsiveRow(
@@ -425,28 +409,30 @@ class CopilotApp:
                     col={"sm": 12, "md": 8, "lg": 9},
                 ),
             ],
-            spacing=24,
-            run_spacing=24,
+            spacing=32,
+            run_spacing=32,
             expand=True,
         )
 
-        background_overlay = ft.Container(
+        page_body = ft.Column(
+            controls=[
+                ft.Container(
+                    content=header_section,
+                    padding=ft.Padding(0, 0, 0, 24),
+                ),
+                layout,
+            ],
+            spacing=36,
             expand=True,
-            gradient=primary_surface_gradient(),
-            opacity=0.14,
         )
-        glow_overlay = ft.Container(
-            expand=True,
-            gradient=accent_glow_gradient(),
-            opacity=0.25,
-        )
+
         content_container = ft.Container(
-            content=layout,
+            content=page_body,
             expand=True,
-            padding=ft.Padding(32, 32, 32, 32),
+            padding=ft.Padding(40, 48, 40, 48),
         )
 
-        self.page.add(ft.Stack([background_overlay, glow_overlay, content_container], expand=True))
+        self.page.add(content_container)
 
     def _register_window_handlers(self):
         self.page.window.on_event = self._on_window_event
