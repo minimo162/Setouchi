@@ -14,10 +14,39 @@ _DIFF_DEBUG_ENABLED = os.getenv('EXCEL_COPILOT_DEBUG_DIFF', '').lower() in {'1',
 if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
     logging.basicConfig(level=logging.DEBUG)
 
-_MAX_RICH_TEXT_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LENGTH', '3200'))
-_MAX_RICH_TEXT_SPANS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_SPANS', '96'))
-_MAX_RICH_TEXT_TOTAL_SPAN_LENGTH = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_TOTAL', '6400'))
-_MAX_RICH_TEXT_LINE_BREAKS = int(os.getenv('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BREAKS', '24'))
+_EXCEL_MAX_CELL_CHARS = 32766
+
+
+def _read_int_env(name: str, default: int, minimum: int = 0, maximum: Optional[int] = None) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == '':
+        value = default
+    else:
+        try:
+            value = int(float(raw_value))
+        except Exception:
+            value = default
+    if value < minimum:
+        value = minimum
+    if maximum is not None and value > maximum:
+        value = maximum
+    return value
+
+
+_MAX_RICH_TEXT_LENGTH = _read_int_env(
+    'EXCEL_COPILOT_MAX_RICH_TEXT_LENGTH',
+    24000,
+    minimum=1,
+    maximum=_EXCEL_MAX_CELL_CHARS,
+)
+_MAX_RICH_TEXT_SPANS = _read_int_env('EXCEL_COPILOT_MAX_RICH_TEXT_SPANS', 192, minimum=1)
+_MAX_RICH_TEXT_TOTAL_SPAN_LENGTH = _read_int_env(
+    'EXCEL_COPILOT_MAX_RICH_TEXT_TOTAL',
+    max(6400, _MAX_RICH_TEXT_LENGTH * 3),
+    minimum=_MAX_RICH_TEXT_LENGTH,
+    maximum=_EXCEL_MAX_CELL_CHARS * 3,
+)
+_MAX_RICH_TEXT_LINE_BREAKS = _read_int_env('EXCEL_COPILOT_MAX_RICH_TEXT_LINE_BREAKS', 256, minimum=0, maximum=2048)
 _ENABLE_RICH_DIFF_COLORS = os.getenv('EXCEL_COPILOT_ENABLE_RICH_DIFF_COLORS', '1').lower() in {'1', 'true', 'yes', 'on'}
 
 
@@ -40,6 +69,28 @@ def _review_debug(message: str) -> None:
 def _diff_debug(message: str) -> None:
     if _DIFF_DEBUG_ENABLED:
         _ACTIONS_LOGGER.debug(message)
+
+
+def _safe_cell_address(cell: xw.Range, row_idx: int, col_idx: int) -> Optional[str]:
+    """Return a best-effort A1-style address for diagnostics."""
+    try:
+        address = cell.get_address(row_absolute=False, column_absolute=False, include_sheet=False)
+        if address:
+            return address
+    except Exception:
+        pass
+    try:
+        row_number = getattr(cell, 'row', None)
+        column_number = getattr(cell, 'column', None)
+        if isinstance(row_number, int) and isinstance(column_number, int):
+            return f"{xw.utils.col_name(column_number)}{row_number}"
+    except Exception:
+        pass
+    try:
+        return f"{xw.utils.col_name(col_idx + 1)}{row_idx + 1}"
+    except Exception:
+        pass
+    return None
 
 
 def _shorten_debug(value: Any, limit: int = 120) -> str:
@@ -375,13 +426,9 @@ class ExcelActions:
                         _diff_debug(
                             f"apply_diff_highlight_colors cell({r_idx},{c_idx}) skipped rich text due to limits len={value_len} spans={len(spans)} total_span={total_span_length} line_breaks={line_breaks}"
                         )
-                        try:
-                            cell_address = cell.get_address(row_absolute=False, column_absolute=False, include_sheet=False)
-                        except Exception:
-                            cell_address = None
-                        if not cell_address:
-                            cell_address = f"{r_idx}:{c_idx}"
-                        skipped_cells.append(cell_address)
+                        cell_address = _safe_cell_address(cell, r_idx, c_idx)
+                        if cell_address:
+                            skipped_cells.append(cell_address)
                         continue
                     if value_len <= 0:
                         continue
