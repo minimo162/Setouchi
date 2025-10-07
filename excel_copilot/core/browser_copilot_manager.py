@@ -318,6 +318,9 @@ class BrowserCopilotManager:
         """Normalize prompt text for reliable comparison."""
         sanitized = (value or "").replace("\r\n", "\n").replace("\r", "\n")
         sanitized = sanitized.replace("\u2028", "\n").replace("\u2029", "\n")
+        sanitized = sanitized.lstrip("\n")
+        sanitized = sanitized.replace("\u00a0", " ").replace("\u3000", " ")
+        sanitized = sanitized.replace("\t", " ")
         for invisible in ("\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\ufeff"):
             sanitized = sanitized.replace(invisible, "")
         sanitized = sanitized.rstrip()
