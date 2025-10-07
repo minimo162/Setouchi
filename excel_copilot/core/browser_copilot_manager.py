@@ -332,6 +332,19 @@ class BrowserCopilotManager:
         if len(parts) > 1 and all(not segment.strip() for segment in parts):
             return expected
 
+        if candidate.count(expected) > 1:
+            residual = candidate.replace(expected, "")
+            if not residual.strip():
+                return expected
+
+        stripped_candidate = candidate.strip()
+        stripped_expected = expected.strip()
+        if stripped_candidate != candidate or stripped_expected != expected:
+            if stripped_expected and stripped_candidate.count(stripped_expected) > 1:
+                residual = stripped_candidate.replace(stripped_expected, "")
+                if not residual.strip():
+                    return expected
+
         return candidate
 
     def _clear_chat_input(self, chat_input: Locator):
@@ -407,6 +420,151 @@ class BrowserCopilotManager:
             return True
         except Exception as err:
             print(f"Warning: soft-return fallback hit an error: {err}")
+            return False
+
+    def _simulate_paste_via_event(self, chat_input: Locator, value: str) -> bool:
+        """Attempt to deliver text via a synthetic paste event before falling back to injection."""
+        if not self.page:
+            return False
+
+        try:
+            return bool(
+                self.page.evaluate(
+                    """
+                    (target, value) => {
+                        if (!target) {
+                            return false;
+                        }
+
+                        const resolveTargets = (node) => {
+                            if (!node) {
+                                return [];
+                            }
+                            const resolved = [];
+                            const directMatch =
+                                node.matches && node.matches('[contenteditable], textarea, [role="textbox"]')
+                                    ? node
+                                    : null;
+                            if (directMatch) {
+                                resolved.push(directMatch);
+                            }
+                            const nested =
+                                node.querySelector && node.querySelector('[contenteditable], textarea, [role="textbox"]');
+                            if (nested && !resolved.includes(nested)) {
+                                resolved.push(nested);
+                            }
+                            if (!resolved.includes(node)) {
+                                resolved.unshift(node);
+                            }
+                            return resolved;
+                        };
+
+                        const readContent = (node) => {
+                            if (!node) {
+                                return '';
+                            }
+                            if (typeof node.value === 'string' && node.value.trim()) {
+                                return node.value;
+                            }
+                            if (typeof node.innerText === 'string' && node.innerText.trim()) {
+                                return node.innerText;
+                            }
+                            if (typeof node.textContent === 'string' && node.textContent.trim()) {
+                                return node.textContent;
+                            }
+                            return '';
+                        };
+
+                        const doc = target.ownerDocument || document;
+                        const candidates = resolveTargets(target);
+                        let updated = false;
+
+                        for (const candidate of candidates) {
+                            if (!candidate) {
+                                continue;
+                            }
+
+                            try {
+                                if (candidate.focus) {
+                                    candidate.focus();
+                                }
+                            } catch (err) {
+                                /* focus best-effort */
+                            }
+
+                            try {
+                                if (typeof ClipboardEvent === 'function' && typeof DataTransfer === 'function') {
+                                    const transfer = new DataTransfer();
+                                    transfer.setData('text/plain', value);
+                                    const eventInit = {
+                                        bubbles: true,
+                                        cancelable: true,
+                                        dataType: 'text/plain',
+                                        data: value,
+                                    };
+                                    const pasteEvent = new ClipboardEvent('paste', eventInit);
+                                    Object.defineProperty(pasteEvent, 'clipboardData', {
+                                        value: transfer,
+                                        enumerable: true,
+                                    });
+                                    candidate.dispatchEvent(pasteEvent);
+                                }
+                            } catch (err) {
+                                /* ignore clipboard simulation errors */
+                            }
+
+                            let content = readContent(candidate).trim();
+
+                            if (!content && doc && typeof doc.execCommand === 'function') {
+                                try {
+                                    const selection = doc.getSelection && doc.getSelection();
+                                    if (selection && selection.removeAllRanges && doc.createRange) {
+                                        selection.removeAllRanges();
+                                        const range = doc.createRange();
+                                        range.selectNodeContents(candidate);
+                                        selection.addRange(range);
+                                    }
+                                    if (doc.execCommand('insertText', false, value)) {
+                                        content = readContent(candidate).trim();
+                                    }
+                                } catch (err) {
+                                    /* execCommand fallback best-effort */
+                                }
+                            }
+
+                            if (!content) {
+                                try {
+                                    candidate.textContent = value;
+                                    content = readContent(candidate).trim();
+                                } catch (err) {
+                                    /* ignore DOM text assignment errors */
+                                }
+                            }
+
+                            if (!content && typeof candidate.value === 'string') {
+                                try {
+                                    candidate.value = value;
+                                    content = readContent(candidate).trim();
+                                } catch (err) {
+                                    /* ignore value assignment errors */
+                                }
+                            }
+
+                            if (content) {
+                                updated = true;
+                                break;
+                            }
+                        }
+
+                        return updated;
+                    }
+                    """,
+                    chat_input,
+                    value,
+                )
+            )
+        except Exception as exc:
+            print(f"Warning: simulated paste fallback failed: {exc}")
             return False
 
     def _fill_chat_input(self, chat_input: Locator, prompt: str) -> str:
@@ -504,8 +662,17 @@ class BrowserCopilotManager:
                     clipboard_ready = False
                     break
             if not clipboard_success and clipboard_ready:
-                self._debug_chat_input_snapshot(chat_input, "clipboard-attempt-failed")
-                print("警告: クリップボード貼り付け結果が空だったため代替手段を試みます。")
+                if self._simulate_paste_via_event(chat_input, prompt):
+                    try:
+                        self.page.wait_for_timeout(120)
+                    except Exception:
+                        time.sleep(0.12)
+                    current_text = self._read_chat_input_text(chat_input)
+                    if current_text:
+                        clipboard_success = True
+                if not clipboard_success:
+                    self._debug_chat_input_snapshot(chat_input, "clipboard-attempt-failed")
+                    print("警告: クリップボード貼り付け結果が空だったため代替手段を試みます。")
         else:
             try:
                 self.page.wait_for_timeout(200)
