@@ -266,7 +266,40 @@ class BrowserCopilotManager:
             except Exception:
                 return ""
 
-    def _fill_chat_input(self, chat_input: Locator, prompt: str):
+    def _normalize_prompt_text(self, value: str) -> str:
+        """Normalize prompt text for reliable comparison."""
+        sanitized = (value or "").replace("\r\n", "\n").replace("\r", "\n")
+        sanitized = sanitized.replace("\u200b", "")
+        return sanitized.rstrip("\n")
+
+    def _clear_chat_input(self, chat_input: Locator):
+        """Clear existing content from the chat input using keyboard shortcuts."""
+        modifier = "Meta" if sys.platform == "darwin" else "Control"
+
+        try:
+            chat_input.focus()
+        except Exception:
+            pass
+
+        try:
+            chat_input.press(f"{modifier}+A")
+        except Exception:
+            try:
+                if self.page:
+                    self.page.keyboard.press(f"{modifier}+A")
+            except Exception:
+                pass
+
+        try:
+            chat_input.press("Backspace")
+        except Exception:
+            try:
+                if self.page:
+                    self.page.keyboard.press("Backspace")
+            except Exception:
+                pass
+
+    def _fill_chat_input(self, chat_input: Locator, prompt: str) -> str:
         """Simulate a human paste into the chat editor so Copilot treats URLs normally."""
         if not self.page:
             raise RuntimeError("Page is not initialized.")
@@ -281,22 +314,8 @@ class BrowserCopilotManager:
             chat_input.focus()
         except Exception as focus_error:
             print(f"チャット入力欄: focus の適用に失敗しました: {focus_error}")
-        modifier = "Meta" if sys.platform == "darwin" else "Control"
 
-        try:
-            chat_input.press(f"{modifier}+A")
-        except Exception:
-            try:
-                self.page.keyboard.press(f"{modifier}+A")
-            except Exception:
-                pass
-        try:
-            chat_input.press("Backspace")
-        except Exception:
-            try:
-                self.page.keyboard.press("Backspace")
-            except Exception:
-                pass
+        self._clear_chat_input(chat_input)
 
         clipboard_value = prompt.replace("\n", "\r\n")
         clipboard_ready = False
@@ -325,6 +344,7 @@ class BrowserCopilotManager:
             print("警告: クリップボードへのコピーに失敗したためキーボード挿入にフォールバックします。")
 
         current_text = ""
+        modifier = "Meta" if sys.platform == "darwin" else "Control"
 
         if clipboard_ready and clipboard_confirmed:
             clipboard_success = False
@@ -461,6 +481,8 @@ class BrowserCopilotManager:
 
         if not current_text:
             raise RuntimeError("Failed to populate the chat input with the prompt.")
+
+        return current_text
 
     def _submit_chat_input_via_keyboard(self, chat_input: Locator) -> bool:
         """Fallback submission when the explicit send button is unavailable."""
@@ -859,7 +881,50 @@ class BrowserCopilotManager:
                 print(f"チャット入力欄でのフォーカス時に警告: {click_error}")
 
             _ensure_not_stopped()
-            self._fill_chat_input(chat_input, prompt)
+            filled_text = self._fill_chat_input(chat_input, prompt)
+
+            expected_text = self._normalize_prompt_text(prompt)
+            normalized_current = self._normalize_prompt_text(filled_text)
+
+            if normalized_current != expected_text:
+                print(
+                    "警告: チャット入力欄の内容が期待するプロンプトと一致しません。"
+                    f" expected_len={len(expected_text)} actual_len={len(normalized_current)}"
+                )
+                mismatch_deadline = time.monotonic() + 2.0
+                while time.monotonic() < mismatch_deadline:
+                    current_value = self._normalize_prompt_text(self._read_chat_input_text(chat_input))
+                    if current_value == expected_text:
+                        print("チャット入力欄: 遅延後にプロンプト全体を検知できました。")
+                        normalized_current = current_value
+                        break
+                    time.sleep(0.1)
+
+                retry_count = 0
+                max_retries = 2
+                while normalized_current != expected_text and retry_count < max_retries:
+                    retry_count += 1
+                    print(f"チャット入力欄: 再入力リトライ {retry_count}/{max_retries} を実行します。")
+                    try:
+                        self._clear_chat_input(chat_input)
+                    except Exception as clear_error:
+                        print(f"警告: チャット入力欄のクリアに失敗しました: {clear_error}")
+                    try:
+                        self.page.wait_for_timeout(150)
+                    except Exception:
+                        time.sleep(0.15)
+                    filled_text = self._fill_chat_input(chat_input, prompt)
+                    normalized_current = self._normalize_prompt_text(filled_text)
+
+                    if normalized_current != expected_text:
+                        print(
+                            "警告: 再入力後もチャット入力欄の内容が一致しません。"
+                            f" expected_len={len(expected_text)} actual_len={len(normalized_current)}"
+                        )
+
+                if normalized_current != expected_text:
+                    raise RuntimeError("チャット入力欄にプロンプト全体を反映できませんでした。")
+
             # Allow the pasted content to settle before sending
             try:
                 self.page.wait_for_timeout(350)
