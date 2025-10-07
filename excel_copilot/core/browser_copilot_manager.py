@@ -277,6 +277,10 @@ class BrowserCopilotManager:
             pass
 
         chat_input.click()
+        try:
+            chat_input.focus()
+        except Exception as focus_error:
+            print(f"チャット入力欄: focus の適用に失敗しました: {focus_error}")
         modifier = "Meta" if sys.platform == "darwin" else "Control"
 
         try:
@@ -325,6 +329,25 @@ class BrowserCopilotManager:
             except Exception:
                 try:
                     chat_input.fill(prompt)
+                except Exception:
+                    pass
+            try:
+                chat_input.focus()
+            except Exception:
+                pass
+            self.page.wait_for_timeout(200)
+            current_text = self._read_chat_input_text(chat_input)
+
+        if not current_text:
+            try:
+                chat_input.focus()
+            except Exception:
+                pass
+            try:
+                self.page.keyboard.type(prompt, delay=0.015)
+            except Exception:
+                try:
+                    chat_input.type(prompt, delay=0.015)
                 except Exception:
                     pass
             self.page.wait_for_timeout(200)
@@ -537,12 +560,36 @@ class BrowserCopilotManager:
     def _resolve_chat_input_target(self, locator: Locator) -> Locator:
         """チャット欄を操作できる contenteditable コンテナを指すロケーターに正規化する"""
         try:
-            enriched = locator.locator("xpath=ancestor-or-self::*[@contenteditable][1]")
+            enriched = locator.locator(
+                "xpath=ancestor-or-self::*[@contenteditable and normalize-space(@contenteditable) != 'false'][1]"
+            )
             if enriched.count() > 0:
                 print("チャット入力欄: contenteditable な親要素にフォーカスを切り替えます。")
                 return enriched.first
         except Exception as resolve_error:
             print(f"チャット入力欄: contenteditable 親要素の特定に失敗しました: {resolve_error}")
+
+        descendant_selectors = [
+            "[contenteditable='true']",
+            "[contenteditable]:not([contenteditable='false'])",
+            "div[contenteditable]",
+            "section[contenteditable]",
+            "span[contenteditable]",
+            "textarea",
+            "[role='textbox']",
+            "[data-content-editable-root='true']",
+            "[data-slate-editor='true']",
+        ]
+
+        for selector in descendant_selectors:
+            try:
+                descendant = locator.locator(selector)
+                if descendant.count() > 0:
+                    print(f"チャット入力欄: {selector} の子孫要素に切り替えます。")
+                    return descendant.first
+            except Exception as descendant_error:
+                print(f"チャット入力欄: {selector} の子孫要素探索に失敗しました: {descendant_error}")
+
         return locator
 
     def _initialize_copilot_mode(self):
