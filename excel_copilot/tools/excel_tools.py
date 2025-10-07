@@ -1146,22 +1146,17 @@ def translate_range_contents(
         prompt_parts: List[str]
         if use_references:
             prompt_parts = [
-                "Translate each Japanese entry below into English; keep the order and stay faithful to the source.\n",
-                "Every translated_text must be written in natural English; do not copy or leave any Japanese text untranslated.\n",
-                "Use the references/URLs only to keep terminology consistent and never emit citation markers in the translation output.\n",
-                "When copying supporting material, remove any embedded URLs or hyperlink targets; if citations are unavoidable, retain only bracketed numbers like [1].\n",
-                "Borrow phrasing and sentence structure from the supporting quotes whenever it improves the English rendering of the Japanese text. Limit this borrowing strictly to wording—do not import additional facts, subjects, or entities from the quotes, and never swap in the quote's subject or perspective. If the Japanese source states a subject, translate that subject explicitly; only omit a subject when the Japanese sentence omits it.\n",
-                "Treat the supporting quotes purely as style references for idiomatic English; preserve every entity that appears in the Japanese sentence, and do not introduce new ones from the quotes.\n",
-                "Workflow: make English search keywords, scan the references, and reuse wording only when it supports the same fact.\n",
-                "Output must be pure JSON with no commentary, preambles, or Markdown—only the requested array.\n",
+                "You are given Japanese source sentences to translate alongside supporting expressions for terminology and style guidance.\n",
+                "Translate each sentence into natural English while keeping the original order and translating all content; never leave Japanese text untranslated.\n",
+                "Use the supporting expressions only when they reinforce the same facts or terminology. Do not add new facts or entities, and do not change the subject stated in the Japanese sentence.\n",
+                "Preserve every entity that appears in the Japanese source.\n",
+                "Return a JSON array. Each element must contain exactly these keys:\n",
+                "- \"translated_text\": the English translation.\n",
+                "- \"explanation_jp\": 2-6 Japanese sentences explaining important terminology choices and tone.\n",
+                "Do not include markup, comments, or extra keys. The output must be valid JSON only.\n",
+                "Source sentences are provided below as a JSON array in the original order.\n",
+                "Supporting expressions for each sentence are listed after the source list.\n",
             ]
-            if reference_entries:
-                prompt_parts.append(f"Reference passages:\n{json.dumps(reference_entries, ensure_ascii=False)}\n")
-            if reference_url_entries:
-                prompt_parts.append(f"Reference URLs:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n")
-            prompt_parts.append(
-                "Return a JSON array of objects with 'translated_text' and 'explanation_jp' (2-6 Japanese sentences explaining key terminology and tone). No other keys or markdown.\n"
-            )
             prompt_preamble = "".join(prompt_parts)
         else:
             if include_context_columns:
@@ -1461,13 +1456,12 @@ def translate_range_contents(
                     ]
                     translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
-                    final_prompt = (
-                        f"{prompt_preamble}{texts_json}"
-                        "Write natural English translations that stay faithful to each Japanese sentence.\n"
-                        "Use the supporting expressions only when they fit; do not add or omit facts.\n"
-                        "Return a JSON array where every element has 'translated_text' and 'explanation_jp' (>=2 Japanese sentences on terminology and tone). No extra keys, quote arrays, or markdown.\n"
-                        f"Supporting expressions (JSON): {translation_context_json}\n"
-                    )
+                    final_prompt = f"{prompt_preamble}Source sentences:\n{texts_json}\n"
+                    if reference_entries:
+                        final_prompt += f"Additional reference passages (JSON):\n{json.dumps(reference_entries, ensure_ascii=False)}\n"
+                    if reference_url_entries:
+                        final_prompt += f"Reference URLs:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n"
+                    final_prompt += f"Supporting expressions (JSON):\n{translation_context_json}\n"
                     _ensure_not_stopped()
                     response = browser_manager.ask(final_prompt, stop_event=stop_event)
 
