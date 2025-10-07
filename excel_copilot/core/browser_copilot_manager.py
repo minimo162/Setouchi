@@ -238,7 +238,7 @@ class BrowserCopilotManager:
         if not self.page:
             return ""
         try:
-            content = self.page.evaluate(
+            content = chat_input.evaluate(
                 """
                 (target) => {
                     if (!target) {
@@ -303,8 +303,7 @@ class BrowserCopilotManager:
                     }
                     return buffer;
                 }
-                """,
-                chat_input,
+                """
             )
             if content:
                 return str(content).strip()
@@ -429,7 +428,7 @@ class BrowserCopilotManager:
 
         try:
             return bool(
-                self.page.evaluate(
+                chat_input.evaluate(
                     """
                     (target, value) => {
                         if (!target) {
@@ -559,7 +558,6 @@ class BrowserCopilotManager:
                         return updated;
                     }
                     """,
-                    chat_input,
                     value,
                 )
             )
@@ -706,7 +704,7 @@ class BrowserCopilotManager:
 
         if not current_text:
             try:
-                injected = self.page.evaluate(
+                injected = chat_input.evaluate(
                     """
                     (target, value) => {
                         if (!target) {
@@ -817,7 +815,6 @@ class BrowserCopilotManager:
                         return false;
                     }
                     """,
-                    chat_input,
                     prompt,
                 )
             except Exception:
