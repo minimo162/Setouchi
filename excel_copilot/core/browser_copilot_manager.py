@@ -232,6 +232,40 @@ class BrowserCopilotManager:
 
         raise RuntimeError(f"{description}が見つかりません。UI が変更された可能性があります。") from last_exception
 
+    def _read_chat_input_text(self, chat_input: Locator) -> str:
+        """Return current text content from the chat input for emptiness checks."""
+        if not self.page:
+            return ""
+        try:
+            return (
+                self.page.evaluate(
+                    """
+                    (target) => {
+                        if (!target) {
+                            return '';
+                        }
+                        if ('value' in target && typeof target.value === 'string') {
+                            return target.value;
+                        }
+                        if (typeof target.innerText === 'string') {
+                            return target.innerText;
+                        }
+                        if (typeof target.textContent === 'string') {
+                            return target.textContent;
+                        }
+                        return '';
+                    }
+                    """,
+                    chat_input,
+                )
+                or ""
+            ).strip()
+        except Exception:
+            try:
+                return chat_input.inner_text().strip()
+            except Exception:
+                return ""
+
     def _fill_chat_input(self, chat_input: Locator, prompt: str):
         """Simulate a human paste into the chat editor so Copilot treats URLs normally."""
         if not self.page:
@@ -261,34 +295,40 @@ class BrowserCopilotManager:
                 pass
 
         clipboard_value = prompt.replace("\n", "\r\n")
+        clipboard_ready = False
         try:
             pyperclip.copy(clipboard_value)
+            clipboard_ready = True
+        except Exception:
+            print("警告: クリップボードへのコピーに失敗したためキーボード挿入にフォールバックします。")
+
+        if clipboard_ready:
             try:
                 chat_input.press(f"{modifier}+V")
             except Exception:
-                self.page.keyboard.press(f"{modifier}+V")
-        except Exception:
-            pass
+                try:
+                    self.page.keyboard.press(f"{modifier}+V")
+                except Exception:
+                    clipboard_ready = False
+                    print("警告: 貼り付けに失敗したためキーボード挿入にフォールバックします。")
 
         self.page.wait_for_timeout(400)
-        try:
-            current_text = chat_input.inner_text().strip()
-        except Exception:
-            current_text = ""
+        current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
             try:
-                chat_input.type(prompt, delay=15)
+                chat_input.click()
+            except Exception:
+                pass
+            try:
+                self.page.keyboard.insert_text(prompt)
             except Exception:
                 try:
-                    self.page.keyboard.type(prompt, delay=15)
+                    chat_input.fill(prompt)
                 except Exception:
                     pass
             self.page.wait_for_timeout(200)
-            try:
-                current_text = chat_input.inner_text().strip()
-            except Exception:
-                current_text = ""
+            current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
             try:
@@ -320,10 +360,7 @@ class BrowserCopilotManager:
                 injected = False
             if injected:
                 self.page.wait_for_timeout(200)
-                try:
-                    current_text = chat_input.inner_text().strip()
-                except Exception:
-                    current_text = ""
+                current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
             raise RuntimeError("Failed to populate the chat input with the prompt.")
