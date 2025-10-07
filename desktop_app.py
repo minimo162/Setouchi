@@ -198,10 +198,7 @@ class CopilotApp:
         )
 
         button_shape = ft.RoundedRectangleBorder(radius=18)
-        button_overlay = {
-            ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.1, palette["primary"]),
-            ft.MaterialState.PRESSED: ft.Colors.with_opacity(0.16, palette["primary"]),
-        }
+        button_overlay = ft.Colors.with_opacity(0.12, palette["primary"])
 
         self.save_log_button = ft.FilledTonalButton(
             text="\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58",
@@ -565,10 +562,7 @@ class CopilotApp:
             style=ft.ButtonStyle(
                 shape=ft.CircleBorder(),
                 padding=ft.Padding(0, 0, 0, 0),
-                overlay_color={
-                    ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.1, palette["on_primary"]),
-                    ft.MaterialState.PRESSED: ft.Colors.with_opacity(0.18, palette["on_primary"]),
-                },
+                overlay_color=ft.Colors.with_opacity(0.14, palette["on_primary"]),
             ),
         )
 
@@ -583,10 +577,7 @@ class CopilotApp:
             style=ft.ButtonStyle(
                 shape=ft.CircleBorder(),
                 padding=ft.Padding(0, 0, 0, 0),
-                overlay_color={
-                    ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.14, palette["error"]),
-                    ft.MaterialState.PRESSED: ft.Colors.with_opacity(0.2, palette["error"]),
-                },
+                overlay_color=ft.Colors.with_opacity(0.18, palette["error"]),
             ),
         )
 
