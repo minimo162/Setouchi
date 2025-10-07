@@ -317,8 +317,11 @@ class BrowserCopilotManager:
     def _normalize_prompt_text(self, value: str) -> str:
         """Normalize prompt text for reliable comparison."""
         sanitized = (value or "").replace("\r\n", "\n").replace("\r", "\n")
-        sanitized = sanitized.replace("\u200b", "")
-        return sanitized.rstrip("\n")
+        sanitized = sanitized.replace("\u2028", "\n").replace("\u2029", "\n")
+        for invisible in ("\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\ufeff"):
+            sanitized = sanitized.replace(invisible, "")
+        sanitized = sanitized.rstrip()
+        return sanitized
 
     def _collapse_prompt_duplication(self, candidate: str, expected: str) -> str:
         """Collapse repeated instances of the expected prompt that appear contiguously."""
