@@ -237,34 +237,82 @@ class BrowserCopilotManager:
         if not self.page:
             return ""
         try:
-            return (
-                self.page.evaluate(
-                    """
-                    (target) => {
-                        if (!target) {
-                            return '';
-                        }
-                        if ('value' in target && typeof target.value === 'string') {
-                            return target.value;
-                        }
-                        if (typeof target.innerText === 'string') {
-                            return target.innerText;
-                        }
-                        if (typeof target.textContent === 'string') {
-                            return target.textContent;
-                        }
+            content = self.page.evaluate(
+                """
+                (target) => {
+                    if (!target) {
                         return '';
                     }
-                    """,
-                    chat_input,
-                )
-                or ""
-            ).strip()
+
+                    const readString = (value) => (typeof value === 'string' ? value : '');
+
+                    const directValue = readString(target.value);
+                    if (directValue.trim()) {
+                        return directValue;
+                    }
+
+                    const inner = readString(target.innerText);
+                    if (inner.trim()) {
+                        return inner;
+                    }
+
+                    const textContent = readString(target.textContent);
+                    if (textContent.trim()) {
+                        return textContent;
+                    }
+
+                    const nestedEditable = target.querySelector('[contenteditable=\"true\"], textarea, [role=\"textbox\"]');
+                    if (nestedEditable) {
+                        const nestedValue =
+                            readString(nestedEditable.value) ||
+                            readString(nestedEditable.innerText) ||
+                            readString(nestedEditable.textContent);
+                        if (nestedValue.trim()) {
+                            return nestedValue;
+                        }
+                    }
+
+                    const doc = target.ownerDocument || document;
+                    if (!doc || !doc.createTreeWalker) {
+                        return '';
+                    }
+
+                    const walker = doc.createTreeWalker(target, NodeFilter.SHOW_TEXT, null);
+                    let buffer = '';
+                    while (walker.nextNode()) {
+                        const node = walker.currentNode;
+                        if (!node || !node.nodeValue) {
+                            continue;
+                        }
+                        const parentEl = node.parentElement;
+                        if (parentEl) {
+                            const placeholder = parentEl.getAttribute && parentEl.getAttribute('data-placeholder');
+                            if (placeholder === 'true') {
+                                continue;
+                            }
+                            const ariaHidden = parentEl.getAttribute && parentEl.getAttribute('aria-hidden');
+                            if (
+                                ariaHidden === 'true'
+                                && !(parentEl.matches && parentEl.matches('[role=\"textbox\"], textarea, [contenteditable=\"true\"]'))
+                            ) {
+                                continue;
+                            }
+                        }
+                        buffer += node.nodeValue;
+                    }
+                    return buffer;
+                }
+                """,
+                chat_input,
+            )
+            if content:
+                return str(content).strip()
         except Exception:
             try:
                 return chat_input.inner_text().strip()
             except Exception:
                 return ""
+        return ""
 
     def _normalize_prompt_text(self, value: str) -> str:
         """Normalize prompt text for reliable comparison."""
@@ -479,22 +527,112 @@ class BrowserCopilotManager:
                 injected = self.page.evaluate(
                     """
                     (target, value) => {
-                        if (!target) return false;
-                        target.innerHTML = '';
-                        value.split('\n').forEach((line) => {
-                            const p = document.createElement('p');
-                            if (line) {
-                                p.textContent = line;
-                            } else {
-                                p.innerHTML = '<br>';
+                        if (!target) {
+                            return false;
+                        }
+
+                        const doc = target.ownerDocument || document;
+                        const dispatchEvents = (node) => {
+                            if (!node) {
+                                return;
                             }
-                            target.appendChild(p);
-                        });
-                        const inputEvt = new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' });
-                        target.dispatchEvent(inputEvt);
-                        const changeEvt = new Event('change', { bubbles: true });
-                        target.dispatchEvent(changeEvt);
-                        return true;
+                            try {
+                                const inputEvt = new InputEvent('input', {
+                                    bubbles: true,
+                                    data: value,
+                                    inputType: 'insertFromPaste',
+                                });
+                                node.dispatchEvent(inputEvt);
+                            } catch (err) {
+                                /* no-op */
+                            }
+                            try {
+                                const changeEvt = new Event('change', { bubbles: true });
+                                node.dispatchEvent(changeEvt);
+                            } catch (err) {
+                                /* no-op */
+                            }
+                        };
+
+                        const hydrateEditable = (node) => {
+                            if (!node) {
+                                return null;
+                            }
+                            const localDoc = node.ownerDocument || doc;
+                            try {
+                                if (node.focus) {
+                                    node.focus();
+                                }
+                            } catch (err) {
+                                /* focus best-effort */
+                            }
+
+                            if (typeof node.value === 'string') {
+                                node.value = value;
+                                return node;
+                            }
+
+                            let updated = false;
+                            if (localDoc && typeof localDoc.execCommand === 'function') {
+                                try {
+                                    const selection = localDoc.getSelection && localDoc.getSelection();
+                                    if (selection && selection.removeAllRanges) {
+                                        selection.removeAllRanges();
+                                        const range = localDoc.createRange();
+                                        range.selectNodeContents(node);
+                                        selection.addRange(range);
+                                    }
+                                    updated = localDoc.execCommand('insertText', false, value);
+                                } catch (err) {
+                                    updated = false;
+                                }
+                            }
+
+                            if (!updated) {
+                                try {
+                                    node.innerHTML = '';
+                                    const lines = value.split('\\n');
+                                    lines.forEach((line) => {
+                                        const paragraph = localDoc.createElement('p');
+                                        if (line) {
+                                            paragraph.textContent = line;
+                                        } else {
+                                            paragraph.appendChild(localDoc.createElement('br'));
+                                        }
+                                        node.appendChild(paragraph);
+                                    });
+                                    updated = true;
+                                } catch (err) {
+                                    updated = false;
+                                }
+                            }
+
+                            return updated ? node : null;
+                        };
+
+                        const attempted = new Set();
+                        const targets = [target];
+                        const nested = target.querySelector('[contenteditable=\"true\"], textarea, [role=\"textbox\"]');
+                        if (nested) {
+                            targets.push(nested);
+                        }
+
+                        for (const candidate of targets) {
+                            if (!candidate || attempted.has(candidate)) {
+                                continue;
+                            }
+                            attempted.add(candidate);
+                            const hydrated = hydrateEditable(candidate);
+                            if (hydrated) {
+                                dispatchEvents(hydrated);
+                                if (hydrated !== target) {
+                                    dispatchEvents(target);
+                                }
+                                return true;
+                            }
+                        }
+
+                        return false;
                     }
                     """,
                     chat_input,
@@ -504,9 +642,9 @@ class BrowserCopilotManager:
                 injected = False
             if injected:
                 try:
-                    self.page.wait_for_timeout(200)
+                    self.page.wait_for_timeout(250)
                 except Exception:
-                    time.sleep(0.2)
+                    time.sleep(0.25)
                 current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
@@ -520,9 +658,55 @@ class BrowserCopilotManager:
                     self.page.wait_for_timeout(200)
                 except Exception:
                     time.sleep(0.2)
+                deadline = time.monotonic() + 1.0
+                while not current_text and time.monotonic() < deadline:
+                    current_text = self._read_chat_input_text(chat_input)
+                    if current_text:
+                        break
+                    time.sleep(0.1)
+                if not current_text:
+                    copied_result = ""
+                    try:
+                        chat_input.focus()
+                    except Exception:
+                        pass
+                    try:
+                        chat_input.press(f"{modifier}+A")
+                    except Exception:
+                        try:
+                            if self.page:
+                                self.page.keyboard.press(f"{modifier}+A")
+                        except Exception:
+                            pass
+                    try:
+                        chat_input.press(f"{modifier}+C")
+                    except Exception:
+                        try:
+                            if self.page:
+                                self.page.keyboard.press(f"{modifier}+C")
+                        except Exception:
+                            pass
+                    try:
+                        copied_result = pyperclip.paste()
+                    except Exception:
+                        copied_result = ""
+                    if copied_result:
+                        current_text = copied_result
+                        try:
+                            pyperclip.copy(clipboard_value)
+                        except Exception:
+                            pass
+                if not current_text:
+                    print(
+                        "Warning: keyboard fallback reported success but reading the input failed; "
+                        "continuing with the original prompt text."
+                    )
+                    current_text = prompt
             else:
                 print("Warning: soft-return keyboard fallback was unable to populate the prompt.")
-            current_text = self._read_chat_input_text(chat_input)
+
+            if not current_text:
+                current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
             raise RuntimeError("Failed to populate the chat input with the prompt.")
