@@ -299,6 +299,54 @@ class BrowserCopilotManager:
             except Exception:
                 pass
 
+
+    def _type_prompt_with_soft_returns(self, chat_input: Locator, prompt: str) -> bool:
+        """Type text into the chat input while using soft returns for newlines."""
+        if not self.page:
+            return False
+
+        segments = prompt.split("\n")
+        try:
+            for idx, segment in enumerate(segments):
+                if segment:
+                    inserted = False
+                    try:
+                        self.page.keyboard.insert_text(segment)
+                        inserted = True
+                    except Exception as insert_error:
+                        print(f"Warning: insert_text failed: {insert_error}")
+                    if not inserted:
+                        try:
+                            chat_input.type(segment, delay=0.01)
+                            inserted = True
+                        except Exception as type_error:
+                            print(f"Warning: Locator.type failed: {type_error}")
+                    if not inserted:
+                        return False
+
+                if idx < len(segments) - 1:
+                    soft_return_sequences = ["Shift+Enter", "Shift+Return", "Alt+Enter"]
+                    success = False
+                    for sequence in soft_return_sequences:
+                        try:
+                            chat_input.press(sequence)
+                            success = True
+                            break
+                        except Exception:
+                            try:
+                                self.page.keyboard.press(sequence)
+                                success = True
+                                break
+                            except Exception:
+                                continue
+                    if not success:
+                        print("Warning: failed to send a soft return for newline.")
+                        return False
+            return True
+        except Exception as err:
+            print(f"Warning: soft-return fallback hit an error: {err}")
+            return False
+
     def _fill_chat_input(self, chat_input: Locator, prompt: str) -> str:
         """Simulate a human paste into the chat editor so Copilot treats URLs normally."""
         if not self.page:
@@ -466,17 +514,14 @@ class BrowserCopilotManager:
                 chat_input.focus()
             except Exception:
                 pass
-            try:
-                self.page.keyboard.type(prompt, delay=0.015)
-            except Exception:
+            typed_success = self._type_prompt_with_soft_returns(chat_input, prompt)
+            if typed_success:
                 try:
-                    chat_input.type(prompt, delay=0.015)
+                    self.page.wait_for_timeout(200)
                 except Exception:
-                    pass
-            try:
-                self.page.wait_for_timeout(200)
-            except Exception:
-                time.sleep(0.2)
+                    time.sleep(0.2)
+            else:
+                print("Warning: soft-return keyboard fallback was unable to populate the prompt.")
             current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
