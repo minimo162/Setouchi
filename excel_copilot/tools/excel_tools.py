@@ -984,6 +984,8 @@ def translate_range_contents(
         include_context_columns = output_mode != "translation_only"
         translation_block_width = 3 if include_context_columns else 1
         citation_should_include_explanations = writing_to_source_directly and include_context_columns
+        out_rows = source_rows
+        out_cols = source_cols if writing_to_source_directly else source_cols * translation_block_width
         if writing_to_source_directly and not overwrite_source:
             raise ToolExecutionError(
                 "translation_output_range must be provided when overwrite_source is False."
@@ -992,6 +994,7 @@ def translate_range_contents(
             output_sheet = target_sheet
             output_range = normalized_range
             output_matrix = source_matrix
+            out_cols = source_cols
         else:
             output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
             out_rows, out_cols = _parse_range_dimensions(output_range)
@@ -1181,6 +1184,111 @@ def translate_range_contents(
 
         source_start_row, source_start_col, _, _ = _parse_range_bounds(normalized_range)
         output_start_row, output_start_col, _, _ = _parse_range_bounds(output_range)
+        output_total_cols = out_cols if not writing_to_source_directly else source_cols
+
+        row_dirty_flags: List[bool] = [False] * source_rows
+        source_row_dirty_flags: List[bool] = [False] * source_rows
+        pending_columns_by_row: Dict[int, Set[int]] = {}
+        for row_idx in range(source_rows):
+            pending_cols: Set[int] = set()
+            for col_idx in range(source_cols):
+                cell_value = original_data[row_idx][col_idx]
+                if not isinstance(cell_value, str):
+                    continue
+                normalized_cell = cell_value.replace("\r\n", "\n").replace("\r", "\n")
+                if "\n" in normalized_cell:
+                    segments = normalized_cell.split("\n")
+                    if any(JAPANESE_CHAR_PATTERN.search(segment) for segment in segments):
+                        pending_cols.add(col_idx)
+                elif JAPANESE_CHAR_PATTERN.search(cell_value):
+                    pending_cols.add(col_idx)
+            if pending_cols:
+                pending_columns_by_row[row_idx] = pending_cols
+
+        completed_rows: Set[int] = set()
+        incremental_row_messages: List[str] = []
+
+        def _cell_reference(base_row: int, base_col: int, local_row: int, local_col: int) -> str:
+            return _build_range_reference(
+                base_row + local_row,
+                base_row + local_row,
+                base_col + local_col,
+                base_col + local_col,
+            )
+
+        def _output_row_reference(row_idx: int) -> str:
+            end_col = output_start_col + output_total_cols - 1
+            return _build_range_reference(
+                output_start_row + row_idx,
+                output_start_row + row_idx,
+                output_start_col,
+                end_col,
+            )
+
+        def _source_row_reference(row_idx: int) -> str:
+            end_col = source_start_col + source_cols - 1
+            return _build_range_reference(
+                source_start_row + row_idx,
+                source_start_row + row_idx,
+                source_start_col,
+                end_col,
+            )
+
+        def _translation_column_index(col_idx: int) -> int:
+            return col_idx if writing_to_source_directly else col_idx * translation_block_width
+
+        def _compose_row_progress_message(row_idx: int) -> str:
+            excel_row_number = source_start_row + row_idx + 1
+            fragments: List[str] = []
+            for col_idx in range(source_cols):
+                translation_col = _translation_column_index(col_idx)
+                if translation_col >= output_total_cols:
+                    continue
+                cell_address = _cell_reference(output_start_row, output_start_col, row_idx, translation_col)
+                try:
+                    translation_cell_value = output_matrix[row_idx][translation_col]
+                except IndexError:
+                    translation_cell_value = ""
+                normalized_value = ""
+                if translation_cell_value is not None:
+                    normalized_value = _normalize_cell_value(translation_cell_value).strip()
+                if len(normalized_value) > 80:
+                    normalized_value = normalized_value[:77] + "..."
+                fragments.append(f"{cell_address}='{normalized_value}'")
+            summary = "; ".join(fragments) if fragments else "no translations"
+            return f"Row {excel_row_number} translation completed: {summary}"
+
+        def _write_row_output(row_idx: int) -> None:
+            _ensure_not_stopped()
+            wrote_anything = False
+            row_reference = _output_row_reference(row_idx)
+            row_slice = output_matrix[row_idx][:output_total_cols]
+            if row_dirty_flags[row_idx]:
+                write_message = actions.write_range(row_reference, [row_slice], output_sheet)
+                incremental_row_messages.append(write_message)
+                row_dirty_flags[row_idx] = False
+                wrote_anything = True
+            if overwrite_source and not writing_to_source_directly and source_row_dirty_flags[row_idx]:
+                source_reference = _source_row_reference(row_idx)
+                overwrite_message = actions.write_range(
+                    source_reference,
+                    [source_matrix[row_idx][:source_cols]],
+                    target_sheet,
+                )
+                incremental_row_messages.append(overwrite_message)
+                source_row_dirty_flags[row_idx] = False
+                wrote_anything = True
+            progress_message = _compose_row_progress_message(row_idx)
+            if not wrote_anything:
+                progress_message += " (no changes needed)"
+            actions.log_progress(progress_message)
+            completed_rows.add(row_idx)
+
+        def _finalize_row(row_idx: int) -> None:
+            if row_idx in completed_rows:
+                return
+            pending_columns_by_row.pop(row_idx, None)
+            _write_row_output(row_idx)
 
         citation_sheet = None
         citation_range = None
@@ -1633,11 +1741,13 @@ def translate_range_contents(
                     if translation_value != existing_output_value:
                         output_matrix[local_row][translation_col_index] = translation_value
                         output_dirty = True
+                        row_dirty_flags[local_row] = True
                     if not writing_to_source_directly and overwrite_source:
                         existing_source_value = source_matrix[local_row][col_idx]
                         if translation_value != existing_source_value:
                             source_matrix[local_row][col_idx] = translation_value
                             source_dirty = True
+                            source_row_dirty_flags[local_row] = True
 
                     any_translation = True
 
@@ -1702,9 +1812,11 @@ def translate_range_contents(
                         if output_matrix[local_row][quotes_col_index] != quotes_text:
                             output_matrix[local_row][quotes_col_index] = quotes_text
                             output_dirty = True
+                            row_dirty_flags[local_row] = True
                         if output_matrix[local_row][explanation_col_index] != explanation_text:
                             output_matrix[local_row][explanation_col_index] = explanation_text
                             output_dirty = True
+                            row_dirty_flags[local_row] = True
 
                     if use_references:
                         if not explanation_text:
@@ -1728,6 +1840,12 @@ def translate_range_contents(
                             chunk_cell_evidences[(local_row, col_idx)] = evidence_record
                         elif citation_mode == "single_column":
                             row_evidence_details.setdefault(local_row, []).append(evidence_record)
+
+                    pending_cols = pending_columns_by_row.get(local_row)
+                    if pending_cols is not None:
+                        pending_cols.discard(col_idx)
+                        if not pending_cols:
+                            _finalize_row(local_row)
             if use_references and citation_matrix is not None:
                 if citation_mode == "paired_columns":
                     for local_row in range(row_start, row_end):
@@ -1830,6 +1948,19 @@ def translate_range_contents(
                 messages.append(actions.write_range(chunk_citation_range, chunk_citation_data, citation_sheet))
 
 
+        for row_idx, is_dirty in enumerate(row_dirty_flags):
+            if is_dirty and row_idx not in completed_rows:
+                _finalize_row(row_idx)
+
+        for remaining_row in list(pending_columns_by_row.keys()):
+            _finalize_row(remaining_row)
+
+        output_dirty = any(row_dirty_flags)
+        if overwrite_source and not writing_to_source_directly:
+            source_dirty = any(source_row_dirty_flags)
+        else:
+            source_dirty = False
+
         if not any_translation:
             return f"No translatable text was found in range '{cell_range}'."
 
@@ -1842,6 +1973,7 @@ def translate_range_contents(
             write_messages.append(range_adjustment_note)
         if citation_note:
             write_messages.append(citation_note)
+        write_messages.extend(incremental_row_messages)
 
         _ensure_not_stopped()
 
