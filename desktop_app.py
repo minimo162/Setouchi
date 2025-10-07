@@ -62,7 +62,6 @@ class CopilotApp:
         self.mode = CopilotMode.TRANSLATION_WITH_REFERENCES
         self.mode_selector: Optional[ft.RadioGroup] = None
 
-        self.title_label: Optional[ft.Text] = None
         self.status_label: Optional[ft.Text] = None
         self.workbook_selector: Optional[ft.Dropdown] = None
         self.sheet_selector: Optional[ft.Dropdown] = None
@@ -157,12 +156,6 @@ class CopilotApp:
     def _build_layout(self):
         palette = EXPRESSIVE_PALETTE
 
-        self.title_label = ft.Text(
-            "Excel Co-pilot",
-            size=26,
-            weight=ft.FontWeight.BOLD,
-            color=palette["on_surface"],
-        )
         self.status_label = ft.Text(
             "\u521d\u671f\u5316\u4e2d...",
             size=12,
@@ -171,16 +164,9 @@ class CopilotApp:
             animate_scale=600,
         )
 
-        header_section = ft.Column(
-            controls=[
-                self.title_label,
-                ft.Container(
-                    content=self.status_label,
-                    margin=ft.margin.only(top=4),
-                ),
-            ],
-            spacing=0,
-            horizontal_alignment=ft.CrossAxisAlignment.START,
+        header_section = ft.Container(
+            content=self.status_label,
+            padding=ft.Padding(0, 0, 0, 12),
         )
 
         button_shape = ft.RoundedRectangleBorder(radius=18)
@@ -348,6 +334,7 @@ class CopilotApp:
                 offset=ft.Offset(0, 10),
             ),
             clip_behavior=ft.ClipBehavior.NONE,
+            min_height=520,
             content=ft.Column(
                 [
                     self.chat_list,
@@ -379,23 +366,25 @@ class CopilotApp:
             clip_behavior=ft.ClipBehavior.NONE,
             content=ft.Column(
                 [
+                    composer_input,
                     ft.Container(
                         content=self.mode_card_row,
                         bgcolor=palette["surface_variant"],
                         border_radius=20,
                         padding=ft.Padding(16, 14, 16, 14),
                         border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
+                        margin=ft.margin.only(top=18),
                     ),
-                    composer_input,
                 ],
-                spacing=28,
+                spacing=24,
             ),
         )
 
         main_column = ft.Column(
             controls=[chat_panel, composer_panel],
             expand=True,
-            spacing=28,
+            spacing=24,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
         layout = ft.ResponsiveRow(
@@ -403,10 +392,12 @@ class CopilotApp:
                 ft.Container(
                     content=ft.Column([context_panel], spacing=16),
                     col={"sm": 12, "md": 4, "lg": 3},
+                    expand=True,
                 ),
                 ft.Container(
                     content=main_column,
                     col={"sm": 12, "md": 8, "lg": 9},
+                    expand=True,
                 ),
             ],
             spacing=32,
@@ -418,11 +409,11 @@ class CopilotApp:
             controls=[
                 ft.Container(
                     content=header_section,
-                    padding=ft.Padding(0, 0, 0, 24),
+                    padding=ft.Padding(0, 0, 0, 12),
                 ),
                 layout,
             ],
-            spacing=36,
+            spacing=28,
             expand=True,
         )
 
