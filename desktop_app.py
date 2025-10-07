@@ -76,8 +76,9 @@ class CopilotApp:
         self.action_button: Optional[ft.Container] = None
         self.save_log_button: Optional[ft.TextButton] = None
         self.workbook_refresh_button: Optional[ft.TextButton] = None
-        self.browser_reset_button: Optional[ft.TextButton] = None
-        self.quick_prompts_panel: Optional[ft.Control] = None
+        self.new_chat_button: Optional[ft.TextButton] = None
+        self.mode_card_row: Optional[ft.ResponsiveRow] = None
+        self._mode_card_map: dict[str, ft.Container] = {}
 
         self.chat_history: list[dict[str, str]] = []
         self.history_lock = threading.Lock()
@@ -201,22 +202,10 @@ class CopilotApp:
         button_shape = ft.RoundedRectangleBorder(radius=18)
         button_overlay = ft.Colors.with_opacity(0.12, palette["primary"])
 
-        self.save_log_button = ft.FilledTonalButton(
-            text="\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58",
-            icon=ft.Icons.SAVE_OUTLINED,
-            on_click=self._handle_save_log_click,
-            disabled=True,
-            style=ft.ButtonStyle(
-                shape=button_shape,
-                padding=ft.Padding(18, 12, 18, 12),
-                overlay_color=button_overlay,
-            ),
-        )
-
-        self.browser_reset_button = ft.FilledTonalButton(
-            text="\u30d6\u30e9\u30a6\u30b6\u3092\u518d\u521d\u671f\u5316",
-            icon=ft.Icons.REFRESH,
-            on_click=self._handle_browser_reset_click,
+        self.new_chat_button = ft.FilledTonalButton(
+            text="\u65b0\u3057\u3044\u30c1\u30e3\u30c3\u30c8",
+            icon=ft.Icons.CHAT_OUTLINED,
+            on_click=self._handle_new_chat_click,
             disabled=True,
             style=ft.ButtonStyle(
                 shape=button_shape,
@@ -289,23 +278,20 @@ class CopilotApp:
             ),
             content=ft.Column(
                 [
-                    ft.Column(
+                    ft.Row(
                         [
-                            ft.Text(
-                                "\u30b3\u30f3\u30c6\u30ad\u30b9\u30c8",
-                                size=17,
-                                weight=ft.FontWeight.BOLD,
-                                color=palette["on_surface"],
-                            ),
-                            ft.Text(
-                                "\u51e6\u7406\u5bfe\u8c61\u3092\u9078\u629e\u3057\u307e\u3059",
-                                size=12,
-                                color=palette["on_surface_variant"],
+                            ft.Container(
+                                width=34,
+                                height=34,
+                                gradient=primary_surface_gradient(),
+                                border_radius=12,
+                                alignment=ft.alignment.center,
+                                content=ft.Icon(ft.Icons.TABLE_ROWS_ROUNDED, size=18, color=palette["on_primary"]),
                             ),
                         ],
-                        spacing=4,
+                        alignment=ft.MainAxisAlignment.START,
                     ),
-                    ft.Divider(color=palette["outline_variant"], height=24),
+                    ft.Divider(color=palette["outline_variant"], height=20),
                     ft.Column(
                         [
                             ft.Text("\u30d6\u30c3\u30af", size=13, color=palette["on_surface_variant"]),
@@ -316,15 +302,12 @@ class CopilotApp:
                         spacing=14,
                     ),
                     ft.Row(
-                        [self.workbook_refresh_button],
-                        alignment=ft.MainAxisAlignment.END,
-                    ),
-                    ft.Row(
                         [
-                            ft.Container(content=self.save_log_button, expand=True),
-                            ft.Container(content=self.browser_reset_button, expand=True),
+                            ft.Container(content=self.workbook_refresh_button, expand=True),
+                            ft.Container(content=self.new_chat_button, expand=True),
                         ],
                         spacing=12,
+                        alignment=ft.MainAxisAlignment.END,
                     ),
                 ],
                 spacing=18,
@@ -359,27 +342,15 @@ class CopilotApp:
         )
         self._apply_mode_to_input_placeholder()
 
-        self.mode_selector = ft.RadioGroup(
-            value=self.mode.value,
-            on_change=self._on_mode_change,
-            content=ft.Row(
-                controls=[
-                    ft.Radio(value=CopilotMode.TRANSLATION_WITH_REFERENCES.value, label="\u7ffb\u8a33\uff08\u53c2\u7167\u3042\u308a\uff09"),
-                    ft.Radio(value=CopilotMode.TRANSLATION.value, label="\u7ffb\u8a33\uff08\u901a\u5e38\uff09"),
-                    ft.Radio(value=CopilotMode.REVIEW.value, label="\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af"),
-                ],
-                alignment=ft.MainAxisAlignment.START,
-                spacing=24,
-            ),
-        )
+        self.mode_card_row = self._build_mode_cards()
 
         action_button_content = self._make_send_button()
         self.action_button = ft.Container(
             content=action_button_content,
-            width=64,
-            height=64,
+            width=56,
+            height=56,
             gradient=primary_surface_gradient(),
-            border_radius=32,
+            border_radius=28,
             alignment=ft.alignment.center,
             ink=True,
             on_hover=self._handle_button_hover,
@@ -419,24 +390,6 @@ class CopilotApp:
                                 alignment=ft.alignment.center,
                                 content=ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, size=20, color=palette["on_primary"]),
                             ),
-                            ft.Column(
-                                [
-                                    ft.Text(
-                                        "\u30c1\u30e3\u30c3\u30c8",
-                                        size=18,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=palette["on_surface"],
-                                    ),
-                                    ft.Text(
-                                        "\u4f1a\u8a71\u3068\u5b9f\u884c\u5185\u5bb9\u304c\u8868\u793a\u3055\u308c\u307e\u3059",
-                                        size=12,
-                                        color=palette["on_surface_variant"],
-                                    ),
-                                ],
-                                spacing=4,
-                                alignment=ft.MainAxisAlignment.CENTER,
-                                horizontal_alignment=ft.CrossAxisAlignment.START,
-                            ),
                         ],
                         spacing=14,
                         alignment=ft.MainAxisAlignment.START,
@@ -450,31 +403,12 @@ class CopilotApp:
             ),
         )
 
-        self.action_button.margin = ft.margin.only(left=18, bottom=6)
+        self.action_button.margin = ft.margin.only(left=16, bottom=4)
 
         composer_input = ft.Row(
             controls=[self.user_input, self.action_button],
             vertical_alignment=ft.CrossAxisAlignment.END,
             spacing=18,
-        )
-
-        quick_prompt_panel = self._build_quick_prompt_cards()
-        self.quick_prompts_panel = quick_prompt_panel
-
-        composer_subtext = ft.Column(
-            [
-                ft.Text(
-                    "Enterで送信・Shift+Enterで改行できます。",
-                    size=11,
-                    color=palette["on_surface_variant"],
-                ),
-                ft.Text(
-                    "AIの回答には誤りが含まれる場合があります。重要な判断は必ず確認してください。",
-                    size=11,
-                    color=ft.Colors.with_opacity(0.8, palette["on_surface_variant"]),
-                ),
-            ],
-            spacing=4,
         )
 
         composer_panel = ft.Container(
@@ -501,39 +435,19 @@ class CopilotApp:
                                 alignment=ft.alignment.center,
                                 content=ft.Icon(ft.Icons.TUNE_ROUNDED, size=20, color=palette["on_primary"]),
                             ),
-                            ft.Column(
-                                [
-                                    ft.Text(
-                                        "\u30e2\u30fc\u30c9\u3068\u6307\u793a",
-                                        size=18,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=palette["on_surface"],
-                                    ),
-                                    ft.Text(
-                                        "\u51e6\u7406\u65b9\u91dd\u3092\u9078\u629e\u3057\u3001\u6307\u793a\u3092\u5165\u529b\u3057\u307e\u3059",
-                                        size=12,
-                                        color=palette["on_surface_variant"],
-                                    ),
-                                ],
-                                spacing=4,
-                                alignment=ft.MainAxisAlignment.CENTER,
-                                horizontal_alignment=ft.CrossAxisAlignment.START,
-                            ),
                         ],
                         spacing=14,
                         alignment=ft.MainAxisAlignment.START,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Container(
-                        content=self.mode_selector,
+                        content=self.mode_card_row,
                         bgcolor=palette["surface_variant"],
                         border_radius=20,
                         padding=ft.Padding(16, 12, 16, 12),
                         border=ft.border.all(1, palette["outline_variant"]),
                     ),
-                    quick_prompt_panel,
                     composer_input,
-                    composer_subtext,
                 ],
                 spacing=24,
             ),
@@ -620,43 +534,49 @@ class CopilotApp:
             e.control.scale = 1
         e.control.update()
 
-    def _build_quick_prompt_cards(self) -> ft.ResponsiveRow:
+    def _build_mode_cards(self) -> ft.ResponsiveRow:
         palette = EXPRESSIVE_PALETTE
-        suggestions = [
+        options = [
             {
-                "title": "\u30b7\u30fc\u30c8\u3092\u8981\u7d04",
-                "description": "\u30c7\u30fc\u30bf\u306e\u30cf\u30a4\u30e9\u30a4\u30c8\u3068\u8907\u6570\u306e\u8981\u70b9\u3092\u6559\u3048\u3066",
-                "prompt": "\u3053\u306e\u30b7\u30fc\u30c8\u5168\u4f53\u306e\u30c7\u30fc\u30bf\u3092\u8981\u7d04\u3057\u3001\u4e3b\u8981\u306a\u5897\u6e1b\u3068\u6c17\u306b\u306a\u308b\u30d1\u30bf\u30fc\u30f3\u3092\u5c55\u958b\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+                "mode": CopilotMode.TRANSLATION_WITH_REFERENCES,
+                "title": "\u7ffb\u8a33\uff08\u53c2\u7167\u3042\u308a\uff09",
+                "description": "\u53c2\u7167URL\u3092\u4f7f\u3044\u306a\u304c\u3089\u7ffb\u8a33\u3057\u3001\u89e3\u8aac\u3084\u5f15\u7528\u3082\u4f5c\u6210",
+                "icon": ft.Icons.LINK,
             },
             {
-                "title": "\u7ffb\u8a33\u3092\u8981\u6c42",
-                "description": "\u9078\u629e\u7bc4\u56f2\u3092\u5229\u7528\u3057\u3066\u81ea\u52d5\u7ffb\u8a33",
-                "prompt": "\u9078\u629e\u4e2d\u306e\u30bb\u30eb\u5185\u5bb9\u3092\u65e5\u672c\u8a9e\u304b\u3089\u82f1\u8a9e\u306b\u7ffb\u8a33\u3057\u3001\u7ffb\u8a33\u7d50\u679c\u3092\u96a0\u308c\u306a\u304f\u5c55\u958b\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+                "mode": CopilotMode.TRANSLATION,
+                "title": "\u7ffb\u8a33\uff08\u901a\u5e38\uff09",
+                "description": "\u5e38\u898f\u306e\u7ffb\u8a33\u30bf\u30b9\u30af\u3092\u5feb\u901f\u306b\u5b9f\u884c",
+                "icon": ft.Icons.SYNC_ALT,
             },
             {
-                "title": "\u30c7\u30fc\u30bf\u691c\u8a3c",
-                "description": "\u975e\u4e00\u81f4\u30fb\u30d7\u30ec\u30b9\u3092\u78ba\u8a8d",
-                "prompt": "\u30c7\u30fc\u30bf\u306b\u4e0d\u6b63\u786c\u76f4\u3084\u591a\u6570\u306e\u30b9\u30da\u30eb\u30df\u30b9\u304c\u3042\u308b\u304b\u691c\u8a3c\u3057\u3001\u30aa\u30d5\u30ec\u30dd\u30fc\u30c8\u3092\u4f5c\u6210\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+                "mode": CopilotMode.REVIEW,
+                "title": "\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af",
+                "description": "\u73fe\u5728\u306e\u7ffb\u8a33\u3092\u6bd4\u8f03\u691c\u8a3c\u3057\u3001\u6307\u6bdb\u3092\u63d0\u793a",
+                "icon": ft.Icons.SPELLCHECK,
             },
         ]
+        self._mode_card_map = {}
         cards: list[ft.Control] = []
-        for item in suggestions:
-            prompt = item["prompt"]
+        for item in options:
+            mode = item["mode"]
+            icon_container = ft.Container(
+                width=28,
+                height=28,
+                bgcolor=ft.Colors.with_opacity(0.16, palette["primary"]),
+                border_radius=14,
+                alignment=ft.alignment.center,
+                content=ft.Icon(item["icon"], size=16, color=palette["on_primary"]),
+            )
             card_body = ft.Container(
+                bgcolor=palette["surface"],
+                border_radius=18,
+                padding=ft.Padding(18, 16, 18, 16),
+                border=ft.border.all(1, ft.Colors.with_opacity(0.1, palette["outline_variant"])),
                 content=ft.Column(
                     [
                         ft.Row(
-                            [
-                                ft.Container(
-                                    width=24,
-                                    height=24,
-                                    bgcolor=ft.Colors.with_opacity(0.18, palette["primary"]),
-                                    border_radius=12,
-                                    alignment=ft.alignment.center,
-                                    content=ft.Icon(ft.Icons.BOLT, size=14, color=palette["on_primary"]),
-                                ),
-                                ft.Text(item["title"], size=13, weight=ft.FontWeight.BOLD, color=palette["on_surface"]),
-                            ],
+                            [icon_container, ft.Text(item["title"], size=14, weight=ft.FontWeight.BOLD, color=palette["on_surface"])],
                             spacing=10,
                             alignment=ft.MainAxisAlignment.START,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -667,42 +587,51 @@ class CopilotApp:
                             color=palette["on_surface_variant"],
                         ),
                     ],
-                    spacing=8,
+                    spacing=10,
                     tight=True,
                 ),
-                bgcolor=palette["surface_variant"],
-                border_radius=20,
-                padding=ft.Padding(18, 16, 18, 16),
-                border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline_variant"])),
-                ink=True,
-                on_click=lambda e, text=prompt: self._apply_quick_prompt(text),
             )
-            cards.append(
-                ft.Container(
-                    content=card_body,
-                    col={"sm": 12, "md": 6, "lg": 4},
-                )
+            gesture = ft.GestureDetector(
+                content=card_body,
+                on_tap=lambda e, value=mode: self._handle_mode_card_select(value),
+                mouse_cursor=ft.MouseCursor.CLICK,
             )
+            wrapper = ft.Container(content=gesture, col={"sm": 12, "md": 12, "lg": 4})
+            cards.append(wrapper)
+            self._mode_card_map[mode.value] = card_body
 
-        return ft.ResponsiveRow(
-            controls=cards,
-            spacing=16,
-            run_spacing=16,
-        )
+        row = ft.ResponsiveRow(controls=cards, spacing=18, run_spacing=18)
+        self._refresh_mode_cards()
+        return row
 
-    def _apply_quick_prompt(self, prompt: str):
-        if not self.user_input:
+    def _refresh_mode_cards(self):
+        palette = EXPRESSIVE_PALETTE
+        for mode_value, card in self._mode_card_map.items():
+            is_selected = mode_value == self.mode.value
+            card.border = ft.border.all(
+                2 if is_selected else 1,
+                ft.Colors.with_opacity(0.9, palette["primary"]) if is_selected else ft.Colors.with_opacity(0.1, palette["outline_variant"]),
+            )
+            card.bgcolor = ft.Colors.with_opacity(0.14, palette["primary"]) if is_selected else palette["surface"]
+
+    def _handle_mode_card_select(self, new_mode: CopilotMode):
+        if self.app_state not in {AppState.READY, AppState.ERROR}:
             return
-        current_value = self.user_input.value or ""
-        if current_value.strip():
-            self.user_input.value = f"{current_value.rstrip()}\n{prompt}"
-        else:
-            self.user_input.value = prompt
-        try:
-            self.user_input.focus()
-        except Exception:
-            pass
-        self.user_input.update()
+        self._set_mode(new_mode)
+
+    def _set_mode(self, new_mode: CopilotMode):
+        if not isinstance(new_mode, CopilotMode):
+            return
+        if new_mode == self.mode:
+            return
+        self.mode = new_mode
+        self._apply_mode_to_input_placeholder()
+        if self.mode_selector:
+            self.mode_selector.value = self.mode.value
+        self._refresh_mode_cards()
+        if self.request_queue:
+            self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
+        self._update_ui()
 
     def _apply_mode_to_input_placeholder(self):
         if not self.user_input:
@@ -723,14 +652,7 @@ class CopilotApp:
             new_mode = CopilotMode(selected_value)
         except ValueError:
             return
-        if new_mode == self.mode:
-            return
-        self.mode = new_mode
-        self._apply_mode_to_input_placeholder()
-        if self.mode_selector:
-            self.mode_selector.value = self.mode.value
-        self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
-        self._update_ui()
+        self._set_mode(new_mode)
 
     def _set_state(self, new_state: AppState):
         if self.app_state == new_state:
@@ -771,11 +693,11 @@ class CopilotApp:
                 self.sheet_selector.disabled = True
             else:
                 self.sheet_selector.disabled = not (can_interact and bool(self.sheet_selector.options))
-        if self.browser_reset_button:
+        if self.new_chat_button:
             if new_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
-                self.browser_reset_button.disabled = True
+                self.new_chat_button.disabled = True
             elif not self._browser_reset_in_progress and can_interact:
-                self.browser_reset_button.disabled = False
+                self.new_chat_button.disabled = False
 
         if self.workbook_refresh_button:
             if self._manual_refresh_in_progress:
@@ -883,7 +805,7 @@ class CopilotApp:
 
         self._add_message(ResponseType.INFO, f"\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f: {file_path}")
 
-    def _handle_browser_reset_click(self, e: Optional[ft.ControlEvent]):
+    def _handle_new_chat_click(self, e: Optional[ft.ControlEvent]):
         if self._browser_reset_in_progress:
             return
         if self.app_state not in {AppState.READY, AppState.ERROR}:
@@ -891,10 +813,17 @@ class CopilotApp:
         if not self.worker or not self.request_queue:
             return
 
+        if self.chat_list:
+            self.chat_list.controls.clear()
+        with self.history_lock:
+            self.chat_history.clear()
+        self._update_save_button_state()
+        if self.chat_list:
+            self.chat_list.update()
+
         self._browser_reset_in_progress = True
-        if self.browser_reset_button:
-            self.browser_reset_button.disabled = True
-        self._add_message(ResponseType.INFO, "\u30d6\u30e9\u30a6\u30b6\u306e\u518d\u521d\u671f\u5316\u3092\u5b9f\u884c\u3057\u307e\u3059...")
+        if self.new_chat_button:
+            self.new_chat_button.disabled = True
         self.request_queue.put(RequestMessage(RequestType.RESET_BROWSER))
         self._update_ui()
 
@@ -1433,8 +1362,8 @@ class CopilotApp:
                 self._pending_focus_deadline = None
             if self._browser_reset_in_progress:
                 self._browser_reset_in_progress = False
-                if self.browser_reset_button and self.app_state in {AppState.READY, AppState.ERROR}:
-                    self.browser_reset_button.disabled = False
+                if self.new_chat_button and self.app_state in {AppState.READY, AppState.ERROR}:
+                    self.new_chat_button.disabled = False
 
         if response.type is ResponseType.INITIALIZATION_COMPLETE:
             self._set_state(AppState.READY)
@@ -1467,8 +1396,8 @@ class CopilotApp:
                     self._add_message(response.type, response.content)
             if self._browser_reset_in_progress:
                 self._browser_reset_in_progress = False
-                if self.browser_reset_button and self.app_state in {AppState.READY, AppState.ERROR}:
-                    self.browser_reset_button.disabled = False
+                if self.new_chat_button and self.app_state in {AppState.READY, AppState.ERROR}:
+                    self.new_chat_button.disabled = False
         elif response.type is ResponseType.END_OF_TASK:
             self._set_state(AppState.READY)
         elif response.type is ResponseType.INFO:
@@ -1488,8 +1417,8 @@ class CopilotApp:
                 self._focus_app_window()
                 if self._browser_reset_in_progress:
                     self._browser_reset_in_progress = False
-                    if self.browser_reset_button and self.app_state in {AppState.READY, AppState.ERROR}:
-                        self.browser_reset_button.disabled = False
+                    if self.new_chat_button and self.app_state in {AppState.READY, AppState.ERROR}:
+                        self.new_chat_button.disabled = False
             elif response.content:
                 self._add_message(type_value, response.content)
         else:
