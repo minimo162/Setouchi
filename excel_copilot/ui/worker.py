@@ -89,7 +89,7 @@ class CopilotWorker:
             prefix_lines = [
                 "[Translation (With References) Mode Request]",
                 "- Solve this by calling `translate_range_with_references` and include the reference ranges or URLs provided by the user.",
-                "- Work one cell at a time without `rows_per_batch`; split multi-row ranges across multiple calls.",
+                "- Translate the entire requested range in one call and rely on the tool's batching; only adjust `rows_per_batch` when necessary for very large jobs.",
                 "- Provide citation output when evidence is expected and keep translation, quote, and explanation columns aligned.",
                 "- Do not request workbook uploads; Excel is already connected.",
                 "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
