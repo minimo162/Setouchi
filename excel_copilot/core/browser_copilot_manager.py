@@ -8,6 +8,7 @@ from playwright.sync_api import (
     TimeoutError as PlaywrightTimeoutError,
     Locator,
 )
+import json
 import logging
 import time
 import pyperclip
@@ -490,6 +491,7 @@ class BrowserCopilotManager:
                     clipboard_ready = False
                     break
             if not clipboard_success and clipboard_ready:
+                self._debug_chat_input_snapshot(chat_input, "clipboard-attempt-failed")
                 print("警告: クリップボード貼り付け結果が空だったため代替手段を試みます。")
         else:
             try:
@@ -701,11 +703,13 @@ class BrowserCopilotManager:
                         "Warning: keyboard fallback reported success but reading the input failed; "
                         "continuing with the original prompt text."
                     )
+                    self._debug_chat_input_snapshot(chat_input, "keyboard-fallback-read-empty")
                     current_text = prompt
             else:
                 print("Warning: soft-return keyboard fallback was unable to populate the prompt.")
 
             if not current_text:
+                self._debug_chat_input_snapshot(chat_input, "post-keyboard-read-empty")
                 current_text = self._read_chat_input_text(chat_input)
 
         if not current_text:
@@ -1386,3 +1390,88 @@ class BrowserCopilotManager:
             )
         except Exception as exc:
             self._logger.debug("ブラウザウィンドウ位置の調整に失敗しました: %s", exc)
+
+    def _debug_chat_input_snapshot(self, chat_input: Locator, label: str) -> None:
+        """Print diagnostic details about the current chat input element."""
+        if not self.page:
+            return
+        try:
+            snapshot = self.page.evaluate(
+                """
+                (target, label) => {
+                    if (!target) {
+                        return { label, error: 'no-target' };
+                    }
+
+                    const limitString = (value, limit = 400) => {
+                        if (typeof value !== 'string') {
+                            return value === undefined ? null : value;
+                        }
+                        return value.length > limit ? value.slice(0, limit) + '…' : value;
+                    };
+
+                    const attrSummary = {};
+                    if (target.getAttributeNames) {
+                        for (const attr of target.getAttributeNames()) {
+                            attrSummary[attr] = limitString(target.getAttribute(attr));
+                        }
+                    }
+
+                    const summary = {
+                        label,
+                        tagName: target.tagName || null,
+                        id: target.id || null,
+                        classes: target.classList ? Array.from(target.classList) : null,
+                        role: target.getAttribute ? target.getAttribute('role') : null,
+                        contentEditable: target.getAttribute ? target.getAttribute('contenteditable') : null,
+                        isContentEditable: !!target.isContentEditable,
+                        childCount: target.childNodes ? target.childNodes.length : null,
+                        value: limitString(typeof target.value === 'string' ? target.value : null),
+                        innerText: limitString(target.innerText),
+                        textContent: limitString(target.textContent),
+                        innerHTML: limitString(target.innerHTML, 600),
+                        attributes: attrSummary,
+                    };
+
+                    if (target.dataset) {
+                        summary.datasetKeys = Object.keys(target.dataset);
+                    }
+
+                    if (target.shadowRoot) {
+                        summary.shadowRoot = {
+                            childCount: target.shadowRoot.childNodes ? target.shadowRoot.childNodes.length : null,
+                            innerHTML: limitString(target.shadowRoot.innerHTML, 400),
+                        };
+                    }
+
+                    const nestedEditable = target.querySelector('[contenteditable=\"true\"], textarea, [role=\"textbox\"]');
+                    if (nestedEditable) {
+                        summary.nested = {
+                            tagName: nestedEditable.tagName || null,
+                            role: nestedEditable.getAttribute ? nestedEditable.getAttribute('role') : null,
+                            contentEditable: nestedEditable.getAttribute
+                                ? nestedEditable.getAttribute('contenteditable')
+                                : null,
+                            isContentEditable: !!nestedEditable.isContentEditable,
+                            innerText: limitString(nestedEditable.innerText),
+                            textContent: limitString(nestedEditable.textContent),
+                            value: limitString(typeof nestedEditable.value === 'string' ? nestedEditable.value : null),
+                            classList: nestedEditable.classList ? Array.from(nestedEditable.classList) : null,
+                        };
+                    }
+
+                    return summary;
+                }
+                """,
+                chat_input,
+                label,
+            )
+        except Exception as exc:
+            print(f"Debug: {label}: failed to capture chat input snapshot: {exc}")
+            return
+
+        try:
+            rendered = json.dumps(snapshot, ensure_ascii=False)
+        except Exception:
+            rendered = str(snapshot)
+        print(f"Debug: chat input snapshot ({label}): {rendered}")
