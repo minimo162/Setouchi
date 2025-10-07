@@ -300,15 +300,33 @@ class BrowserCopilotManager:
 
         clipboard_value = prompt.replace("\n", "\r\n")
         clipboard_ready = False
+        clipboard_confirmed = False
         try:
             pyperclip.copy(clipboard_value)
             clipboard_ready = True
+
+            def _clipboard_matches(expected: str, timeout_sec: float = 1.0) -> bool:
+                deadline = time.monotonic() + timeout_sec
+                while time.monotonic() < deadline:
+                    try:
+                        current = pyperclip.paste()
+                    except Exception as paste_error:
+                        print(f"警告: クリップボード内容の確認に失敗しました: {paste_error}")
+                        return False
+                    if current == expected:
+                        return True
+                    time.sleep(0.05)
+                return False
+
+            clipboard_confirmed = _clipboard_matches(clipboard_value)
+            if not clipboard_confirmed:
+                print("警告: クリップボードに期待した内容が設定されていません。")
         except Exception:
             print("警告: クリップボードへのコピーに失敗したためキーボード挿入にフォールバックします。")
 
         current_text = ""
 
-        if clipboard_ready:
+        if clipboard_ready and clipboard_confirmed:
             clipboard_success = False
             for attempt in range(3):
                 try:
@@ -336,6 +354,21 @@ class BrowserCopilotManager:
                         break
                 try:
                     pyperclip.copy(clipboard_value)
+                    clipboard_confirmed = False
+                    confirm_deadline = time.monotonic() + 0.75
+                    while time.monotonic() < confirm_deadline:
+                        try:
+                            if pyperclip.paste() == clipboard_value:
+                                clipboard_confirmed = True
+                                break
+                        except Exception as confirm_error:
+                            print(f"警告: クリップボード再確認に失敗しました: {confirm_error}")
+                            break
+                        time.sleep(0.05)
+                    if not clipboard_confirmed:
+                        print("警告: クリップボードの再コピー内容を確認できませんでした。")
+                        clipboard_ready = False
+                        break
                 except Exception as recopy_error:
                     print(f"警告: クリップボードの再コピーに失敗しました: {recopy_error}")
                     clipboard_ready = False
