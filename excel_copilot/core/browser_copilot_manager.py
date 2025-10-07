@@ -1395,10 +1395,22 @@ class BrowserCopilotManager:
         """Print diagnostic details about the current chat input element."""
         if not self.page:
             return
+        element_handle = None
         try:
-            snapshot = self.page.evaluate(
+            element_handle = chat_input.element_handle(timeout=0)
+        except Exception as exc:
+            print(f"Debug: {label}: failed to resolve chat input element handle: {exc}")
+            return
+
+        if not element_handle:
+            print(f"Debug: {label}: chat input element handle not available")
+            return
+
+        try:
+            snapshot = element_handle.evaluate(
                 """
-                (target, label) => {
+                (target, info) => {
+                    const label = info?.label ?? null;
                     if (!target) {
                         return { label, error: 'no-target' };
                     }
@@ -1463,12 +1475,16 @@ class BrowserCopilotManager:
                     return summary;
                 }
                 """,
-                chat_input,
-                label,
+                {"label": label},
             )
         except Exception as exc:
             print(f"Debug: {label}: failed to capture chat input snapshot: {exc}")
             return
+        finally:
+            try:
+                element_handle.dispose()
+            except Exception:
+                pass
 
         try:
             rendered = json.dumps(snapshot, ensure_ascii=False)
