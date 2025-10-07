@@ -1669,15 +1669,14 @@ def translate_range_contents(
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
                     source_cell_value = _normalize_cell_value(original_data[position[0]][position[1]]).strip()
-                    if not include_context_columns:
-                        if translation_value == source_cell_value and _contains_japanese(translation_value):
-                            raise ToolExecutionError(
-                                "翻訳結果が元のテキストと同一で日本語のままです。翻訳が完了していません。"
-                            )
-                        if target_language and target_language.lower().startswith("english") and _contains_japanese(translation_value):
-                            raise ToolExecutionError(
-                                "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
-                            )
+                    if translation_value == source_cell_value and _contains_japanese(translation_value):
+                        raise ToolExecutionError(
+                            "翻訳結果が元のテキストと同一で日本語のままです。翻訳が完了していません。"
+                        )
+                    if target_language and target_language.lower().startswith("english") and _contains_japanese(translation_value):
+                        raise ToolExecutionError(
+                            "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
+                        )
 
                     if len(position) == 3:
                         local_row, col_idx, segment_index = position
