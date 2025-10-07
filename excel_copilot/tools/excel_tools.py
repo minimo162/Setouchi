@@ -1,3 +1,4 @@
+import html
 import re
 import difflib
 import logging
@@ -25,6 +26,7 @@ def _review_debug(message: str) -> None:
 
 
 _NO_QUOTES_PLACEHOLDER = "引用なし"
+_HTML_ENTITY_PATTERN = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]{1,31}|#[0-9]{1,7}|#x[0-9A-Fa-f]{1,6});")
 
 if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
     logging.basicConfig(level=logging.DEBUG)
@@ -107,6 +109,28 @@ def _maybe_fix_mojibake(text: str) -> str:
     if candidate_penalty > original_penalty and candidate_japanese <= original_japanese:
         return text
     return candidate
+
+
+def _maybe_unescape_html_entities(text: str) -> str:
+    if not text or '&' not in text:
+        return text
+    if not _HTML_ENTITY_PATTERN.search(text):
+        return text
+    try:
+        unescaped = html.unescape(text)
+    except Exception:
+        return text
+    return unescaped
+
+
+def _unescape_matrix_values(matrix: List[List[Any]]) -> List[List[Any]]:
+    return [
+        [
+            _maybe_unescape_html_entities(cell) if isinstance(cell, str) else cell
+            for cell in row
+        ]
+        for row in matrix
+    ]
 
 def _generate_keyword_variants(base: str) -> List[str]:
     """Produce diverse keyword variants to widen reference searches."""
@@ -429,7 +453,7 @@ def _reshape_to_dimensions(data: Any, rows: int, cols: int) -> List[List[Any]]:
 
 def _normalize_cell_value(cell: Any) -> str:
     if isinstance(cell, str):
-        return cell
+        return _maybe_unescape_html_entities(cell)
     if cell is None:
         return ''
     return str(cell)
@@ -1044,6 +1068,7 @@ def translate_range_contents(
 
         raw_original = actions.read_range(normalized_range, target_sheet)
         original_data = _reshape_to_dimensions(raw_original, source_rows, source_cols)
+        original_data = _unescape_matrix_values(original_data)
 
         if source_rows == 0 or source_cols == 0:
             return f"Range '{cell_range}' has no usable cells to translate."
@@ -1106,6 +1131,7 @@ def translate_range_contents(
                 output_matrix = _reshape_to_dimensions(raw_output, out_rows, out_cols)
             except ToolExecutionError:
                 output_matrix = [["" for _ in range(out_cols)] for _ in range(out_rows)]
+            output_matrix = _unescape_matrix_values(output_matrix)
 
         _ensure_not_stopped()
 
@@ -1396,6 +1422,8 @@ def translate_range_contents(
                     citation_matrix = _reshape_to_dimensions(existing_citation, cite_rows, cite_cols)
                 except ToolExecutionError:
                     citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
+                if citation_matrix is not None:
+                    citation_matrix = _unescape_matrix_values(citation_matrix)
 
         messages: List[str] = []
         explanation_fallback_notes: List[str] = []
@@ -1735,6 +1763,7 @@ def translate_range_contents(
                         )
 
                     translation_value = translation_value.strip()
+                    translation_value = _maybe_unescape_html_entities(translation_value)
                     if not translation_value:
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
@@ -1767,7 +1796,11 @@ def translate_range_contents(
                             quotes_col_index = None
                             explanation_col_index = None
 
-                    explanation_text = explanation_jp.strip() if include_context_columns else ""
+                    explanation_text = (
+                        _maybe_unescape_html_entities(explanation_jp).strip()
+                        if include_context_columns
+                        else ""
+                    )
                     quote_candidates = []
                     if include_context_columns and item_index < len(normalized_quotes_per_item):
                         raw_candidates = normalized_quotes_per_item[item_index]
@@ -2219,6 +2252,8 @@ def check_translation_quality(
 
         source_data = _reshape_to_dimensions(actions.read_range(source_range, sheet_name), src_rows, src_cols)
         translated_data = _reshape_to_dimensions(actions.read_range(translated_range, sheet_name), src_rows, src_cols)
+        source_data = _unescape_matrix_values(source_data)
+        translated_data = _unescape_matrix_values(translated_data)
 
         _ensure_not_stopped()
 
@@ -2776,6 +2811,8 @@ def highlight_text_differences(
         revised_matrix = _reshape_to_dimensions(
             actions.read_range(revised_range, sheet_name), original_rows, original_cols
         )
+        original_matrix = _unescape_matrix_values(original_matrix)
+        revised_matrix = _unescape_matrix_values(revised_matrix)
 
         highlight_matrix: List[List[str]] = []
         highlight_styles: List[List[List[Dict[str, int]]]] = []
