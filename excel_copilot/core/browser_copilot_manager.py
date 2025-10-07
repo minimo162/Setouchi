@@ -321,6 +321,19 @@ class BrowserCopilotManager:
         sanitized = sanitized.replace("\u200b", "")
         return sanitized.rstrip("\n")
 
+    def _collapse_prompt_duplication(self, candidate: str, expected: str) -> str:
+        """Collapse repeated instances of the expected prompt that appear contiguously."""
+        if not candidate or not expected:
+            return candidate
+        if candidate == expected:
+            return candidate
+
+        parts = candidate.split(expected)
+        if len(parts) > 1 and all(not segment.strip() for segment in parts):
+            return expected
+
+        return candidate
+
     def _clear_chat_input(self, chat_input: Locator):
         """Clear existing content from the chat input using keyboard shortcuts."""
         modifier = "Meta" if sys.platform == "darwin" else "Control"
@@ -1118,6 +1131,20 @@ class BrowserCopilotManager:
 
             expected_text = self._normalize_prompt_text(prompt)
             normalized_current = self._normalize_prompt_text(filled_text)
+            duplication_noted = False
+
+            def _collapse_candidate(value: str) -> str:
+                nonlocal duplication_noted
+                collapsed = self._collapse_prompt_duplication(value, expected_text)
+                if collapsed != value and not duplication_noted:
+                    print(
+                        "Notice: detected duplicated prompt content in chat input; "
+                        "normalizing to a single instance."
+                    )
+                    duplication_noted = True
+                return collapsed
+
+            normalized_current = _collapse_candidate(normalized_current)
 
             if normalized_current != expected_text:
                 print(
@@ -1127,6 +1154,7 @@ class BrowserCopilotManager:
                 mismatch_deadline = time.monotonic() + 2.0
                 while time.monotonic() < mismatch_deadline:
                     current_value = self._normalize_prompt_text(self._read_chat_input_text(chat_input))
+                    current_value = _collapse_candidate(current_value)
                     if current_value == expected_text:
                         print("チャット入力欄: 遅延後にプロンプト全体を検知できました。")
                         normalized_current = current_value
@@ -1148,6 +1176,7 @@ class BrowserCopilotManager:
                         time.sleep(0.15)
                     filled_text = self._fill_chat_input(chat_input, prompt)
                     normalized_current = self._normalize_prompt_text(filled_text)
+                    normalized_current = _collapse_candidate(normalized_current)
 
                     if normalized_current != expected_text:
                         print(
