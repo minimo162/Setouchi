@@ -1,4 +1,4 @@
-﻿import re
+import re
 import difflib
 import logging
 import os
@@ -1170,7 +1170,7 @@ def translate_range_contents(
             else:
                 prompt_preamble = (
                     "Translate each Japanese entry below into English while preserving order and meaning.\n"
-                    "Return a JSON array of strings matching the input order. Each element must be the natural English translation only—no explanations, quotes, or additional keys.\n"
+                    "Return a JSON array of strings matching the input order. Each element must be the natural English translation only; no explanations, quotes, or additional keys.\n"
                     "Output must be pure JSON with no extra text before or after the array.\n"
                 )
         if references_requested or use_references:
@@ -1293,7 +1293,7 @@ def translate_range_contents(
                     keyword_prompt = (
                         "For each Japanese item in the JSON array below, craft exactly ten distinct English search phrases.\n"
                         "Ensure the set of ten phrases collectively covers the major actors, actions, consequences, motivations, audiences, and surrounding context described in the item, while keeping each phrasing distinct.\n"
-                        "Use synonyms and descriptive stand‑ins so that proper nouns appear only when essential, and alternate with role- or category-based wording (e.g., 'the automaker', 'the sports car') so no single substantive word appears in every phrase.\n"
+                        "Use synonyms and descriptive stand-ins so that proper nouns appear only when essential, and alternate with role- or category-based wording (e.g., 'the automaker', 'the sports car') so no single substantive word appears in every phrase.\n"
                         "Mix shorter three-to-four word queries with longer six-to-nine word phrasing, and ensure no two phrases share the same first two words.\n"
                         "Do not invent information beyond the item, and return a JSON array matching the input order where each element exposes only a 'keywords' list.\n"
                         f"{texts_json}"
@@ -1342,74 +1342,104 @@ def translate_range_contents(
                         enriched_keywords = _enrich_search_keywords(source_text, list(base_keywords))
                         search_keywords_per_item.append(enriched_keywords)
 
-                    keyword_plan_lines: List[str] = []
-                    for index, (source_text, keywords) in enumerate(zip(current_texts, search_keywords_per_item), start=1):
-                        keyword_plan_lines.append(f"Item {index}:")
-                        keyword_plan_lines.append(f"- Japanese: {source_text}")
-                        keyword_plan_lines.append("- Search keywords:")
-                        for keyword in keywords:
-                            keyword_plan_lines.append(f"  * {keyword}")
-                    keyword_plan_text = "\n".join(keyword_plan_lines)
+                    items_payload: List[Dict[str, Any]] = [
+                        {
+                            "japanese": source_text,
+                            "keywords": list(keywords),
+                        }
+                        for source_text, keywords in zip(current_texts, search_keywords_per_item)
+                    ]
+                    items_json = json.dumps(items_payload, ensure_ascii=False)
 
-                    reference_passage_text = ""
+                    reference_materials_payload: List[Dict[str, Any]] = []
                     if reference_entries:
-                        passage_lines: List[str] = []
                         for entry in reference_entries:
-                            label_parts = [entry.get("id")]
-                            sheet_name = entry.get("sheet")
-                            if sheet_name:
-                                label_parts.append(f"sheet {sheet_name}")
-                            source_range = entry.get("source_range")
-                            if source_range:
-                                label_parts.append(f"range {source_range}")
-                            header = " ".join(part for part in label_parts if part) or "Reference"
-                            passage_lines.append(f"{header}:")
-                            for content_line in entry.get("content", []):
-                                passage_lines.append(f"  - {content_line}")
-                        reference_passage_text = "\n".join(passage_lines)
+                            content_lines = entry.get("content") or []
+                            if not isinstance(content_lines, list):
+                                continue
+                            base_meta = {
+                                "id": entry.get("id"),
+                                "sheet": entry.get("sheet"),
+                                "source_range": entry.get("source_range"),
+                            }
+                            cleaned_meta = {key: value for key, value in base_meta.items() if value}
+                            for seq_index, content_line in enumerate(content_lines, start=1):
+                                material_entry: Dict[str, Any] = dict(cleaned_meta)
+                                material_entry["text"] = content_line
+                                if len(content_lines) > 1:
+                                    material_entry["sequence"] = seq_index
+                                reference_materials_payload.append(material_entry)
+                    reference_materials_json = json.dumps(reference_materials_payload, ensure_ascii=False)
 
-                    reference_urls_text = ""
-                    if reference_url_entries:
-                        reference_urls_text = (
-                            "Refer to the following URLs only if you need the original passages. "
-                            "Do not include these URLs in any quote output; when citations are unavoidable, leave only bracketed numbers like [1].\n"
-                            + "\n".join(
-                                f"  - {entry['url']}" for entry in reference_url_entries if entry.get("url")
-                            )
-                        )
+                    reference_urls_payload: List[str] = [
+                        entry["url"]
+                        for entry in reference_url_entries
+                        if isinstance(entry.get("url"), str) and entry["url"].strip()
+                    ]
+                    reference_urls_json = json.dumps(reference_urls_payload, ensure_ascii=False)
 
                     if use_references:
                         evidence_prompt_sections: List[str] = [
-                            "Use the keywords to pull English sentences from the provided materials that support each Japanese item.",
-                            "When exact matches are scarce, include sentences that share overlapping entities, themes, or context even if the linkage is loose.",
-                            "Copy sentences verbatim (punctuation, casing, numerals) and aim for 4-8 varied quotes drawn from different paragraphs or sources whenever possible; only return an empty array if genuinely nothing relevant appears.",
-                            "Avoid citing near-duplicate sentences or repeating the same clause unless no other material exists.",
-                            "Return JSON only—no introductions, labels, or commentary before or after the array.",
-                            "If you lack supporting material, respond with an empty JSON array `[]` and nothing else.",
-                            "Return a JSON array matching the order. Each element needs 'quotes' and an 'explanation_jp' string with at least two Japanese sentences explaining the support.",
+                            "You are assisting with bilingual translation validation. Work through the tasks below in order.",
                             "",
-                            "Japanese texts with search keywords:",
-                            keyword_plan_text,
+                            "Inputs",
+                            "1. reference_materials: a list of English passages already provided in plain text. Treat these as the only authoritative sources. Do not fetch anything from URLs or external systems.",
+                            "2. items: an array of Japanese entries. Each entry contains:",
+                            "   - japanese: the Japanese sentence that needs supporting evidence.",
+                            "   - keywords: English search hints that can help locate relevant information inside the reference_materials.",
+                            "3. reference_urls (optional): links to the original sources for verification only. Do not echo these URLs in the output.",
+                            "",
+                            "Task",
+                            "For each item in items:",
+                            "- Search the reference_materials using the provided keywords (they are hints, not strict requirements).",
+                            "- Select 4-8 distinct English sentences that best support the meaning of the Japanese sentence. Prefer sentences from different paragraphs or documents to show coverage. If fewer than four suitable sentences exist, return every distinct sentence you can find. If nothing is relevant, use an empty list for that item.",
+                            "- Copy each sentence verbatim, preserving casing, punctuation, and numerals. Do not include URLs; if a citation is unavoidable, keep only bracketed numbers like [1].",
+                            "- Avoid near-duplicates. Only reuse a sentence when no other relevant material exists.",
+                            "",
+                            "Output",
+                            "Return a JSON array whose length equals the number of items. Each element must be an object with the following fields:",
+                            "- \"quotes\": an array of the exact English sentences you selected (strings). If no supporting sentences exist, use an empty array.",
+                            "- \"explanation_jp\": a string containing at least two Japanese sentences that explain how the quotes support the Japanese item. If no quotes were found, explain that no relevant supporting material was located.",
+                            "",
+                            "Rules",
+                            "- Output JSON only; do not add introductions or trailing commentary.",
+                            "- Never omit an element; keep the order aligned with the input items.",
+                            "- When no supporting material is found, return \"quotes\": [] and a suitable Japanese explanation, but never skip the object or return nothing.",
+                            "- If absolutely nothing can be supported from the reference_materials, respond with an empty JSON array [] and nothing else.",
+                            "",
+                            "items (JSON):",
+                            items_json,
+                            "",
+                            "reference_materials (JSON):",
+                            reference_materials_json,
                             "",
                         ]
-                        if reference_passage_text:
-                            evidence_prompt_sections.extend(["Reference passages:", reference_passage_text, ""])
-                        if reference_urls_text:
+                        if reference_urls_payload:
                             evidence_prompt_sections.extend([
-                                "Reference URLs (for lookup only; strip the URLs from quotes and keep at most bracket numbers like [1]):",
-                                reference_urls_text,
+                                "reference_urls (JSON):",
+                                reference_urls_json,
                                 "",
                             ])
                     else:
+                        keyword_plan_lines: List[str] = []
+                        for index, (source_text, keywords) in enumerate(zip(current_texts, search_keywords_per_item), start=1):
+                            keyword_plan_lines.append(f"Item {index}:")
+                            keyword_plan_lines.append(f"- Japanese: {source_text}")
+                            keyword_plan_lines.append("- Search keywords:")
+                            for keyword in keywords:
+                                keyword_plan_lines.append(f"  * {keyword}")
+                        keyword_plan_text = "\n".join(keyword_plan_lines)
+
                         evidence_prompt_sections = [
                             "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
-                            "Return JSON only—no introductions, labels, or commentary before or after the array.",
+                            "Return JSON only; do not add introductions, labels, or commentary before or after the array.",
                             "Return a JSON array matching the order. Each element must include a 'quotes' array and an 'explanation_jp' string (>=2 Japanese sentences).",
                             "",
                             "Japanese texts with search keywords:",
                             keyword_plan_text,
                             "",
                         ]
+
                     evidence_prompt = "\n".join(evidence_prompt_sections)
                     _ensure_not_stopped()
                     evidence_response = browser_manager.ask(evidence_prompt, stop_event=stop_event)
@@ -2289,7 +2319,7 @@ def check_translation_quality(
                     "Exactly one review item is supplied at a time; focus only on that single item. "
                     "Do not attempt to control Excel or describe UI steps; respond only with JSON. "
                     "Treat 'original_text' as the Japanese source and 'translated_text' as the English translation under review. "
-                    "Carefully evaluate both accuracy and expression—flag unnatural tone, awkward phrasing, register mismatches, or inconsistent terminology even when the literal meaning is broadly correct, and propose smoother alternatives. "
+                    "Carefully evaluate both accuracy and expression; flag unnatural tone, awkward phrasing, register mismatches, or inconsistent terminology even when the literal meaning is broadly correct, and propose smoother alternatives. "
                     "Reply with a single JSON array containing exactly one object. Each object must contain 'id', 'status', 'notes', "
                     "'highlighted_text', 'corrected_text', 'before_text', and 'after_text'. "
                     "Use status 'OK' when the translation is acceptable (notes empty or a short remark). Only select 'OK' when you are certain there are no issues. "
