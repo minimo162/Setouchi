@@ -30,7 +30,7 @@ from excel_copilot.ui.messages import (
     ResponseMessage,
     ResponseType,
 )
-from excel_copilot.ui.theme import EXPRESSIVE_PALETTE, primary_surface_gradient
+from excel_copilot.ui.theme import EXPRESSIVE_PALETTE
 from excel_copilot.ui.worker import CopilotWorker
 
 if not logging.getLogger().handlers:
@@ -41,9 +41,7 @@ if not logging.getLogger().handlers:
 
 FOCUS_WAIT_TIMEOUT_SECONDS = 15.0
 PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
-CHAT_PANEL_HEIGHT = 540
-CHAT_PANEL_VERTICAL_PADDING = 64
-CHAT_CONTENT_HEIGHT = CHAT_PANEL_HEIGHT - CHAT_PANEL_VERTICAL_PADDING
+CHAT_PANEL_MIN_HEIGHT = 600
 
 class CopilotApp:
     def __init__(self, page: ft.Page):
@@ -290,7 +288,6 @@ class CopilotApp:
 
         self.chat_list = ft.ListView(
             expand=True,
-            height=CHAT_CONTENT_HEIGHT,
             spacing=24,
             auto_scroll=True,
             padding=ft.Padding(0, 24, 0, 24),
@@ -325,7 +322,7 @@ class CopilotApp:
             content=action_button_content,
             width=48,
             height=48,
-            gradient=primary_surface_gradient(),
+            bgcolor=palette["primary"],
             border_radius=24,
             alignment=ft.alignment.center,
             ink=True,
@@ -333,17 +330,17 @@ class CopilotApp:
             animate_scale=100,
             scale=1,
             shadow=ft.BoxShadow(
-                spread_radius=2,
-                blur_radius=28,
-                color="#2A2BFF66",
-                offset=ft.Offset(0, 12),
+                spread_radius=0,
+                blur_radius=16,
+                color=ft.Colors.with_opacity(0.18, palette["primary"]),
+                offset=ft.Offset(0, 8),
             ),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.2, palette["on_primary_container"])),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.1, palette["on_primary"])),
         )
 
         chat_panel = ft.Container(
             expand=True,
-            height=CHAT_PANEL_HEIGHT,
+            min_height=CHAT_PANEL_MIN_HEIGHT,
             bgcolor=palette["surface_high"],
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
@@ -383,23 +380,28 @@ class CopilotApp:
             ),
             clip_behavior=ft.ClipBehavior.NONE,
             content=ft.Column(
-                [
-                    composer_input,
-                    ft.Container(
-                        content=self.mode_card_row,
-                        bgcolor=palette["surface_variant"],
-                        border_radius=20,
-                        padding=ft.Padding(16, 14, 16, 14),
-                        border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
-                        margin=ft.margin.only(top=18),
-                    ),
-                ],
+                [composer_input],
                 spacing=24,
             ),
         )
 
+        mode_panel = ft.Container(
+            content=self.mode_card_row,
+            bgcolor=palette["surface_variant"],
+            border_radius=20,
+            padding=ft.Padding(18, 16, 18, 16),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=12,
+                color=ft.Colors.with_opacity(0.04, "#0F172A"),
+                offset=ft.Offset(0, 6),
+            ),
+            margin=ft.margin.only(top=4),
+        )
+
         main_column = ft.Column(
-            controls=[chat_panel, composer_panel],
+            controls=[chat_panel, composer_panel, mode_panel],
             expand=True,
             spacing=24,
         )
@@ -472,7 +474,7 @@ class CopilotApp:
 
     def _handle_button_hover(self, e: ft.ControlEvent):
         if e.data == "true":
-            e.control.scale = 1.05
+            e.control.scale = 1.02
         else:
             e.control.scale = 1
         e.control.update()
