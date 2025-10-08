@@ -1052,7 +1052,6 @@ def translate_range_contents(
     cell_range: str,
     target_language: str = "English",
     sheet_name: Optional[str] = None,
-    reference_ranges: Optional[List[str]] = None,
     citation_output_range: Optional[str] = None,
     reference_urls: Optional[List[str]] = None,
     translation_output_range: Optional[str] = None,
@@ -1193,12 +1192,9 @@ def translate_range_contents(
 
         _ensure_not_stopped()
 
-        reference_entries: List[Dict[str, Any]] = []
-        reference_text_pool: List[str] = []
         reference_url_entries: List[Dict[str, str]] = []
         seen_reference_urls: Set[str] = set()
         reference_warning_notes: List[str] = []
-        invalid_reference_range_tokens: List[str] = []
         invalid_reference_url_tokens: List[str] = []
         coerced_reference_notes: List[str] = []
 
@@ -1224,76 +1220,18 @@ def translate_range_contents(
 
         if reference_ranges:
             range_list = [reference_ranges] if isinstance(reference_ranges, str) else list(reference_ranges)
+            normalized_tokens: List[str] = []
             for raw_range in range_list:
-                _ensure_not_stopped()
-                raw_token = "" if raw_range is None else str(raw_range)
-                normalized_token = _strip_enclosing_quotes(raw_token)
-                if not normalized_token:
-                    continue
-                try:
-                    ref_sheet, ref_range = _split_sheet_and_range(normalized_token, target_sheet)
-                    _parse_range_dimensions(ref_range)
-                except ToolExecutionError:
-                    if _is_probable_url(normalized_token):
-                        _append_reference_url(normalized_token)
-                        coerced_reference_notes.append(
-                            f"参照 '{raw_token}' をURLとして処理しました。"
-                        )
-                        continue
-                    resolved_path = _resolve_file_reference(normalized_token)
-                    if resolved_path:
-                        _append_reference_url(resolved_path.as_uri())
-                        coerced_reference_notes.append(
-                            f"参照 '{raw_token}' をファイル '{resolved_path.name}' として利用しました。"
-                        )
-                        continue
-                    invalid_reference_range_tokens.append(raw_token or "(空文字列)")
-                    continue
-                try:
-                    ref_data = actions.read_range(ref_range, ref_sheet)
-                except ToolExecutionError as exc:
-                    raise ToolExecutionError(f"指定した範囲 '{raw_token}' の検証中にエラーが発生しました: {exc}") from exc
-
-                reference_lines: List[str] = []
-                if isinstance(ref_data, list):
-                    for ref_row in ref_data:
-                        if isinstance(ref_row, list):
-                            row_text: List[str] = []
-                            for value in ref_row:
-                                text_value = _normalize_cell_value(value).strip()
-                                if text_value:
-                                    row_text.append(text_value)
-                            if row_text:
-                                reference_lines.append(" ".join(row_text))
-                        else:
-                            text_value = _normalize_cell_value(ref_row).strip()
-                            if text_value:
-                                reference_lines.append(text_value)
-                else:
-                    text_value = _normalize_cell_value(ref_data).strip()
-                    if text_value:
-                        reference_lines.append(text_value)
-
-                if reference_lines:
-                    entry: Dict[str, Any] = {
-                        "id": f"R{len(reference_entries) + 1}",
-                        "source_range": raw_range,
-                        "content": reference_lines,
-                    }
-                    if ref_sheet:
-                        entry["sheet"] = ref_sheet
-                    reference_entries.append(entry)
-                    reference_text_pool.extend(reference_lines)
-
-            if invalid_reference_range_tokens:
-                invalid_message = ", ".join(_dedupe_preserve_order(invalid_reference_range_tokens))
+                token = "" if raw_range is None else str(raw_range)
+                normalized = _strip_enclosing_quotes(token)
+                if normalized:
+                    normalized_tokens.append(normalized)
+            if normalized_tokens:
+                invalid_message = ", ".join(_dedupe_preserve_order(normalized_tokens))
                 reference_warning_notes.append(
-                    f"参照として指定された値 ({invalid_message}) はセル範囲やファイル/URLとして認識できなかったため無視しました。"
+                    f"reference_ranges ({invalid_message}) は現在サポートされていないため無視しました。参照URLを指定してください。"
                 )
-            if reference_ranges and not reference_entries and not reference_url_entries:
-                reference_warning_notes.append(
-                    "reference_ranges から利用できる参照データが見つからなかったため、参照なしで処理を続行します。"
-                )
+            reference_ranges = None
 
         if reference_urls:
             url_list = [reference_urls] if isinstance(reference_urls, str) else list(reference_urls)
@@ -1320,8 +1258,7 @@ def translate_range_contents(
                 invalid_reference_url_tokens.append(original_value or "(空文字列)")
 
         references_requested = bool(reference_ranges) or bool(reference_urls)
-        use_references = bool(reference_entries or reference_url_entries)
-        reference_text_pool = [text for text in reference_text_pool if text]
+        use_references = bool(reference_url_entries)
 
         if invalid_reference_url_tokens:
             invalid_urls = ", ".join(_dedupe_preserve_order(invalid_reference_url_tokens))
@@ -1624,9 +1561,10 @@ def translate_range_contents(
                 current_positions = [pos for _, pos in entry_slice]
 
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
-                normalized_quotes_per_item: List[List[str]] = []
+                normalized_quotes_per_item: List[List[str]] = [[] for _ in current_texts]
+                search_keywords_per_item: List[List[str]] = [[] for _ in current_texts]
 
-                if include_context_columns:
+                if include_context_columns and use_references:
                     keyword_prompt = (
                         "For each Japanese item in the JSON array below, craft exactly ten distinct English search phrases.\n"
                         "Ensure the set of ten phrases collectively covers the major actors, actions, consequences, motivations, audiences, and surrounding context described in the item, while keeping each phrasing distinct.\n"
@@ -1674,10 +1612,9 @@ def translate_range_contents(
                             )
                         normalized_keywords.append(keyword_list)
 
-                    search_keywords_per_item: List[List[str]] = []
-                    for source_text, base_keywords in zip(current_texts, normalized_keywords):
+                    for index, (source_text, base_keywords) in enumerate(zip(current_texts, normalized_keywords)):
                         enriched_keywords = _enrich_search_keywords(source_text, list(base_keywords))
-                        search_keywords_per_item.append(enriched_keywords)
+                        search_keywords_per_item[index] = enriched_keywords
 
                     items_payload: List[Dict[str, Any]] = [
                         {
@@ -1689,23 +1626,6 @@ def translate_range_contents(
                     items_json = json.dumps(items_payload, ensure_ascii=False)
 
                     reference_materials_payload: List[Dict[str, Any]] = []
-                    if reference_entries:
-                        for entry in reference_entries:
-                            content_lines = entry.get("content") or []
-                            if not isinstance(content_lines, list):
-                                continue
-                            base_meta = {
-                                "id": entry.get("id"),
-                                "sheet": entry.get("sheet"),
-                                "source_range": entry.get("source_range"),
-                            }
-                            cleaned_meta = {key: value for key, value in base_meta.items() if value}
-                            for seq_index, content_line in enumerate(content_lines, start=1):
-                                material_entry: Dict[str, Any] = dict(cleaned_meta)
-                                material_entry["text"] = content_line
-                                if len(content_lines) > 1:
-                                    material_entry["sequence"] = seq_index
-                                reference_materials_payload.append(material_entry)
                     reference_materials_json = json.dumps(reference_materials_payload, ensure_ascii=False)
 
                     reference_urls_payload: List[str] = [
@@ -1751,95 +1671,82 @@ def translate_range_contents(
                             reference_materials_json,
                             "",
                         ]
+                        if not reference_materials_payload:
+                            evidence_prompt_sections.extend([
+                                "The reference_materials list is currently empty. Retrieve the necessary supporting sentences directly from the provided reference URLs.",
+                                "",
+                            ])
                         if reference_urls_payload:
                             evidence_prompt_sections.extend([
                                 "reference_urls (JSON):",
                                 reference_urls_json,
                                 "",
                             ])
-                    else:
-                        keyword_plan_lines: List[str] = []
-                        for index, (source_text, keywords) in enumerate(zip(current_texts, search_keywords_per_item), start=1):
-                            keyword_plan_lines.append(f"Item {index}:")
-                            keyword_plan_lines.append(f"- Japanese: {source_text}")
-                            keyword_plan_lines.append("- Search keywords:")
-                            for keyword in keywords:
-                                keyword_plan_lines.append(f"  * {keyword}")
-                        keyword_plan_text = "\n".join(keyword_plan_lines)
 
-                        evidence_prompt_sections = [
-                            "Use the keywords to draft 3-5 concise English candidate sentences per item that could guide the translation.",
-                            "Return JSON only; do not add introductions, labels, or commentary before or after the array.",
-                            "Return a JSON array matching the order. Each element must include a 'quotes' array and an 'explanation_jp' string (>=2 Japanese sentences).",
-                            "",
-                            "Japanese texts with search keywords:",
-                            keyword_plan_text,
-                            "",
-                        ]
+                        evidence_prompt = "\n".join(evidence_prompt_sections)
+                        _ensure_not_stopped()
+                        evidence_response = browser_manager.ask(evidence_prompt, stop_event=stop_event)
+                        try:
+                            match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
+                            evidence_payload = match.group(0) if match else evidence_response
+                            evidence_items = json.loads(evidence_payload)
+                        except json.JSONDecodeError as exc:
+                            raise ToolExecutionError(
+                                f"Failed to parse evidence response as JSON: {evidence_response}"
+                            ) from exc
+                        if not isinstance(evidence_items, list) or len(evidence_items) != len(current_texts):
+                            raise ToolExecutionError(
+                                "Evidence response must be a list with one entry per source text."
+                            )
 
-                    evidence_prompt = "\n".join(evidence_prompt_sections)
-                    _ensure_not_stopped()
-                    evidence_response = browser_manager.ask(evidence_prompt, stop_event=stop_event)
-                    try:
-                        match = re.search(r'{.*}|\[.*\]', evidence_response, re.DOTALL)
-                        evidence_payload = match.group(0) if match else evidence_response
-                        evidence_items = json.loads(evidence_payload)
-                    except json.JSONDecodeError as exc:
-                        raise ToolExecutionError(
-                            f"Failed to parse evidence response as JSON: {evidence_response}"
-                        ) from exc
-                    if not isinstance(evidence_items, list) or len(evidence_items) != len(current_texts):
-                        raise ToolExecutionError(
-                            "Evidence response must be a list with one entry per source text."
-                        )
+                        for item_index, quotes_entry in enumerate(evidence_items):
+                            if isinstance(quotes_entry, dict):
+                                raw_quotes = quotes_entry.get("quotes")
+                                if raw_quotes is None:
+                                    translated_candidate = quotes_entry.get("translated_text")
+                                    if isinstance(translated_candidate, str) and translated_candidate.strip():
+                                        raw_quotes = [translated_candidate]
+                            elif isinstance(quotes_entry, list):
+                                raw_quotes = quotes_entry
+                            else:
+                                raw_quotes = None
+                            quotes_list: List[str] = []
+                            if isinstance(raw_quotes, list):
+                                for quote in raw_quotes:
+                                    if isinstance(quote, str):
+                                        cleaned_quote = _strip_reference_urls_from_quote(quote)
+                                        if cleaned_quote:
+                                            quotes_list.append(cleaned_quote)
+                            normalized_quotes_per_item[item_index] = quotes_list
+                elif include_context_columns:
+                    for index, source_text in enumerate(current_texts):
+                        search_keywords_per_item[index] = _enrich_search_keywords(source_text, [])
 
-                    for quotes_entry in evidence_items:
-                        if isinstance(quotes_entry, dict):
-                            raw_quotes = quotes_entry.get("quotes")
-                            if raw_quotes is None:
-                                translated_candidate = quotes_entry.get("translated_text")
-                                if isinstance(translated_candidate, str) and translated_candidate.strip():
-                                    raw_quotes = [translated_candidate]
-                        elif isinstance(quotes_entry, list):
-                            raw_quotes = quotes_entry
-                        else:
-                            raw_quotes = None
-                        quotes_list: List[str] = []
-                        if isinstance(raw_quotes, list):
-                            for quote in raw_quotes:
-                                if isinstance(quote, str):
-                                    cleaned_quote = _strip_reference_urls_from_quote(quote)
-                                    if cleaned_quote:
-                                        quotes_list.append(cleaned_quote)
-                        normalized_quotes_per_item.append(quotes_list)
+                translation_context = [
+                    {
+                        "source_text": text,
+                        "keywords": keywords,
+                        "quotes": normalized_quotes_per_item[index] if index < len(normalized_quotes_per_item) else []
+                    }
+                    for index, (text, keywords) in enumerate(zip(current_texts, search_keywords_per_item))
+                ]
+                translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
-                    translation_context = [
-                        {
-                            "source_text": text,
-                            "keywords": keywords,
-                            "quotes": normalized_quotes_per_item[index] if index < len(normalized_quotes_per_item) else []
-                        }
-                        for index, (text, keywords) in enumerate(zip(current_texts, search_keywords_per_item))
-                    ]
-                    translation_context_json = json.dumps(translation_context, ensure_ascii=False)
+                final_prompt = f"{prompt_preamble}Source sentences:\n{texts_json}\n"
+                if reference_url_entries and use_references:
+                    final_prompt += f"Reference URLs:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n"
+                final_prompt += f"Supporting expressions (JSON):\n{translation_context_json}\n"
+                _ensure_not_stopped()
+                response = browser_manager.ask(final_prompt, stop_event=stop_event)
 
-                    final_prompt = f"{prompt_preamble}Source sentences:\n{texts_json}\n"
-                    if reference_entries:
-                        final_prompt += f"Additional reference passages (JSON):\n{json.dumps(reference_entries, ensure_ascii=False)}\n"
-                    if reference_url_entries:
-                        final_prompt += f"Reference URLs:\n{json.dumps(reference_url_entries, ensure_ascii=False)}\n"
-                    final_prompt += f"Supporting expressions (JSON):\n{translation_context_json}\n"
-                    _ensure_not_stopped()
-                    response = browser_manager.ask(final_prompt, stop_event=stop_event)
-
-                    try:
-                        match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
-                        json_payload = match.group(0) if match else response
-                        parsed_payload = json.loads(json_payload)
-                    except json.JSONDecodeError as exc:
-                        raise ToolExecutionError(
-                            f"Failed to parse translation response as JSON: {response}"
-                        ) from exc
+                try:
+                    match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
+                    json_payload = match.group(0) if match else response
+                    parsed_payload = json.loads(json_payload)
+                except json.JSONDecodeError as exc:
+                    raise ToolExecutionError(
+                        f"Failed to parse translation response as JSON: {response}"
+                    ) from exc
                 else:
                     final_prompt = f"{prompt_preamble}{texts_json}"
                     _ensure_not_stopped()
@@ -2258,7 +2165,6 @@ def translate_range_without_references(
         cell_range=cell_range,
         target_language=target_language,
         sheet_name=sheet_name,
-        reference_ranges=None,
         citation_output_range=None,
         reference_urls=None,
         translation_output_range=translation_output_range,
@@ -2275,7 +2181,6 @@ def translate_range_with_references(
     cell_range: str,
     target_language: str = "English",
     sheet_name: Optional[str] = None,
-    reference_ranges: Optional[List[str]] = None,
     reference_urls: Optional[List[str]] = None,
     translation_output_range: Optional[str] = None,
     citation_output_range: Optional[str] = None,
@@ -2283,9 +2188,9 @@ def translate_range_with_references(
     stop_event: Optional[Event] = None,
 ) -> str:
     """Translate ranges while consulting the supplied references per cell."""
-    if not reference_ranges and not reference_urls:
+    if not reference_urls:
         raise ToolExecutionError(
-            "Either reference_ranges or reference_urls must be provided when using translate_range_with_references."
+            "reference_urls must be provided when using translate_range_with_references."
         )
 
     return translate_range_contents(
@@ -2294,7 +2199,6 @@ def translate_range_with_references(
         cell_range=cell_range,
         target_language=target_language,
         sheet_name=sheet_name,
-        reference_ranges=reference_ranges,
         citation_output_range=citation_output_range,
         reference_urls=reference_urls,
         translation_output_range=translation_output_range,

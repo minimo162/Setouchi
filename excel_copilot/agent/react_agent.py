@@ -205,15 +205,7 @@ class ReActAgent:
 
     def _ensure_reference_support(self, arguments: Dict[str, Any], excel_actions: ExcelActions) -> None:
         """Ensure translate_range_with_references receives usable supporting material."""
-        ref_ranges = arguments.get("reference_ranges")
         ref_urls = arguments.get("reference_urls")
-
-        if isinstance(ref_ranges, str):
-            ref_ranges = [ref_ranges]
-        elif isinstance(ref_ranges, (tuple, set)):
-            ref_ranges = list(ref_ranges)
-        elif not isinstance(ref_ranges, list):
-            ref_ranges = [ref_ranges] if ref_ranges else []
 
         if isinstance(ref_urls, str):
             ref_urls = [ref_urls]
@@ -222,23 +214,13 @@ class ReActAgent:
         elif not isinstance(ref_urls, list):
             ref_urls = [ref_urls] if ref_urls else []
 
-        ref_ranges = [value for value in (ref_ranges or []) if isinstance(value, str) and value.strip()]
         ref_urls = [value for value in (ref_urls or []) if isinstance(value, str) and value.strip()]
 
-        if not ref_ranges and not ref_urls:
+        if not ref_urls:
             tokens = self._extract_reference_tokens()
             inferred_urls = self._resolve_reference_hints(tokens, excel_actions)
             if inferred_urls:
                 ref_urls.extend(inferred_urls)
-
-        if ref_ranges:
-            dedup_ranges: List[str] = []
-            seen_ranges: Set[str] = set()
-            for item in ref_ranges:
-                if item not in seen_ranges:
-                    seen_ranges.add(item)
-                    dedup_ranges.append(item)
-            ref_ranges = dedup_ranges
 
         if ref_urls:
             dedup_urls: List[str] = []
@@ -248,11 +230,6 @@ class ReActAgent:
                     seen_urls.add(item)
                     dedup_urls.append(item)
             ref_urls = dedup_urls
-
-        if ref_ranges:
-            arguments["reference_ranges"] = ref_ranges
-        else:
-            arguments.pop("reference_ranges", None)
 
         if ref_urls:
             arguments["reference_urls"] = ref_urls
