@@ -360,7 +360,6 @@ class CopilotApp:
 
         self._chat_panel = ft.Container(
             expand=True,
-            height=CHAT_PANEL_BASE_HEIGHT,  # fixed height keeps chat taller; min_height/constraints are unsupported here
             bgcolor=palette["surface_high"],
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
@@ -469,7 +468,8 @@ class CopilotApp:
         )
 
         current_width = getattr(self.page, "width", None) or getattr(self.page.window, "width", None)
-        self._apply_responsive_layout(current_width)
+        current_height = getattr(self.page, "height", None) or getattr(self.page.window, "height", None)
+        self._apply_responsive_layout(current_width, current_height)
 
         self.page.add(self._content_container)
 
@@ -480,16 +480,21 @@ class CopilotApp:
 
     def _handle_page_resize(self, e: Optional[ft.ControlEvent]):
         width = getattr(self.page.window, "width", None) or getattr(self.page, "width", None)
-        self._apply_responsive_layout(width)
+        height = getattr(self.page.window, "height", None) or getattr(self.page, "height", None)
+        self._apply_responsive_layout(width, height)
         self._update_ui()
 
-    def _apply_responsive_layout(self, width: Optional[Union[int, float]]):
+    def _apply_responsive_layout(self, width: Optional[Union[int, float]], height: Optional[Union[int, float]]):
         try:
             width_value = float(width or 0)
         except (TypeError, ValueError):
             width_value = 0.0
         if width_value <= 0:
             return
+        try:
+            height_value = float(height or 0)
+        except (TypeError, ValueError):
+            height_value = 0.0
 
         if width_value < 720:
             layout_key = "compact"
@@ -499,41 +504,41 @@ class CopilotApp:
             layout_key = "spacious"
 
         if layout_key == "compact":
-            content_padding = ft.Padding(16, 20, 16, 24)
-            panel_padding = ft.Padding(20, 20, 20, 20)
-            mode_padding = ft.Padding(14, 12, 14, 12)
-            chat_padding = ft.Padding(0, 16, 0, 16)
+            content_padding = ft.Padding(12, 16, 12, 20)
+            panel_padding = ft.Padding(18, 18, 18, 18)
+            mode_padding = ft.Padding(12, 10, 12, 10)
+            chat_padding = ft.Padding(0, 14, 0, 14)
             composer_spacing = 12
             action_alignment = ft.alignment.center
             action_margin = ft.margin.only(top=12)
-            chat_height = None
+            preferred_chat_height = 320
             context_alignment = ft.MainAxisAlignment.START
             main_column_spacing = 18
             list_spacing = 18
         elif layout_key == "cozy":
-            content_padding = ft.Padding(28, 36, 28, 36)
-            panel_padding = ft.Padding(24, 28, 24, 28)
-            mode_padding = ft.Padding(16, 14, 16, 14)
+            content_padding = ft.Padding(20, 26, 20, 30)
+            panel_padding = ft.Padding(20, 22, 20, 22)
+            mode_padding = ft.Padding(14, 12, 14, 12)
+            chat_padding = ft.Padding(0, 18, 0, 18)
+            composer_spacing = 14
+            action_alignment = ft.alignment.center_right
+            action_margin = ft.margin.only(left=10)
+            preferred_chat_height = 360
+            context_alignment = ft.MainAxisAlignment.END
+            main_column_spacing = 20
+            list_spacing = 20
+        else:
+            content_padding = ft.Padding(24, 28, 24, 32)
+            panel_padding = ft.Padding(22, 24, 22, 24)
+            mode_padding = ft.Padding(14, 12, 14, 12)
             chat_padding = ft.Padding(0, 20, 0, 20)
             composer_spacing = 16
             action_alignment = ft.alignment.center_right
-            action_margin = ft.margin.only(left=12)
-            chat_height = 520
+            action_margin = ft.margin.only(left=10)
+            preferred_chat_height = 340
             context_alignment = ft.MainAxisAlignment.END
-            main_column_spacing = 22
+            main_column_spacing = 20
             list_spacing = 22
-        else:
-            content_padding = ft.Padding(40, 48, 40, 48)
-            panel_padding = ft.Padding(28, 32, 28, 32)
-            mode_padding = ft.Padding(18, 16, 18, 16)
-            chat_padding = ft.Padding(0, 24, 0, 24)
-            composer_spacing = 18
-            action_alignment = ft.alignment.center_right
-            action_margin = ft.margin.only(left=12)
-            chat_height = CHAT_PANEL_BASE_HEIGHT
-            context_alignment = ft.MainAxisAlignment.END
-            main_column_spacing = 24
-            list_spacing = 24
 
         if self._content_container:
             self._content_container.padding = content_padding
@@ -546,7 +551,12 @@ class CopilotApp:
             self._mode_panel_container.padding = mode_padding
 
         if self._layout:
-            spacing_value = 24 if layout_key != "spacious" else 32
+            if layout_key == "compact":
+                spacing_value = 20
+            elif layout_key == "cozy":
+                spacing_value = 24
+            else:
+                spacing_value = 28
             self._layout.spacing = spacing_value
             self._layout.run_spacing = spacing_value
 
@@ -569,7 +579,29 @@ class CopilotApp:
         if self._context_actions:
             self._context_actions.alignment = context_alignment
 
+        available_height = 0.0
+        if height_value > 0:
+            available_height = max(0.0, height_value - (content_padding.top + content_padding.bottom))
+
         if self._chat_panel:
+            if available_height > 0:
+                composer_est = (panel_padding.top + panel_padding.bottom) + 120
+                mode_est = (mode_padding.top + mode_padding.bottom) + 110
+                spacing_total = max(0, main_column_spacing) * 2
+                calculated = available_height - composer_est - mode_est - spacing_total
+                if layout_key == "compact":
+                    min_chat_height = 200
+                elif layout_key == "cozy":
+                    min_chat_height = 220
+                else:
+                    min_chat_height = 240
+                max_chat_height = preferred_chat_height
+                if calculated <= 0:
+                    chat_height = min_chat_height
+                else:
+                    chat_height = max(min_chat_height, min(max_chat_height, calculated))
+            else:
+                chat_height = preferred_chat_height
             self._chat_panel.height = chat_height
 
         if self._action_button_wrapper:
