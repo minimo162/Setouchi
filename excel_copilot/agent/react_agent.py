@@ -2,7 +2,9 @@ import json
 import inspect
 import re
 import threading
-from typing import Generator, List, Dict, Any, Optional, Tuple, Callable
+from pathlib import Path
+from urllib.parse import urlparse
+from typing import Generator, List, Dict, Any, Optional, Tuple, Callable, Set
 
 from excel_copilot.config import MAX_ITERATIONS, HISTORY_MAX_MESSAGES
 from excel_copilot.core.exceptions import LLMResponseError, ToolExecutionError, UserStopRequested
@@ -201,6 +203,175 @@ class ReActAgent:
 
         return thought, action_str, final_answer
 
+    def _ensure_reference_support(self, arguments: Dict[str, Any], excel_actions: ExcelActions) -> None:
+        """Ensure translate_range_with_references receives usable supporting material."""
+        ref_ranges = arguments.get("reference_ranges")
+        ref_urls = arguments.get("reference_urls")
+
+        if isinstance(ref_ranges, str):
+            ref_ranges = [ref_ranges]
+        elif isinstance(ref_ranges, (tuple, set)):
+            ref_ranges = list(ref_ranges)
+        elif not isinstance(ref_ranges, list):
+            ref_ranges = [ref_ranges] if ref_ranges else []
+
+        if isinstance(ref_urls, str):
+            ref_urls = [ref_urls]
+        elif isinstance(ref_urls, (tuple, set)):
+            ref_urls = list(ref_urls)
+        elif not isinstance(ref_urls, list):
+            ref_urls = [ref_urls] if ref_urls else []
+
+        ref_ranges = [value for value in (ref_ranges or []) if isinstance(value, str) and value.strip()]
+        ref_urls = [value for value in (ref_urls or []) if isinstance(value, str) and value.strip()]
+
+        if not ref_ranges and not ref_urls:
+            tokens = self._extract_reference_tokens()
+            inferred_urls = self._resolve_reference_hints(tokens, excel_actions)
+            if inferred_urls:
+                ref_urls.extend(inferred_urls)
+
+        if ref_ranges:
+            dedup_ranges: List[str] = []
+            seen_ranges: Set[str] = set()
+            for item in ref_ranges:
+                if item not in seen_ranges:
+                    seen_ranges.add(item)
+                    dedup_ranges.append(item)
+            ref_ranges = dedup_ranges
+
+        if ref_urls:
+            dedup_urls: List[str] = []
+            seen_urls: Set[str] = set()
+            for item in ref_urls:
+                if item not in seen_urls:
+                    seen_urls.add(item)
+                    dedup_urls.append(item)
+            ref_urls = dedup_urls
+
+        if ref_ranges:
+            arguments["reference_ranges"] = ref_ranges
+        else:
+            arguments.pop("reference_ranges", None)
+
+        if ref_urls:
+            arguments["reference_urls"] = ref_urls
+        else:
+            arguments.pop("reference_urls", None)
+
+    def _extract_reference_tokens(self) -> List[str]:
+        """Collect potential reference hints (URLs / filenames) from conversation history."""
+        url_pattern = re.compile(r"https?://[^\s\u3000<>\"'）)]+", re.IGNORECASE)
+        file_pattern = re.compile(
+            r"[^\s\u3000<>\"']+\.(?:pdf|docx|doc|xlsx|xlsm|xls|csv|txt|md)",
+            re.IGNORECASE,
+        )
+        tokens: List[str] = []
+        seen: Set[str] = set()
+
+        for message in reversed(self.messages):
+            if message.get("role") != "user":
+                continue
+            content = message.get("content") or ""
+            if not content:
+                continue
+            normalized = content.replace("　", " ")
+            for match in url_pattern.finditer(normalized):
+                candidate = self._trim_trailing_punctuation(match.group(0))
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    tokens.append(candidate)
+            for match in file_pattern.finditer(normalized):
+                candidate = self._trim_trailing_punctuation(match.group(0))
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    tokens.append(candidate)
+
+        return list(reversed(tokens))
+
+    @staticmethod
+    def _trim_trailing_punctuation(value: str) -> str:
+        trimmed = value.strip()
+        trailing_chars = ".,;:)]}>】〕）｣\"'"
+        while trimmed and trimmed[-1] in trailing_chars:
+            trimmed = trimmed[:-1].rstrip()
+        return trimmed
+
+    @staticmethod
+    def _strip_enclosing_quotes(value: str) -> str:
+        trimmed = value.strip()
+        if len(trimmed) >= 2 and trimmed[0] == trimmed[-1] and trimmed[0] in {"'", '"'}:
+            inner = trimmed[1:-1]
+            if trimmed[0] == "'":
+                return inner.replace("''", "'")
+            return inner
+        return trimmed
+
+    def _resolve_reference_hints(self, tokens: List[str], excel_actions: ExcelActions) -> List[str]:
+        """Convert extracted tokens into usable reference URLs (HTTP/file)."""
+        if not tokens:
+            return []
+
+        workbook_dir: Optional[Path] = None
+        try:
+            workbook_path = getattr(excel_actions.book, "fullname", "") or getattr(
+                excel_actions.book, "full_name", ""
+            )
+            if workbook_path:
+                workbook_dir = Path(workbook_path).resolve().parent
+        except Exception:
+            workbook_dir = None
+
+        resolved_urls: List[str] = []
+        seen_urls: Set[str] = set()
+
+        search_roots: List[Path] = []
+        try:
+            search_roots.append(Path.cwd())
+            search_roots.append(Path.cwd().parent)
+        except Exception:
+            pass
+
+        if workbook_dir:
+            search_roots.append(workbook_dir)
+
+        for token in tokens:
+            cleaned = self._strip_enclosing_quotes(token)
+            if not cleaned:
+                continue
+
+            parsed = urlparse(cleaned)
+            if parsed.scheme and (parsed.netloc or (parsed.scheme.lower() == "file" and parsed.path)):
+                normalized = cleaned.strip()
+                if normalized not in seen_urls:
+                    seen_urls.add(normalized)
+                    resolved_urls.append(normalized)
+                continue
+
+            candidate_path = Path(cleaned)
+            candidate_paths: List[Path] = []
+            if candidate_path.is_absolute():
+                candidate_paths.append(candidate_path)
+            else:
+                for root in search_roots:
+                    try:
+                        candidate_paths.append((root / candidate_path).expanduser())
+                    except Exception:
+                        continue
+
+            for path_candidate in candidate_paths:
+                try:
+                    if path_candidate.exists():
+                        uri = path_candidate.resolve().as_uri()
+                        if uri not in seen_urls:
+                            seen_urls.add(uri)
+                            resolved_urls.append(uri)
+                        break
+                except Exception:
+                    continue
+
+        return resolved_urls
+
     def _execute_tool(self, action_json_str: str, excel_actions: ExcelActions, stop_event: threading.Event) -> Any:
         """ツールを実行する"""
         try:
@@ -225,6 +396,9 @@ class ReActAgent:
             arguments['sheetname'] = self.sheet_name
         if 'stop_event' in sig.parameters:
             arguments['stop_event'] = stop_event
+
+        if tool_name == "translate_range_with_references":
+            self._ensure_reference_support(arguments, excel_actions)
 
         try:
             result = tool_function(**arguments)
