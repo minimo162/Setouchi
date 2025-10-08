@@ -1,11 +1,15 @@
 """Reusable chat-related UI components for the desktop application."""
 
+import math
 from typing import Union
 
 import flet as ft
 
 from .messages import ResponseType
 from .theme import EXPRESSIVE_PALETTE
+
+
+_MAX_MESSAGE_HEIGHT = 360
 
 
 class ChatMessage(ft.ResponsiveRow):
@@ -161,6 +165,22 @@ class ChatMessage(ft.ResponsiveRow):
             line_controls if line_controls else [ft.Text(msg_content, **text_style, selectable=True)]
         )
 
+        approx_lines = max(
+            1,
+            normalized_content.count("\n") + 1 if normalized_content else 0,
+            math.ceil(len(normalized_content) / 60) if normalized_content else 0,
+        )
+        estimated_height = 56 + approx_lines * 20
+        needs_scroll = estimated_height > _MAX_MESSAGE_HEIGHT
+        scroll_mode = ft.ScrollMode.AUTO if needs_scroll else None
+        content_column = ft.Column(
+            content_controls,
+            spacing=8,
+            tight=True,
+            scroll=scroll_mode,
+            auto_scroll=True if needs_scroll else None,
+        )
+
         gradient_factory = config.get("gradient_factory")
         gradient = gradient_factory() if callable(gradient_factory) else None
         icon_gradient_factory = config.get("icon_gradient_factory")
@@ -169,12 +189,14 @@ class ChatMessage(ft.ResponsiveRow):
         border_color = config.get("border_color", ft.Colors.with_opacity(0.2, palette["outline"]))
 
         message_bubble = ft.Container(
-            content=ft.Column(content_controls, spacing=8, tight=True),
+            content=content_column,
             bgcolor=config.get("bgcolor", palette["surface_high"]),
             gradient=gradient if gradient else None,
             border_radius=18,
             padding=ft.Padding(20, 16, 20, 16),
             expand=True,
+            height=_MAX_MESSAGE_HEIGHT if needs_scroll else None,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE if needs_scroll else ft.ClipBehavior.NONE,
             shadow=ft.BoxShadow(
                 spread_radius=0,
                 blur_radius=16,

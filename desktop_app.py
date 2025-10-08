@@ -286,6 +286,8 @@ class CopilotApp:
             spacing=24,
             auto_scroll=True,
             padding=ft.Padding(0, 24, 0, 24),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            adaptive=True,
         )
 
         self.user_input = ft.TextField(
@@ -333,7 +335,6 @@ class CopilotApp:
 
         chat_panel = ft.Container(
             expand=True,
-            height=540,
             bgcolor=palette["surface_high"],
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
@@ -344,14 +345,8 @@ class CopilotApp:
                 color=ft.Colors.with_opacity(0.06, "#0F172A"),
                 offset=ft.Offset(0, 10),
             ),
-            clip_behavior=ft.ClipBehavior.NONE,
-            content=ft.Column(
-                [
-                    self.chat_list,
-                ],
-                spacing=24,
-                expand=True,
-            ),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            content=self.chat_list,
         )
 
         self.action_button.margin = ft.margin.only(left=12, bottom=4)
