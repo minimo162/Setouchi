@@ -205,8 +205,9 @@ class CopilotApp:
             "border_color": palette["outline_variant"],
             "focused_border_color": palette["primary"],
             "fill_color": palette["surface_variant"],
-            "text_style": ft.TextStyle(color=palette["on_surface"]),
-            "hint_style": ft.TextStyle(color=palette["on_surface_variant"]),
+            # Slightly smaller text keeps long workbook/sheet names visible without clipping.
+            "text_style": ft.TextStyle(color=palette["on_surface"], size=12),
+            "hint_style": ft.TextStyle(color=palette["on_surface_variant"], size=12),
             "disabled": True,
             "filled": True,
             "suffix_icon": ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, color=palette["on_surface_variant"]),
