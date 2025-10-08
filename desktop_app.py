@@ -41,7 +41,8 @@ if not logging.getLogger().handlers:
 
 FOCUS_WAIT_TIMEOUT_SECONDS = 15.0
 PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
-CHAT_PANEL_MIN_HEIGHT = 600
+# Container in this Flet build lacks min-height/constraints helpers, so keep a fixed base height.
+CHAT_PANEL_BASE_HEIGHT = 600
 
 class CopilotApp:
     def __init__(self, page: ft.Page):
@@ -340,6 +341,7 @@ class CopilotApp:
 
         chat_panel = ft.Container(
             expand=True,
+            height=CHAT_PANEL_BASE_HEIGHT,  # fixed height keeps chat taller; min_height/constraints are unsupported here
             bgcolor=palette["surface_high"],
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
@@ -351,7 +353,6 @@ class CopilotApp:
                 offset=ft.Offset(0, 10),
             ),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            constraints=ft.BoxConstraints(min_height=CHAT_PANEL_MIN_HEIGHT),
             content=ft.Column(
                 controls=[self.chat_list],
                 spacing=0,
