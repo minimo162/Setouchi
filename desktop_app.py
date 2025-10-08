@@ -41,6 +41,9 @@ if not logging.getLogger().handlers:
 
 FOCUS_WAIT_TIMEOUT_SECONDS = 15.0
 PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
+CHAT_PANEL_HEIGHT = 540
+CHAT_PANEL_VERTICAL_PADDING = 64
+CHAT_CONTENT_HEIGHT = CHAT_PANEL_HEIGHT - CHAT_PANEL_VERTICAL_PADDING
 
 class CopilotApp:
     def __init__(self, page: ft.Page):
@@ -126,7 +129,11 @@ class CopilotApp:
         self.page.window.min_width = 960
         self.page.window.min_height = 600
         palette = EXPRESSIVE_PALETTE
-        self.page.theme = ft.Theme(color_scheme_seed=palette["primary"], use_material3=True)
+        self.page.theme = ft.Theme(
+            color_scheme_seed=palette["primary"],
+            use_material3=True,
+            font_family="Yu Gothic UI",
+        )
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.bgcolor = palette["background"]
         self.page.window.bgcolor = palette["background"]
@@ -283,6 +290,7 @@ class CopilotApp:
 
         self.chat_list = ft.ListView(
             expand=True,
+            height=CHAT_CONTENT_HEIGHT,
             spacing=24,
             auto_scroll=True,
             padding=ft.Padding(0, 24, 0, 24),
@@ -335,6 +343,7 @@ class CopilotApp:
 
         chat_panel = ft.Container(
             expand=True,
+            height=CHAT_PANEL_HEIGHT,
             bgcolor=palette["surface_high"],
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
@@ -346,7 +355,11 @@ class CopilotApp:
                 offset=ft.Offset(0, 10),
             ),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            content=self.chat_list,
+            content=ft.Column(
+                controls=[self.chat_list],
+                spacing=0,
+                expand=True,
+            ),
         )
 
         self.action_button.margin = ft.margin.only(left=12, bottom=4)
@@ -495,6 +508,12 @@ class CopilotApp:
                 alignment=ft.alignment.center,
                 content=ft.Icon(item["icon"], size=16, color=palette["on_primary"]),
             )
+            title_text = ft.Text(
+                item["title"],
+                size=14,
+                weight=ft.FontWeight.BOLD,
+                color=palette["on_surface"],
+            )
             card_body = ft.Container(
                 bgcolor=palette["surface"],
                 border_radius=18,
@@ -503,8 +522,8 @@ class CopilotApp:
                 content=ft.Column(
                     [
                         ft.Row(
-                            [ft.Text(item["title"], size=14, weight=ft.FontWeight.BOLD, color=palette["on_surface"])],
-                            spacing=0,
+                            [icon_container, title_text],
+                            spacing=12,
                             alignment=ft.MainAxisAlignment.START,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
