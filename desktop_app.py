@@ -75,6 +75,17 @@ class CopilotApp:
         self.new_chat_button: Optional[ft.TextButton] = None
         self.mode_card_row: Optional[ft.ResponsiveRow] = None
         self._mode_card_map: dict[str, ft.Container] = {}
+        self._context_panel: Optional[ft.Container] = None
+        self._context_actions: Optional[ft.ResponsiveRow] = None
+        self._chat_panel: Optional[ft.Container] = None
+        self._composer_panel: Optional[ft.Container] = None
+        self._mode_panel_container: Optional[ft.Container] = None
+        self._composer_row: Optional[ft.ResponsiveRow] = None
+        self._user_input_wrapper: Optional[ft.Container] = None
+        self._action_button_wrapper: Optional[ft.Container] = None
+        self._content_container: Optional[ft.Container] = None
+        self._layout: Optional[ft.ResponsiveRow] = None
+        self._main_column: Optional[ft.Column] = None
 
         self.chat_history: list[dict[str, str]] = []
         self.history_lock = threading.Lock()
@@ -125,8 +136,8 @@ class CopilotApp:
         self.page.title = "Excel Co-pilot"
         self.page.window.width = 1280
         self.page.window.height = 768
-        self.page.window.min_width = 960
-        self.page.window.min_height = 600
+        self.page.window.min_width = 480
+        self.page.window.min_height = 520
         palette = EXPRESSIVE_PALETTE
         self.page.theme = ft.Theme(
             color_scheme_seed=palette["primary"],
@@ -200,7 +211,6 @@ class CopilotApp:
         )
 
         dropdown_style = {
-            "width": 260,
             "border_radius": 18,
             "border_color": palette["outline_variant"],
             "focused_border_color": palette["primary"],
@@ -218,12 +228,14 @@ class CopilotApp:
             on_change=self._on_workbook_change,
             on_focus=self._on_workbook_dropdown_focus,
             hint_text="\u30d6\u30c3\u30af\u3092\u9078\u629e",
+            expand=True,
             **dropdown_style,
         )
 
         self.workbook_selector_wrapper = ft.GestureDetector(
             content=self.workbook_selector,
             on_tap_down=self._on_workbook_dropdown_tap,
+            expand=True,
         )
 
         self.sheet_selector = ft.Dropdown(
@@ -231,12 +243,14 @@ class CopilotApp:
             on_change=self._on_sheet_change,
             on_focus=self._on_sheet_dropdown_focus,
             hint_text="\u30b7\u30fc\u30c8\u3092\u9078\u629e",
+            expand=True,
             **dropdown_style,
         )
 
         self.sheet_selector_wrapper = ft.GestureDetector(
             content=self.sheet_selector,
             on_tap_down=self._on_sheet_dropdown_tap,
+            expand=True,
         )
 
         self.workbook_refresh_button = ft.FilledTonalButton(
@@ -251,7 +265,18 @@ class CopilotApp:
             ),
         )
 
-        context_panel = ft.Container(
+        self._context_actions = ft.ResponsiveRow(
+            controls=[
+                ft.Container(content=self.workbook_refresh_button, col={"xs": 12, "sm": 6}),
+                ft.Container(content=self.new_chat_button, col={"xs": 12, "sm": 6}),
+            ],
+            spacing=12,
+            run_spacing=12,
+            alignment=ft.MainAxisAlignment.END,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        self._context_panel = ft.Container(
             bgcolor=palette["surface"],
             border_radius=24,
             padding=ft.Padding(24, 32, 24, 32),
@@ -274,14 +299,7 @@ class CopilotApp:
                         ],
                         spacing=14,
                     ),
-                    ft.Row(
-                        [
-                            ft.Container(content=self.workbook_refresh_button, expand=True),
-                            ft.Container(content=self.new_chat_button, expand=True),
-                        ],
-                        spacing=12,
-                        alignment=ft.MainAxisAlignment.END,
-                    ),
+                    self._context_actions,
                 ],
                 spacing=28,
                 tight=True,
@@ -340,7 +358,7 @@ class CopilotApp:
             border=ft.border.all(1, ft.Colors.with_opacity(0.1, palette["on_primary"])),
         )
 
-        chat_panel = ft.Container(
+        self._chat_panel = ft.Container(
             expand=True,
             height=CHAT_PANEL_BASE_HEIGHT,  # fixed height keeps chat taller; min_height/constraints are unsupported here
             bgcolor=palette["surface_high"],
@@ -361,15 +379,27 @@ class CopilotApp:
             ),
         )
 
-        self.action_button.margin = ft.margin.only(left=12, bottom=4)
+        self.action_button.margin = ft.margin.only(top=4)
 
-        composer_input = ft.Row(
-            controls=[self.user_input, self.action_button],
-            vertical_alignment=ft.CrossAxisAlignment.END,
-            spacing=18,
+        self._user_input_wrapper = ft.Container(
+            content=self.user_input,
+            col={"xs": 12, "sm": 9, "md": 10, "lg": 11},
         )
 
-        composer_panel = ft.Container(
+        self._action_button_wrapper = ft.Container(
+            content=self.action_button,
+            col={"xs": 12, "sm": 3, "md": 2, "lg": 1},
+            alignment=ft.alignment.center_right,
+        )
+
+        self._composer_row = ft.ResponsiveRow(
+            controls=[self._user_input_wrapper, self._action_button_wrapper],
+            spacing=18,
+            run_spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.END,
+        )
+
+        self._composer_panel = ft.Container(
             bgcolor=palette["surface_high"],
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
@@ -382,12 +412,12 @@ class CopilotApp:
             ),
             clip_behavior=ft.ClipBehavior.NONE,
             content=ft.Column(
-                [composer_input],
+                [self._composer_row],
                 spacing=24,
             ),
         )
 
-        mode_panel = ft.Container(
+        self._mode_panel_container = ft.Container(
             content=self.mode_card_row,
             bgcolor=palette["surface_variant"],
             border_radius=20,
@@ -402,22 +432,22 @@ class CopilotApp:
             margin=ft.margin.only(top=4),
         )
 
-        main_column = ft.Column(
-            controls=[chat_panel, composer_panel, mode_panel],
+        self._main_column = ft.Column(
+            controls=[self._chat_panel, self._composer_panel, self._mode_panel_container],
             expand=True,
             spacing=24,
         )
 
-        layout = ft.ResponsiveRow(
+        self._layout = ft.ResponsiveRow(
             controls=[
                 ft.Container(
-                    content=ft.Column([context_panel], spacing=16),
-                    col={"sm": 12, "md": 4, "lg": 3},
+                    content=ft.Column([self._context_panel], spacing=16),
+                    col={"xs": 12, "sm": 12, "md": 4, "lg": 3},
                     expand=True,
                 ),
                 ft.Container(
-                    content=main_column,
-                    col={"sm": 12, "md": 8, "lg": 9},
+                    content=self._main_column,
+                    col={"xs": 12, "sm": 12, "md": 8, "lg": 9},
                     expand=True,
                 ),
             ],
@@ -427,22 +457,137 @@ class CopilotApp:
         )
 
         page_body = ft.Column(
-            controls=[layout],
+            controls=[self._layout],
             spacing=0,
             expand=True,
         )
 
-        content_container = ft.Container(
+        self._content_container = ft.Container(
             content=page_body,
             expand=True,
             padding=ft.Padding(40, 48, 40, 48),
         )
 
-        self.page.add(content_container)
+        current_width = getattr(self.page, "width", None) or getattr(self.page.window, "width", None)
+        self._apply_responsive_layout(current_width)
+
+        self.page.add(self._content_container)
 
     def _register_window_handlers(self):
         self.page.window.on_event = self._on_window_event
+        self.page.on_resize = self._handle_page_resize
         self.page.on_disconnect = self._on_page_disconnect
+
+    def _handle_page_resize(self, e: Optional[ft.ControlEvent]):
+        width = getattr(self.page.window, "width", None) or getattr(self.page, "width", None)
+        self._apply_responsive_layout(width)
+        self._update_ui()
+
+    def _apply_responsive_layout(self, width: Optional[Union[int, float]]):
+        try:
+            width_value = float(width or 0)
+        except (TypeError, ValueError):
+            width_value = 0.0
+        if width_value <= 0:
+            return
+
+        if width_value < 720:
+            layout_key = "compact"
+        elif width_value < 1180:
+            layout_key = "cozy"
+        else:
+            layout_key = "spacious"
+
+        if layout_key == "compact":
+            content_padding = ft.Padding(16, 20, 16, 24)
+            panel_padding = ft.Padding(20, 20, 20, 20)
+            mode_padding = ft.Padding(14, 12, 14, 12)
+            chat_padding = ft.Padding(0, 16, 0, 16)
+            composer_spacing = 12
+            action_alignment = ft.alignment.center
+            action_margin = ft.margin.only(top=12)
+            chat_height = None
+            context_alignment = ft.MainAxisAlignment.START
+            main_column_spacing = 18
+            list_spacing = 18
+        elif layout_key == "cozy":
+            content_padding = ft.Padding(28, 36, 28, 36)
+            panel_padding = ft.Padding(24, 28, 24, 28)
+            mode_padding = ft.Padding(16, 14, 16, 14)
+            chat_padding = ft.Padding(0, 20, 0, 20)
+            composer_spacing = 16
+            action_alignment = ft.alignment.center_right
+            action_margin = ft.margin.only(left=12)
+            chat_height = 520
+            context_alignment = ft.MainAxisAlignment.END
+            main_column_spacing = 22
+            list_spacing = 22
+        else:
+            content_padding = ft.Padding(40, 48, 40, 48)
+            panel_padding = ft.Padding(28, 32, 28, 32)
+            mode_padding = ft.Padding(18, 16, 18, 16)
+            chat_padding = ft.Padding(0, 24, 0, 24)
+            composer_spacing = 18
+            action_alignment = ft.alignment.center_right
+            action_margin = ft.margin.only(left=12)
+            chat_height = CHAT_PANEL_BASE_HEIGHT
+            context_alignment = ft.MainAxisAlignment.END
+            main_column_spacing = 24
+            list_spacing = 24
+
+        if self._content_container:
+            self._content_container.padding = content_padding
+
+        for panel in (self._context_panel, self._chat_panel, self._composer_panel):
+            if panel:
+                panel.padding = panel_padding
+
+        if self._mode_panel_container:
+            self._mode_panel_container.padding = mode_padding
+
+        if self._layout:
+            spacing_value = 24 if layout_key != "spacious" else 32
+            self._layout.spacing = spacing_value
+            self._layout.run_spacing = spacing_value
+
+        if self._main_column:
+            self._main_column.spacing = main_column_spacing
+
+        if self.chat_list:
+            self.chat_list.padding = chat_padding
+            self.chat_list.spacing = list_spacing
+
+        if self.mode_card_row:
+            mode_spacing = 12 if layout_key == "compact" else 18
+            self.mode_card_row.spacing = mode_spacing
+            self.mode_card_row.run_spacing = mode_spacing
+
+        if self._composer_row:
+            self._composer_row.spacing = composer_spacing
+            self._composer_row.run_spacing = 12 if layout_key == "compact" else 16
+
+        if self._context_actions:
+            self._context_actions.alignment = context_alignment
+
+        if self._chat_panel:
+            self._chat_panel.height = chat_height
+
+        if self._action_button_wrapper:
+            self._action_button_wrapper.alignment = action_alignment
+            self._action_button_wrapper.margin = action_margin
+
+        if self.action_button:
+            button_size = 52 if layout_key == "compact" else 48
+            self.action_button.width = button_size
+            self.action_button.height = button_size
+
+        if self.user_input:
+            if layout_key == "compact":
+                self.user_input.min_lines = 4
+                self.user_input.max_lines = 6
+            else:
+                self.user_input.min_lines = 3
+                self.user_input.max_lines = 5
 
     def _make_send_button(self) -> ft.IconButton:
         palette = EXPRESSIVE_PALETTE
@@ -541,7 +686,7 @@ class CopilotApp:
                 on_tap=lambda e, value=mode: self._handle_mode_card_select(value),
                 mouse_cursor=ft.MouseCursor.CLICK,
             )
-            wrapper = ft.Container(content=gesture, col={"sm": 12, "md": 12, "lg": 4})
+            wrapper = ft.Container(content=gesture, col={"xs": 12, "sm": 6, "md": 4, "lg": 4})
             cards.append(wrapper)
             self._mode_card_map[mode.value] = card_body
 
