@@ -6,6 +6,8 @@ import os
 import string
 from threading import Event
 from typing import List, Any, Optional, Dict, Tuple, Set
+from pathlib import Path
+from urllib.parse import urlparse
 
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.core.exceptions import ToolExecutionError, UserStopRequested
@@ -311,6 +313,10 @@ def _split_sheet_and_range(range_ref: str, default_sheet: Optional[str]) -> Tupl
     elif sheet_part.startswith('"') and sheet_part.endswith('"'):
         sheet_part = sheet_part[1:-1]
     cell_part = cell_part.strip()
+    if cell_part.startswith("'") and cell_part.endswith("'"):
+        cell_part = cell_part[1:-1].replace("''", "'")
+    elif cell_part.startswith('"') and cell_part.endswith('"'):
+        cell_part = cell_part[1:-1]
     if not cell_part:
         raise ToolExecutionError("Range string is empty.")
     return sheet_part or default_sheet, cell_part
@@ -1063,6 +1069,58 @@ def translate_range_contents(
                 raise UserStopRequested("ユーザーによって処理が中断されました。")
 
         _ensure_not_stopped()
+
+        def _strip_enclosing_quotes(text: str) -> str:
+            if not isinstance(text, str):
+                return text
+            trimmed = text.strip()
+            if len(trimmed) >= 2 and trimmed[0] == trimmed[-1] and trimmed[0] in {"'", '"'}:
+                core = trimmed[1:-1]
+                if trimmed[0] == "'":
+                    return core.replace("''", "'")
+                return core
+            return trimmed
+
+        def _is_probable_url(value: str) -> bool:
+            if not isinstance(value, str):
+                return False
+            parsed = urlparse(value.strip())
+            if not parsed.scheme:
+                return False
+            if parsed.scheme.lower() == "file":
+                return bool(parsed.path)
+            return bool(parsed.netloc)
+
+        workbook_dir: Optional[Path] = None
+        try:
+            workbook_path = getattr(actions.book, "fullname", "") or getattr(actions.book, "full_name", "")
+        except Exception:
+            workbook_path = ""
+        if workbook_path:
+            try:
+                workbook_dir = Path(workbook_path).resolve().parent
+            except Exception:
+                workbook_dir = None
+
+        def _resolve_file_reference(value: str) -> Optional[Path]:
+            candidate = value.strip()
+            if not candidate:
+                return None
+            path_value = Path(candidate).expanduser()
+            search_paths: List[Path] = []
+            if path_value.is_absolute():
+                search_paths.append(path_value)
+            else:
+                if workbook_dir:
+                    search_paths.append(workbook_dir / path_value)
+                search_paths.append(Path.cwd() / path_value)
+            for path_candidate in search_paths:
+                try:
+                    if path_candidate.exists():
+                        return path_candidate.resolve()
+                except Exception:
+                    continue
+            return None
         target_sheet, normalized_range = _split_sheet_and_range(cell_range, sheet_name)
         source_rows, source_cols = _parse_range_dimensions(normalized_range)
 
@@ -1137,15 +1195,64 @@ def translate_range_contents(
 
         reference_entries: List[Dict[str, Any]] = []
         reference_text_pool: List[str] = []
+        reference_url_entries: List[Dict[str, str]] = []
+        seen_reference_urls: Set[str] = set()
+        reference_warning_notes: List[str] = []
+        invalid_reference_range_tokens: List[str] = []
+        invalid_reference_url_tokens: List[str] = []
+        coerced_reference_notes: List[str] = []
+
+        def _dedupe_preserve_order(values: List[str]) -> List[str]:
+            seen: Set[str] = set()
+            ordered: List[str] = []
+            for entry in values:
+                if entry in seen:
+                    continue
+                seen.add(entry)
+                ordered.append(entry)
+            return ordered
+
+        def _append_reference_url(url: str) -> None:
+            normalized_url = url.strip()
+            if not normalized_url or normalized_url in seen_reference_urls:
+                return
+            seen_reference_urls.add(normalized_url)
+            reference_url_entries.append({
+                "id": f"U{len(reference_url_entries) + 1}",
+                "url": normalized_url,
+            })
+
         if reference_ranges:
             range_list = [reference_ranges] if isinstance(reference_ranges, str) else list(reference_ranges)
             for raw_range in range_list:
                 _ensure_not_stopped()
-                ref_sheet, ref_range = _split_sheet_and_range(raw_range, target_sheet)
+                raw_token = "" if raw_range is None else str(raw_range)
+                normalized_token = _strip_enclosing_quotes(raw_token)
+                if not normalized_token:
+                    continue
+                try:
+                    ref_sheet, ref_range = _split_sheet_and_range(normalized_token, target_sheet)
+                    _parse_range_dimensions(ref_range)
+                except ToolExecutionError:
+                    if _is_probable_url(normalized_token):
+                        _append_reference_url(normalized_token)
+                        coerced_reference_notes.append(
+                            f"参照 '{raw_token}' をURLとして処理しました。"
+                        )
+                        continue
+                    resolved_path = _resolve_file_reference(normalized_token)
+                    if resolved_path:
+                        _append_reference_url(resolved_path.as_uri())
+                        coerced_reference_notes.append(
+                            f"参照 '{raw_token}' をファイル '{resolved_path.name}' として利用しました。"
+                        )
+                        continue
+                    invalid_reference_range_tokens.append(raw_token or "(空文字列)")
+                    continue
                 try:
                     ref_data = actions.read_range(ref_range, ref_sheet)
                 except ToolExecutionError as exc:
-                    raise ToolExecutionError(f"指定した範囲 '{raw_range}' の検証中にエラーが発生しました: {exc}") from exc
+                    raise ToolExecutionError(f"指定した範囲 '{raw_token}' の検証中にエラーが発生しました: {exc}") from exc
 
                 reference_lines: List[str] = []
                 if isinstance(ref_data, list):
@@ -1178,12 +1285,16 @@ def translate_range_contents(
                     reference_entries.append(entry)
                     reference_text_pool.extend(reference_lines)
 
-            if reference_ranges and not reference_entries:
-                raise ToolExecutionError(
-                    "No usable reference content found in the provided reference_ranges."
+            if invalid_reference_range_tokens:
+                invalid_message = ", ".join(_dedupe_preserve_order(invalid_reference_range_tokens))
+                reference_warning_notes.append(
+                    f"参照として指定された値 ({invalid_message}) はセル範囲やファイル/URLとして認識できなかったため無視しました。"
+                )
+            if reference_ranges and not reference_entries and not reference_url_entries:
+                reference_warning_notes.append(
+                    "reference_ranges から利用できる参照データが見つからなかったため、参照なしで処理を続行します。"
                 )
 
-        reference_url_entries: List[Dict[str, str]] = []
         if reference_urls:
             url_list = [reference_urls] if isinstance(reference_urls, str) else list(reference_urls)
             for raw_url in url_list:
@@ -1192,17 +1303,37 @@ def translate_range_contents(
                     raise ToolExecutionError(
                         "Each reference_urls entry must be a string."
                     )
-                url = raw_url.strip()
+                original_value = raw_url
+                url = _strip_enclosing_quotes(raw_url)
                 if not url:
                     continue
-                reference_url_entries.append({
-                    "id": f"U{len(reference_url_entries) + 1}",
-                    "url": url,
-                })
+                if _is_probable_url(url):
+                    _append_reference_url(url)
+                    continue
+                resolved_path = _resolve_file_reference(url)
+                if resolved_path:
+                    _append_reference_url(resolved_path.as_uri())
+                    coerced_reference_notes.append(
+                        f"URL参照 '{original_value}' をファイル '{resolved_path.name}' として利用しました。"
+                    )
+                    continue
+                invalid_reference_url_tokens.append(original_value or "(空文字列)")
 
         references_requested = bool(reference_ranges) or bool(reference_urls)
         use_references = bool(reference_entries or reference_url_entries)
         reference_text_pool = [text for text in reference_text_pool if text]
+
+        if invalid_reference_url_tokens:
+            invalid_urls = ", ".join(_dedupe_preserve_order(invalid_reference_url_tokens))
+            reference_warning_notes.append(
+                f"reference_urls で指定された値 ({invalid_urls}) はURLや既存ファイルとして解釈できなかったため無視しました。"
+            )
+        if coerced_reference_notes:
+            reference_warning_notes.extend(_dedupe_preserve_order(coerced_reference_notes))
+        if references_requested and not use_references:
+            reference_warning_notes.append(
+                "参照が読み取れなかったため、参照なしの翻訳モードで続行しました。"
+            )
 
         def _sanitize_evidence_value(value: str) -> str:
             cleaned = value.strip()
@@ -2076,6 +2207,8 @@ def translate_range_contents(
         if citation_note:
             write_messages.append(citation_note)
         write_messages.extend(incremental_row_messages)
+        if reference_warning_notes:
+            write_messages.extend(reference_warning_notes)
 
         _ensure_not_stopped()
 
