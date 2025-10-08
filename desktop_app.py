@@ -340,7 +340,6 @@ class CopilotApp:
 
         chat_panel = ft.Container(
             expand=True,
-            min_height=CHAT_PANEL_MIN_HEIGHT,
             bgcolor=palette["surface_high"],
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
@@ -352,6 +351,7 @@ class CopilotApp:
                 offset=ft.Offset(0, 10),
             ),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            constraints=ft.BoxConstraints(min_height=CHAT_PANEL_MIN_HEIGHT),
             content=ft.Column(
                 controls=[self.chat_list],
                 spacing=0,
