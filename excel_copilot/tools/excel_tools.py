@@ -1728,11 +1728,7 @@ def translate_range_contents(
                     match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
                     json_payload = match.group(0) if match else response
                     parsed_payload = json.loads(json_payload)
-                except json.JSONDecodeError as exc:
-                    raise ToolExecutionError(
-                        f"Failed to parse translation response as JSON: {response}"
-                    ) from exc
-                else:
+                except json.JSONDecodeError:
                     final_prompt = f"{prompt_preamble}{texts_json}"
                     _ensure_not_stopped()
                     response = browser_manager.ask(final_prompt, stop_event=stop_event)
