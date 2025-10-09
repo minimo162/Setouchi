@@ -1218,21 +1218,6 @@ def translate_range_contents(
                 "url": normalized_url,
             })
 
-        if reference_ranges:
-            range_list = [reference_ranges] if isinstance(reference_ranges, str) else list(reference_ranges)
-            normalized_tokens: List[str] = []
-            for raw_range in range_list:
-                token = "" if raw_range is None else str(raw_range)
-                normalized = _strip_enclosing_quotes(token)
-                if normalized:
-                    normalized_tokens.append(normalized)
-            if normalized_tokens:
-                invalid_message = ", ".join(_dedupe_preserve_order(normalized_tokens))
-                reference_warning_notes.append(
-                    f"reference_ranges ({invalid_message}) は現在サポートされていないため無視しました。参照URLを指定してください。"
-                )
-            reference_ranges = None
-
         if reference_urls:
             url_list = [reference_urls] if isinstance(reference_urls, str) else list(reference_urls)
             for raw_url in url_list:
@@ -1257,7 +1242,7 @@ def translate_range_contents(
                     continue
                 invalid_reference_url_tokens.append(original_value or "(空文字列)")
 
-        references_requested = bool(reference_ranges) or bool(reference_urls)
+        references_requested = bool(reference_urls)
         use_references = bool(reference_url_entries)
 
         if invalid_reference_url_tokens:
@@ -2234,12 +2219,6 @@ def check_translation_quality(
         target_language: Target language name, defaults to English.
 
         sheet_name: Optional sheet override; defaults to the active sheet.
-
-        reference_ranges: Optional list of ranges containing reference material.
-
-        citation_output_range: Optional range used to store citation markers.
-
-        reference_urls: Optional list of reference URLs to include in the output.
 
         translation_output_range: Optional range for translated rows (three columns per source column).
 
