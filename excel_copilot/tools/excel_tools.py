@@ -1610,9 +1610,6 @@ def translate_range_contents(
                     ]
                     items_json = json.dumps(items_payload, ensure_ascii=False)
 
-                    reference_materials_payload: List[Dict[str, Any]] = []
-                    reference_materials_json = json.dumps(reference_materials_payload, ensure_ascii=False)
-
                     reference_urls_payload: List[str] = [
                         entry["url"]
                         for entry in reference_url_entries
@@ -1625,15 +1622,14 @@ def translate_range_contents(
                             "You are assisting with bilingual translation validation. Work through the tasks below in order.",
                             "",
                             "Inputs",
-                            "1. reference_materials: a list of English passages already provided in plain text. Treat these as the only authoritative sources. Do not fetch anything from URLs or external systems.",
-                            "2. items: an array of Japanese entries. Each entry contains:",
+                            "1. items: an array of Japanese entries. Each entry contains:",
                             "   - japanese: the Japanese sentence that needs supporting evidence.",
-                            "   - keywords: English search hints that can help locate relevant information inside the reference_materials.",
-                            "3. reference_urls (optional): links to the original sources for verification only. Do not echo these URLs in the output.",
+                            "   - keywords: English search hints that can help locate relevant information inside the referenced sources.",
+                            "2. reference_urls (optional): links to the original sources for verification only. Do not echo these URLs in the output.",
                             "",
                             "Task",
                             "For each item in items:",
-                            "- Search the reference_materials using the provided keywords (they are hints, not strict requirements).",
+                            "- Use the reference URLs and the keywords to locate reliable supporting sentences.",
                             "- Select 4-8 distinct English sentences that best support the meaning of the Japanese sentence. Prefer sentences from different paragraphs or documents to show coverage. If fewer than four suitable sentences exist, return every distinct sentence you can find. If nothing is relevant, use an empty list for that item.",
                             "- Copy each sentence verbatim, preserving casing, punctuation, and numerals. Do not include URLs; if a citation is unavoidable, keep only bracketed numbers like [1].",
                             "- Avoid near-duplicates. Only reuse a sentence when no other relevant material exists.",
@@ -1647,20 +1643,12 @@ def translate_range_contents(
                             "- Output JSON only; do not add introductions or trailing commentary.",
                             "- Never omit an element; keep the order aligned with the input items.",
                             "- When no supporting material is found, return \"quotes\": [] and a suitable Japanese explanation, but never skip the object or return nothing.",
-                            "- If absolutely nothing can be supported from the reference_materials, respond with an empty JSON array [] and nothing else.",
+                            "- If absolutely nothing can be supported from the provided sources, respond with an empty JSON array [] and nothing else.",
                             "",
                             "items (JSON):",
                             items_json,
                             "",
-                            "reference_materials (JSON):",
-                            reference_materials_json,
-                            "",
                         ]
-                        if not reference_materials_payload:
-                            evidence_prompt_sections.extend([
-                                "The reference_materials list is currently empty. Retrieve the necessary supporting sentences directly from the provided reference URLs.",
-                                "",
-                            ])
                         if reference_urls_payload:
                             evidence_prompt_sections.extend([
                                 "reference_urls (JSON):",
