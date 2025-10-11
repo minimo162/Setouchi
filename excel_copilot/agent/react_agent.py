@@ -205,36 +205,71 @@ class ReActAgent:
 
     def _ensure_reference_support(self, arguments: Dict[str, Any], excel_actions: ExcelActions) -> None:
         """Ensure translate_range_with_references receives usable supporting material."""
-        ref_urls = arguments.get("reference_urls")
+        def _normalize(value: Any) -> List[str]:
+            if not value:
+                return []
+            if isinstance(value, str):
+                candidates = [value]
+            elif isinstance(value, (tuple, set, list)):
+                candidates = list(value)
+            else:
+                candidates = [value]
+            normalized: List[str] = []
+            for candidate in candidates:
+                if isinstance(candidate, str):
+                    stripped = candidate.strip()
+                    if stripped:
+                        normalized.append(stripped)
+            return normalized
 
-        if isinstance(ref_urls, str):
-            ref_urls = [ref_urls]
-        elif isinstance(ref_urls, (tuple, set)):
-            ref_urls = list(ref_urls)
-        elif not isinstance(ref_urls, list):
-            ref_urls = [ref_urls] if ref_urls else []
+        def _dedupe(urls: List[str]) -> List[str]:
+            seen: Set[str] = set()
+            result: List[str] = []
+            for url in urls:
+                if url not in seen:
+                    seen.add(url)
+                    result.append(url)
+            return result
 
-        ref_urls = [value for value in (ref_urls or []) if isinstance(value, str) and value.strip()]
+        source_urls = _normalize(arguments.get("source_reference_urls"))
+        target_urls = _normalize(arguments.get("target_reference_urls"))
+        legacy_urls = _normalize(arguments.get("reference_urls"))
 
-        if not ref_urls:
+        if legacy_urls:
+            if not source_urls:
+                source_urls = list(legacy_urls)
+            else:
+                for url in legacy_urls:
+                    if url not in source_urls:
+                        source_urls.append(url)
+
+        if not source_urls and not target_urls:
             tokens = self._extract_reference_tokens()
             inferred_urls = self._resolve_reference_hints(tokens, excel_actions)
             if inferred_urls:
-                ref_urls.extend(inferred_urls)
+                source_urls.extend(inferred_urls)
 
-        if ref_urls:
-            dedup_urls: List[str] = []
-            seen_urls: Set[str] = set()
-            for item in ref_urls:
-                if item not in seen_urls:
-                    seen_urls.add(item)
-                    dedup_urls.append(item)
-            ref_urls = dedup_urls
+        source_urls = _dedupe(source_urls)
+        target_urls = _dedupe(target_urls)
 
-        if ref_urls:
-            arguments["reference_urls"] = ref_urls
+        if source_urls:
+            arguments["source_reference_urls"] = source_urls
         else:
-            arguments.pop("reference_urls", None)
+            arguments.pop("source_reference_urls", None)
+
+        if target_urls:
+            arguments["target_reference_urls"] = target_urls
+        else:
+            arguments.pop("target_reference_urls", None)
+
+        # Legacy key should no longer be used once source URLs are populated.
+        if "reference_urls" in arguments:
+            if source_urls:
+                arguments.pop("reference_urls", None)
+            elif legacy_urls:
+                arguments["reference_urls"] = legacy_urls
+            else:
+                arguments.pop("reference_urls", None)
 
     def _extract_reference_tokens(self) -> List[str]:
         """Collect potential reference hints (URLs / filenames) from conversation history."""

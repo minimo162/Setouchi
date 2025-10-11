@@ -88,9 +88,9 @@ class CopilotWorker:
         elif self.mode is CopilotMode.TRANSLATION_WITH_REFERENCES:
             prefix_lines = [
                 "[Translation (With References) Mode Request]",
-                "- Solve this by calling `translate_range_with_references` and include the reference ranges or URLs provided by the user.",
+                "- Solve this by calling `translate_range_with_references` and pass the user's `source_reference_urls` (原文側) and `target_reference_urls` (翻訳先側) or the provided reference ranges.",
                 "- Translate the entire requested range in one call and rely on the tool's batching; only adjust `rows_per_batch` when necessary for very large jobs.",
-                "- Provide citation output when evidence is expected and keep translation, quote, and explanation columns aligned.",
+                "- Provide citation output when evidence is expected and reserve columns for: translated text, translation process explanation, and one reference pair per column starting from the specified output column (e.g., \"XX列以降\").",
                 "- Do not request workbook uploads; Excel is already connected.",
                 "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
             ]
@@ -326,4 +326,3 @@ class CopilotWorker:
         if self.browser_manager:
             self.browser_manager.close()
         print("Worker\u306e\u30af\u30ea\u30fc\u30f3\u30a2\u30c3\u30d7\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
-
