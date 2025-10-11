@@ -1550,6 +1550,255 @@ def translate_range_contents(
         else:
             items_per_request = max(1, rows_per_batch or _ITEMS_PER_TRANSLATION_REQUEST)
 
+        def _generate_key_phrases_batch(current_texts: List[str]) -> List[List[str]]:
+            if not include_context_columns:
+                return [[] for _ in current_texts]
+            if not current_texts:
+                return []
+
+            texts_json = json.dumps(current_texts, ensure_ascii=False)
+            keyphrase_prompt_sections: List[str] = [
+                "以下の日本語原文それぞれについて、主要な論点・関係者・背景を押さえるキーフレーズを日本語で6個作成してください。",
+                "ルール:",
+                "- 各キーフレーズは3〜12文字程度で簡潔にまとめる。",
+                "- 同じ語や言い回しを繰り返さず、視点や焦点を変えて多面的にカバーする。",
+                "- 番号や箇条書き記号は使わず文章で記載する。",
+                "- 出力はJSON配列のみ。各要素は {\"key_phrases\": [...]} 形式で、入力順と同じ長さにする。",
+                "",
+                "日本語原文(JSON):",
+                texts_json,
+            ]
+            keyphrase_prompt = "\n".join(keyphrase_prompt_sections)
+            _ensure_not_stopped()
+            actions.log_progress("キーフレーズ生成: Copilotに依頼中...")
+            keyphrase_response = browser_manager.ask(keyphrase_prompt, stop_event=stop_event)
+            try:
+                match = re.search(r'{.*}|\[.*\]', keyphrase_response, re.DOTALL)
+                keyphrase_payload = match.group(0) if match else keyphrase_response
+                keyphrase_items = json.loads(keyphrase_payload)
+            except json.JSONDecodeError as exc:
+                raise ToolExecutionError(
+                    f"Failed to parse key phrase generation response as JSON: {keyphrase_response}"
+                ) from exc
+            if not isinstance(keyphrase_items, list) or len(keyphrase_items) != len(current_texts):
+                raise ToolExecutionError(
+                    "Key phrase response must be a list with one entry per source text."
+                )
+
+            cleaned_results: List[List[str]] = [[] for _ in current_texts]
+            for item_index, item in enumerate(keyphrase_items):
+                raw_phrases: List[str] = []
+                if isinstance(item, dict):
+                    raw_phrases = item.get("key_phrases") or item.get("keywords") or []
+                elif isinstance(item, list):
+                    raw_phrases = item
+                if not isinstance(raw_phrases, list):
+                    raw_phrases = []
+                cleaned_phrases: List[str] = []
+                for phrase in raw_phrases:
+                    if not isinstance(phrase, str):
+                        continue
+                    stripped = phrase.strip()
+                    if not stripped or stripped in cleaned_phrases:
+                        continue
+                    cleaned_phrases.append(stripped)
+                    if len(cleaned_phrases) >= 6:
+                        break
+                if not cleaned_phrases:
+                    fallback_phrase = current_texts[item_index][:30].strip()
+                    cleaned_phrases = [fallback_phrase] if fallback_phrase else ["原文"]
+                cleaned_results[item_index] = cleaned_phrases
+            return cleaned_results
+
+        def _extract_source_sentences_batch(
+            current_texts: List[str],
+            key_phrases_per_item: List[List[str]],
+        ) -> List[List[str]]:
+            if not (use_references and source_reference_url_entries):
+                return [[] for _ in current_texts]
+            if not current_texts:
+                return []
+
+            items_payload: List[Dict[str, Any]] = [
+                {
+                    "japanese": source_text,
+                    "key_phrases": key_phrases_per_item[idx] if idx < len(key_phrases_per_item) else [],
+                }
+                for idx, source_text in enumerate(current_texts)
+            ]
+            items_json = json.dumps(items_payload, ensure_ascii=False)
+            source_reference_urls_payload: List[str] = [
+                entry["url"]
+                for entry in source_reference_url_entries
+                if isinstance(entry.get("url"), str) and entry["url"].strip()
+            ]
+            source_reference_urls_json = json.dumps(source_reference_urls_payload, ensure_ascii=False)
+
+            source_sentence_prompt_sections: List[str] = [
+                "以下の入力に基づき、原文（日本語）に対応する参照資料から関連する文章を抽出してください。",
+                "",
+                "手順:",
+                "- 各日本語原文について、参照URLを開き、内容から原文の意味や用語に直結する文を最大6文特定する。",
+                "- 文中のURLや脚注記号（例: [1]）は除去し、本文だけを残す。",
+                "- 原文と一致しない情報、推測、要約は含めない。",
+                "- 出力はJSON配列のみ。各要素は {\"source_sentences\": [...]} 形式で、入力順と一致させる。",
+                "",
+                "items(JSON):",
+                items_json,
+            ]
+            if source_reference_urls_payload:
+                source_sentence_prompt_sections.extend(
+                    [
+                        "",
+                        "source_reference_urls(JSON):",
+                        source_reference_urls_json,
+                    ]
+                )
+
+            source_sentence_prompt = "\n".join(source_sentence_prompt_sections)
+            _ensure_not_stopped()
+            actions.log_progress("日本語参照文章抽出: Copilotに依頼中...")
+            source_sentence_response = browser_manager.ask(source_sentence_prompt, stop_event=stop_event)
+            try:
+                match = re.search(r'{.*}|\[.*\]', source_sentence_response, re.DOTALL)
+                source_sentence_payload = match.group(0) if match else source_sentence_response
+                source_sentence_items = json.loads(source_sentence_payload)
+            except json.JSONDecodeError as exc:
+                raise ToolExecutionError(
+                    f"Failed to parse source reference response as JSON: {source_sentence_response}"
+                ) from exc
+            if not isinstance(source_sentence_items, list) or len(source_sentence_items) != len(current_texts):
+                raise ToolExecutionError(
+                    "Source reference response must be a list with one entry per source text."
+                )
+
+            cleaned_results: List[List[str]] = [[] for _ in current_texts]
+            for item_index, entry in enumerate(source_sentence_items):
+                raw_sentences: List[str] = []
+                if isinstance(entry, dict):
+                    raw_sentences = entry.get("source_sentences") or entry.get("sentences") or []
+                elif isinstance(entry, list):
+                    raw_sentences = entry
+                if not isinstance(raw_sentences, list):
+                    raw_sentences = []
+                cleaned_sentences: List[str] = []
+                for sentence in raw_sentences:
+                    if not isinstance(sentence, str):
+                        continue
+                    stripped = sentence.strip()
+                    if not stripped or stripped in cleaned_sentences:
+                        continue
+                    stripped = _strip_reference_urls_from_quote(stripped)
+                    stripped = re.sub(r"\[\d+\]", "", stripped)
+                    stripped = re.sub(r"\s{2,}", " ", stripped).strip()
+                    if not stripped:
+                        continue
+                    cleaned_sentences.append(stripped)
+                    if len(cleaned_sentences) >= 6:
+                        break
+                cleaned_results[item_index] = cleaned_sentences
+            return cleaned_results
+
+        def _pair_target_sentences_batch(
+            current_texts: List[str],
+            key_phrases_per_item: List[List[str]],
+            source_references_per_item: List[List[str]],
+        ) -> List[List[Dict[str, str]]]:
+            if not (use_references and target_reference_url_entries):
+                return [[] for _ in current_texts]
+            if not current_texts:
+                return []
+
+            pairing_payload: List[Dict[str, Any]] = [
+                {
+                    "japanese": source_text,
+                    "key_phrases": key_phrases_per_item[idx] if idx < len(key_phrases_per_item) else [],
+                    "source_sentences": source_references_per_item[idx] if idx < len(source_references_per_item) else [],
+                }
+                for idx, source_text in enumerate(current_texts)
+            ]
+            pairing_items_json = json.dumps(pairing_payload, ensure_ascii=False)
+            target_reference_urls_payload: List[str] = [
+                entry["url"]
+                for entry in target_reference_url_entries
+                if isinstance(entry.get("url"), str) and entry["url"].strip()
+            ]
+            target_reference_urls_json = json.dumps(target_reference_urls_payload, ensure_ascii=False)
+
+            pairing_prompt_sections: List[str] = [
+                f"以下の情報を使い、原文参照文と{target_language}参照文のペアを作成してください。",
+                "",
+                "手順:",
+                "- source_sentences の各文に対して、参照資料から意味的に最も対応する翻訳先言語の文を1文選ぶ。",
+                "- 対応する文が複数ある場合は、最も直接的に一致するものを選択する。",
+                "- 適合する文が見つからないsource_sentenceはペアに含めない。",
+                "- 文は資料からそのまま引用し、不要な引用符やURLを含めない。",
+                "",
+                "出力形式:",
+                "- JSON配列。各要素は {\"pairs\": [{\"source_sentence\": \"...\", \"target_sentence\": \"...\"}, ...]}。",
+                "- ペアは source_sentence の順序を保ち、入力長と一致させる。",
+                "",
+                "items(JSON):",
+                pairing_items_json,
+            ]
+            if target_reference_urls_payload:
+                pairing_prompt_sections.extend(
+                    [
+                        "",
+                        "target_reference_urls(JSON):",
+                        target_reference_urls_json,
+                    ]
+                )
+
+            pairing_prompt = "\n".join(pairing_prompt_sections)
+            _ensure_not_stopped()
+            actions.log_progress("対になる英語参照文抽出: Copilotに依頼中...")
+            pairing_response = browser_manager.ask(pairing_prompt, stop_event=stop_event)
+            try:
+                match = re.search(r'{.*}|\[.*\]', pairing_response, re.DOTALL)
+                pairing_payload_json = match.group(0) if match else pairing_response
+                pairing_items = json.loads(pairing_payload_json)
+            except json.JSONDecodeError as exc:
+                raise ToolExecutionError(
+                    f"Failed to parse reference pairing response as JSON: {pairing_response}"
+                ) from exc
+            if not isinstance(pairing_items, list) or len(pairing_items) != len(current_texts):
+                raise ToolExecutionError(
+                    "Reference pairing response must be a list with one entry per source text."
+                )
+
+            cleaned_results: List[List[Dict[str, str]]] = [[] for _ in current_texts]
+            for item_index, entry in enumerate(pairing_items):
+                raw_pairs: List[Any] = []
+                if isinstance(entry, dict):
+                    raw_pairs = entry.get("pairs") or entry.get("reference_pairs") or []
+                elif isinstance(entry, list):
+                    raw_pairs = entry
+                if not isinstance(raw_pairs, list):
+                    raw_pairs = []
+                cleaned_pairs: List[Dict[str, str]] = []
+                for pair in raw_pairs:
+                    if not isinstance(pair, dict):
+                        continue
+                    source_sentence = pair.get("source_sentence") or pair.get("jp") or ""
+                    target_sentence = pair.get("target_sentence") or pair.get("translated") or pair.get("en") or ""
+                    if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
+                        continue
+                    source_clean = source_sentence.strip()
+                    target_clean = _strip_reference_urls_from_quote(target_sentence.strip())
+                    if not source_clean or not target_clean:
+                        continue
+                    cleaned_pairs.append(
+                        {
+                            "source_sentence": source_clean,
+                            "target_sentence": target_clean,
+                        }
+                    )
+                    if len(cleaned_pairs) >= 6:
+                        break
+                cleaned_results[item_index] = cleaned_pairs
+            return cleaned_results
+
         for row_start in range(0, source_rows, batch_size):
             _ensure_not_stopped()
             row_end = min(row_start + batch_size, source_rows)
@@ -1605,217 +1854,15 @@ def translate_range_contents(
                 current_texts = [text for text, _ in entry_slice]
                 current_positions = [pos for _, pos in entry_slice]
 
+                key_phrases_per_item = _generate_key_phrases_batch(current_texts)
+                source_references_per_item = _extract_source_sentences_batch(current_texts, key_phrases_per_item)
+                reference_pairs_context = _pair_target_sentences_batch(
+                    current_texts,
+                    key_phrases_per_item,
+                    source_references_per_item,
+                )
+
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
-                key_phrases_per_item: List[List[str]] = [[] for _ in current_texts]
-                source_references_per_item: List[List[str]] = [[] for _ in current_texts]
-                reference_pairs_context: List[List[Dict[str, str]]] = [[] for _ in current_texts]
-
-                if include_context_columns:
-                    keyphrase_prompt_sections: List[str] = [
-                        "以下の日本語原文それぞれについて、主要な論点・関係者・背景を押さえるキーフレーズを日本語で6個作成してください。",
-                        "ルール:",
-                        "- 各キーフレーズは3〜12文字程度で簡潔にまとめる。",
-                        "- 同じ語や言い回しを繰り返さず、視点や焦点を変えて多面的にカバーする。",
-                        "- 番号や箇条書き記号は使わず文章で記載する。",
-                        "- 出力はJSON配列のみ。各要素は {\"key_phrases\": [...]} 形式で、入力順と同じ長さにする。",
-                        "",
-                        "日本語原文(JSON):",
-                        texts_json,
-                    ]
-                    keyphrase_prompt = "\n".join(keyphrase_prompt_sections)
-                    _ensure_not_stopped()
-                    keyphrase_response = browser_manager.ask(keyphrase_prompt, stop_event=stop_event)
-                    try:
-                        match = re.search(r'{.*}|\[.*\]', keyphrase_response, re.DOTALL)
-                        keyphrase_payload = match.group(0) if match else keyphrase_response
-                        keyphrase_items = json.loads(keyphrase_payload)
-                    except json.JSONDecodeError as exc:
-                        raise ToolExecutionError(
-                            f"Failed to parse key phrase generation response as JSON: {keyphrase_response}"
-                        ) from exc
-                    if not isinstance(keyphrase_items, list) or len(keyphrase_items) != len(current_texts):
-                        raise ToolExecutionError(
-                            "Key phrase response must be a list with one entry per source text."
-                        )
-                    for item_index, item in enumerate(keyphrase_items):
-                        raw_phrases: List[str] = []
-                        if isinstance(item, dict):
-                            raw_phrases = item.get("key_phrases") or item.get("keywords") or []
-                        elif isinstance(item, list):
-                            raw_phrases = item
-                        if not isinstance(raw_phrases, list):
-                            raw_phrases = []
-                        cleaned_phrases: List[str] = []
-                        for phrase in raw_phrases:
-                            if not isinstance(phrase, str):
-                                continue
-                            stripped = phrase.strip()
-                            if not stripped or stripped in cleaned_phrases:
-                                continue
-                            cleaned_phrases.append(stripped)
-                            if len(cleaned_phrases) >= 6:
-                                break
-                        if not cleaned_phrases:
-                            fallback_phrase = current_texts[item_index][:30].strip()
-                            cleaned_phrases = [fallback_phrase] if fallback_phrase else ["原文"]
-                        key_phrases_per_item[item_index] = cleaned_phrases
-
-                    if use_references and source_reference_url_entries:
-                        items_payload: List[Dict[str, Any]] = [
-                            {
-                                "japanese": source_text,
-                                "key_phrases": key_phrases_per_item[idx],
-                            }
-                            for idx, source_text in enumerate(current_texts)
-                        ]
-                        items_json = json.dumps(items_payload, ensure_ascii=False)
-                        source_reference_urls_payload: List[str] = [
-                            entry["url"]
-                            for entry in source_reference_url_entries
-                            if isinstance(entry.get("url"), str) and entry["url"].strip()
-                        ]
-                        source_reference_urls_json = json.dumps(source_reference_urls_payload, ensure_ascii=False)
-
-                        source_sentence_prompt_sections: List[str] = [
-                            "以下の入力に基づき、原文（日本語）の参照文を抽出してください。",
-                            "",
-                            "タスク:",
-                            "- 各アイテムについて、key_phrases を手掛かりに参照資料から関連度の高い日本語文を3〜6文抽出する。",
-                            "- 文は資料からそのまま引用し、不要な改変やURLの付与は行わない。",
-                            "- 類似した文の繰り返しは避け、情報範囲が広がるように選択する。",
-                            "- 適切な文が見つからない場合は空配列を返す。",
-                            "",
-                            "出力形式:",
-                            "- JSON配列。各要素は {\"source_sentences\": [...]} とし、入力の順序と長さを一致させる。",
-                            "- 文は文字列配列のみを返し、追加のキーは含めない。",
-                            "",
-                            "items(JSON):",
-                            items_json,
-                        ]
-                        if source_reference_urls_payload:
-                            source_sentence_prompt_sections.extend([
-                                "",
-                                "source_reference_urls(JSON):",
-                                source_reference_urls_json,
-                            ])
-
-                        source_sentence_prompt = "\n".join(source_sentence_prompt_sections)
-                        _ensure_not_stopped()
-                        source_sentence_response = browser_manager.ask(source_sentence_prompt, stop_event=stop_event)
-                        try:
-                            match = re.search(r'{.*}|\[.*\]', source_sentence_response, re.DOTALL)
-                            source_sentence_payload = match.group(0) if match else source_sentence_response
-                            source_sentence_items = json.loads(source_sentence_payload)
-                        except json.JSONDecodeError as exc:
-                            raise ToolExecutionError(
-                                f"Failed to parse source reference response as JSON: {source_sentence_response}"
-                            ) from exc
-                        if not isinstance(source_sentence_items, list) or len(source_sentence_items) != len(current_texts):
-                            raise ToolExecutionError(
-                                "Source reference response must be a list with one entry per source text."
-                            )
-                        for item_index, entry in enumerate(source_sentence_items):
-                            raw_sentences: List[str] = []
-                            if isinstance(entry, dict):
-                                raw_sentences = entry.get("source_sentences") or entry.get("sentences") or []
-                            elif isinstance(entry, list):
-                                raw_sentences = entry
-                            if not isinstance(raw_sentences, list):
-                                raw_sentences = []
-                            cleaned_sentences: List[str] = []
-                            for sentence in raw_sentences:
-                                if not isinstance(sentence, str):
-                                    continue
-                                stripped = sentence.strip()
-                                if not stripped or stripped in cleaned_sentences:
-                                    continue
-                                cleaned_sentences.append(stripped)
-                                if len(cleaned_sentences) >= 6:
-                                    break
-                            source_references_per_item[item_index] = cleaned_sentences
-
-                    if use_references and target_reference_url_entries:
-                        pairing_payload: List[Dict[str, Any]] = [
-                            {
-                                "japanese": source_text,
-                                "key_phrases": key_phrases_per_item[idx],
-                                "source_sentences": source_references_per_item[idx],
-                            }
-                            for idx, source_text in enumerate(current_texts)
-                        ]
-                        pairing_items_json = json.dumps(pairing_payload, ensure_ascii=False)
-                        target_reference_urls_payload: List[str] = [
-                            entry["url"]
-                            for entry in target_reference_url_entries
-                            if isinstance(entry.get("url"), str) and entry["url"].strip()
-                        ]
-                        target_reference_urls_json = json.dumps(target_reference_urls_payload, ensure_ascii=False)
-
-                        pairing_prompt_sections: List[str] = [
-                            f"以下の情報を使い、原文参照文と{target_language}参照文のペアを作成してください。",
-                            "",
-                            "手順:",
-                            "- source_sentences の各文に対して、参照資料から意味的に最も対応する翻訳先言語の文を1文選ぶ。",
-                            "- 対応する文が複数ある場合は、最も直接的に一致するものを選択する。",
-                            "- 適合する文が見つからないsource_sentenceはペアに含めない。",
-                            "- 文は資料からそのまま引用し、不要な引用符やURLを含めない。",
-                            "",
-                            "出力形式:",
-                            "- JSON配列。各要素は {\"pairs\": [{\"source_sentence\": \"...\", \"target_sentence\": \"...\"}, ...]}。",
-                            "- ペアは source_sentence の順序を保ち、入力長と一致させる。",
-                            "",
-                            "items(JSON):",
-                            pairing_items_json,
-                        ]
-                        if target_reference_urls_payload:
-                            pairing_prompt_sections.extend([
-                                "",
-                                "target_reference_urls(JSON):",
-                                target_reference_urls_json,
-                            ])
-
-                        pairing_prompt = "\n".join(pairing_prompt_sections)
-                        _ensure_not_stopped()
-                        pairing_response = browser_manager.ask(pairing_prompt, stop_event=stop_event)
-                        try:
-                            match = re.search(r'{.*}|\[.*\]', pairing_response, re.DOTALL)
-                            pairing_payload_json = match.group(0) if match else pairing_response
-                            pairing_items = json.loads(pairing_payload_json)
-                        except json.JSONDecodeError as exc:
-                            raise ToolExecutionError(
-                                f"Failed to parse reference pairing response as JSON: {pairing_response}"
-                            ) from exc
-                        if not isinstance(pairing_items, list) or len(pairing_items) != len(current_texts):
-                            raise ToolExecutionError(
-                                "Reference pairing response must be a list with one entry per source text."
-                            )
-                        for item_index, entry in enumerate(pairing_items):
-                            raw_pairs: List[Any] = []
-                            if isinstance(entry, dict):
-                                raw_pairs = entry.get("pairs") or entry.get("reference_pairs") or []
-                            elif isinstance(entry, list):
-                                raw_pairs = entry
-                            if not isinstance(raw_pairs, list):
-                                raw_pairs = []
-                            cleaned_pairs: List[Dict[str, str]] = []
-                            for pair in raw_pairs:
-                                if not isinstance(pair, dict):
-                                    continue
-                                source_sentence = pair.get("source_sentence") or pair.get("jp") or ""
-                                target_sentence = pair.get("target_sentence") or pair.get("translated") or pair.get("en") or ""
-                                if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
-                                    continue
-                                source_clean = source_sentence.strip()
-                                target_clean = _strip_reference_urls_from_quote(target_sentence.strip())
-                                if not source_clean or not target_clean:
-                                    continue
-                                cleaned_pairs.append({
-                                    "source_sentence": source_clean,
-                                    "target_sentence": target_clean,
-                                })
-                                if len(cleaned_pairs) >= 6:
-                                    break
-                            reference_pairs_context[item_index] = cleaned_pairs
 
                 translation_context = [
                     {
