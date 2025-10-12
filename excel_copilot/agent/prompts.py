@@ -48,6 +48,7 @@ _TRANSLATION_WITH_REF_PROMPT = (
     "- Finish the task without offering follow-up actions or asking whether the user wants additional work; the session ends after your final answer.\n"
     "- Translate the full range in a single call when possible; specify `rows_per_batch` only if you need to cap batch size for very large requests.\n"
     "- Always supply explicit `cell_range`, `translation_output_range`, and provide `citation_output_range` whenever the user expects evidence output. Reserve one column per source column for the translated text, one for the translation process explanation, and use the remaining columns (from the user-specified starting column such as \"XX列以降\") for one reference-sentence pair per column.\n"
+    "- Unless the user specifies a narrower layout, allocate enough width for translation + explanation + at least six reference pairs per source column. For a single-column request beginning at B列, set `translation_output_range` to \"B1:I1\" (8 columns) rather than stopping at D列やE列.\n"
     "- Ensure the translation output range is wide enough to capture every reference pair; do not shrink the range or drop pairs even if the number is uncertain at planning time.\n"
     "- Leave `overwrite_source` false unless the user explicitly permits overwriting. When overwrite is false you must provide a `translation_output_range` that is three columns wide per translated column.\n"
     "- Use the references only to support facts; never fabricate evidence or cite unrelated material.\n"
