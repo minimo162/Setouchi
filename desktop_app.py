@@ -54,7 +54,9 @@ DEFAULT_AUTOTEST_TARGET_REFERENCE_URL = (
     "EdJ586XuxedLsaSArCCve9kB1K79F0BvGqxzuZBhfWWS-w?e=wjR4C2"
 )
 DEFAULT_AUTOTEST_PROMPT_TEMPLATE = (
-    "A1セルを日本語参照: {source_url} 英語参照: {target_url} で英訳し、B列以降に出力してください。"
+    "A1セルを日本語参照: {source_url} 英語参照: {target_url} を使って英訳してください。"
+    "B列から連続する列に結果を並べ、B列=翻訳、C列=process_notes_jp、D列以降=参照文ペアとしてください。"
+    "参照文は直前に抽出したキーフレーズに関連する文を引用し、citation_output_range は指定しないでください。"
 )
 
 

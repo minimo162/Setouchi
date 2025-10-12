@@ -1682,17 +1682,18 @@ def translate_range_contents(
             source_reference_urls_json = json.dumps(source_reference_urls_payload, ensure_ascii=False)
 
             source_sentence_prompt_sections: List[str] = [
-                "以下の入力に基づき、原文（日本語）に対応する参照資料から関連する文章を抽出してください。",
+                "以下の入力に基づき、直前に抽出したキーフレーズと最も関連する参照資料の文章を抽出してください。",
                 "",
                 "手順:",
-                "- 各日本語原文について、参照URLを開き、内容から原文の意味や用語に直結する文を最大6文特定する。",
-                "- 必ず参照資料本文に実際に存在する文をそのまま引用し、新たに文章を生成したり要約文を作成しない。テキストをコピーする際は語尾や句読点も原文どおりに保持する。",
-                "- 1つの段落に複数の意味が含まれる場合は「。」や改行などの区切りで文を分割し、意味が異なる部分は別々の文として抽出する。",
+                "- 各項目の key_phrases を手掛かりに参照URLを開き、キーフレーズの意味・用語・事実を裏付ける本文の文を最大6文まで特定する。",
+                "- 必ず参照資料本文に実際に存在する文をそのまま引用し、新しい文章の生成や要約、原文の翻訳で置き換えない。語尾・句読点も原文どおりに保持する。",
+                "- 1つの段落に複数の意味が含まれる場合は「。」や改行などで区切り、意味が異なる部分は別々の文として抽出する。",
                 "- 文中のURLや脚注記号（例: [1]）は除去し、本文だけを残す。",
-                "- 参考文献一覧や書誌情報、ヘッダー/フッター、本文要約など本文以外のセクションは抽出しない。",
-                "- 以下の items(JSON) に含まれる原文テキストをそのままコピーして提出しない。参照資料内で一致する文のみを引用する。",
-                "- 原文と一致しない情報、推測、要約は含めない。",
+                "- 参考文献一覧や書誌情報、ヘッダー/フッター、要約・メタ説明など本文以外は抽出しない。",
+                "- items(JSON) に含まれる原文テキストや key_phrases をそのままコピーしない。参照資料内で一致する文のみを引用する。",
+                "- 一致する文が見つからない場合は空配列で返し、推測や翻訳文を入れない。",
                 "- 出力はJSON配列のみ。各要素は {\"source_sentences\": [...]} 形式で、入力順と一致させる。",
+                "- `source_sentences` は参照資料から抜き出した引用文の配列であり、原文を翻訳した文ではないことを明示的に守る。",
                 "",
                 "items(JSON):",
                 items_json,
@@ -2019,7 +2020,12 @@ def translate_range_contents(
                                     or evidence_dict.get("explanation")
                                 )
                             if isinstance(raw_process_notes, (str, int, float)):
-                                process_notes_jp = _sanitize_evidence_value(str(raw_process_notes))
+                                process_notes_source_value = str(raw_process_notes)
+                                sanitized_process_notes = _sanitize_evidence_value(process_notes_source_value)
+                                if sanitized_process_notes:
+                                    process_notes_jp = sanitized_process_notes
+                                else:
+                                    process_notes_jp = process_notes_source_value.strip()
 
                             raw_pairs_candidate = item.get("reference_pairs") or item.get("pairs")
                             if raw_pairs_candidate is None and evidence_dict:
