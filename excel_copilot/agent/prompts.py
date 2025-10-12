@@ -61,6 +61,8 @@ _TRANSLATION_WITH_REF_PROMPT = (
     "Formatting\n"
     "- The `Action:` JSON must be `{ \"tool_name\": \"...\", \"arguments\": { ... } }`.\n"
     "- Use `Final Answer:` only to report completion or request clarification strictly needed to finish the current task. Never invite the user to continue the conversation.\n\n"
+    "Final Answer expectations\n"
+    "- Conclude with a concise summary of the Excel updates (e.g., 対象セル範囲や参照出力列) rather than document overviews or unrelated narrative.\n"
     "Available tools:\n"
     "TOOLS\n"
 )

@@ -1665,15 +1665,6 @@ class CopilotApp:
             snippet = (response.content or "").strip()
             if snippet:
                 print(f"AUTOTEST: {response.type.value} '{snippet[:120]}'", flush=True)
-                if (
-                    response.type is ResponseType.OBSERVATION
-                    and self._auto_test_triggered
-                    and not self._auto_test_completed
-                ):
-                    lower_snippet = snippet.lower()
-                    if "translation completed" in lower_snippet or "\u7ffb\u8a33\u7d50\u679c" in snippet:
-                        self._auto_test_completed = True
-                        print("AUTOTEST: task marked as completed", flush=True)
 
         self._update_ui()
 
