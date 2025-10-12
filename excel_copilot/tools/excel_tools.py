@@ -1370,6 +1370,25 @@ def translate_range_contents(
                 cleaned = cleaned.split(":", 1)[1].strip()
             return cleaned
 
+        def _extract_json_block(response_text: str) -> Optional[Any]:
+            if not isinstance(response_text, str):
+                return None
+            cleaned = response_text.strip()
+            if not cleaned:
+                return None
+            cleaned = cleaned.lstrip("\ufeff")
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+            cleaned = cleaned.strip()
+            match = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
+            if match:
+                snippet = match.group(1)
+                try:
+                    return json.loads(snippet)
+                except json.JSONDecodeError:
+                    pass
+            return None
+
 
         def _strip_reference_urls_from_quote(text: str) -> str:
             """Remove embedded URLs while preserving bracket-only citation markers."""
@@ -1715,9 +1734,9 @@ def translate_range_contents(
             actions.log_progress("日本語参照文章抽出: Copilotに依頼中...")
             source_sentence_response = browser_manager.ask(source_sentence_prompt, stop_event=stop_event)
             try:
-                match = re.search(r'{.*}|\[.*\]', source_sentence_response, re.DOTALL)
-                source_sentence_payload = match.group(0) if match else source_sentence_response
-                source_sentence_items = json.loads(source_sentence_payload)
+                source_sentence_items = _extract_json_block(source_sentence_response)
+                if source_sentence_items is None:
+                    raise json.JSONDecodeError("no json block", source_sentence_response, 0)
             except json.JSONDecodeError as exc:
                 raise ToolExecutionError(
                     f"Failed to parse source reference response as JSON: {source_sentence_response}"
@@ -1813,9 +1832,10 @@ def translate_range_contents(
             def _request_interim_translation(prompt: str) -> Tuple[Optional[List[Any]], str]:
                 response = browser_manager.ask(prompt, stop_event=stop_event)
                 try:
-                    match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
-                    payload_json = match.group(0) if match else response
-                    return json.loads(payload_json), response
+                    payload = _extract_json_block(response)
+                    if payload is None:
+                        raise json.JSONDecodeError("no json block", response, 0)
+                    return payload, response
                 except json.JSONDecodeError:
                     return None, response
 
@@ -1839,14 +1859,15 @@ def translate_range_contents(
 
             if translation_items is None:
                 snippet = raw_translation_response.strip().replace("\n", " ")
-                raise ToolExecutionError(
-                    "Failed to parse interim translation response as JSON: "
-                    f"{snippet[:200]}{'…' if len(snippet) > 200 else ''}"
+                actions.log_progress(
+                    "暫定翻訳応答をJSONとして解釈できなかったため、空の翻訳リストで続行します。"
                 )
+                return [[] for _ in source_references_per_item]
             if not isinstance(translation_items, list) or len(translation_items) != len(source_references_per_item):
-                raise ToolExecutionError(
-                    "Interim translation response must be a list with one entry per context."
+                actions.log_progress(
+                    "暫定翻訳応答の形式が想定外だったため、空の翻訳リストで続行します。"
                 )
+                return [[] for _ in source_references_per_item]
 
             cleaned_results: List[List[str]] = [[] for _ in source_references_per_item]
             for idx, entry in enumerate(translation_items):
@@ -1930,9 +1951,10 @@ def translate_range_contents(
             def _request_extraction(prompt: str) -> Tuple[Optional[List[Any]], str]:
                 response = browser_manager.ask(prompt, stop_event=stop_event)
                 try:
-                    match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
-                    payload_json = match.group(0) if match else response
-                    return json.loads(payload_json), response
+                    payload = _extract_json_block(response)
+                    if payload is None:
+                        raise json.JSONDecodeError("no json block", response, 0)
+                    return payload, response
                 except json.JSONDecodeError:
                     return None, response
 
