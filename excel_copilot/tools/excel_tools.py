@@ -1657,6 +1657,9 @@ def translate_range_contents(
                 cleaned_results[item_index] = cleaned_phrases
             return cleaned_results
 
+        def _normalize_for_comparison(text: str) -> str:
+            return re.sub(r"\s+", "", text)
+
         def _extract_source_sentences_batch(
             current_texts: List[str],
             key_phrases_per_item: List[List[str]],
@@ -1734,6 +1737,16 @@ def translate_range_contents(
                 if not isinstance(raw_sentences, list):
                     raw_sentences = []
                 cleaned_sentences: List[str] = []
+                original_text = current_texts[item_index] if item_index < len(current_texts) else ""
+                original_normalized = _normalize_for_comparison(original_text) if isinstance(original_text, str) else ""
+                keyphrase_candidates = key_phrases_per_item[item_index] if item_index < len(key_phrases_per_item) else []
+                keyphrase_normalized: Set[str] = set()
+                for phrase in keyphrase_candidates or []:
+                    if isinstance(phrase, str):
+                        normalized_phrase = _normalize_for_comparison(phrase)
+                        if normalized_phrase:
+                            keyphrase_normalized.add(normalized_phrase)
+
                 for sentence in raw_sentences:
                     if not isinstance(sentence, str):
                         continue
@@ -1744,6 +1757,11 @@ def translate_range_contents(
                     stripped = re.sub(r"\[\d+\]", "", stripped)
                     stripped = re.sub(r"\s{2,}", " ", stripped).strip()
                     if not stripped:
+                        continue
+                    candidate_normalized = _normalize_for_comparison(stripped)
+                    if original_normalized and candidate_normalized == original_normalized:
+                        continue
+                    if candidate_normalized in keyphrase_normalized:
                         continue
                     cleaned_sentences.append(stripped)
                     if len(cleaned_sentences) >= 6:
@@ -1791,15 +1809,40 @@ def translate_range_contents(
             translation_prompt = "\n".join(translation_prompt_sections)
             _ensure_not_stopped()
             actions.log_progress("参照文の暫定翻訳: Copilotに依頼中...")
-            translation_response = browser_manager.ask(translation_prompt, stop_event=stop_event)
-            try:
-                match = re.search(r'{.*}|\[.*\]', translation_response, re.DOTALL)
-                translation_payload = match.group(0) if match else translation_response
-                translation_items = json.loads(translation_payload)
-            except json.JSONDecodeError as exc:
+
+            def _request_interim_translation(prompt: str) -> Tuple[Optional[List[Any]], str]:
+                response = browser_manager.ask(prompt, stop_event=stop_event)
+                try:
+                    match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
+                    payload_json = match.group(0) if match else response
+                    return json.loads(payload_json), response
+                except json.JSONDecodeError:
+                    return None, response
+
+            translation_items, raw_translation_response = _request_interim_translation(translation_prompt)
+            if translation_items is None:
+                snippet = raw_translation_response.strip().replace("\n", " ")
+                actions.log_progress(
+                    f"暫定翻訳応答解析失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
+                )
+                _ensure_not_stopped()
+                retry_prompt_sections = translation_prompt_sections + [
+                    "",
+                    "IMPORTANT:",
+                    "- 出力は純粋なJSON配列のみとし、余分な文章や説明を含めないでください。",
+                    "- 各要素は {\"translations\": [\"...\"]} 形式に統一し、先頭や末尾に説明文を付けないでください。",
+                    "- 文が存在しない場合は [] (空のJSON配列) を返してください。",
+                ]
+                retry_prompt = "\n".join(retry_prompt_sections)
+                actions.log_progress("暫定翻訳がJSON形式ではなかったため、JSON限定指示で再試行します。")
+                translation_items, raw_translation_response = _request_interim_translation(retry_prompt)
+
+            if translation_items is None:
+                snippet = raw_translation_response.strip().replace("\n", " ")
                 raise ToolExecutionError(
-                    f"Failed to parse interim translation response as JSON: {translation_response}"
-                ) from exc
+                    "Failed to parse interim translation response as JSON: "
+                    f"{snippet[:200]}{'…' if len(snippet) > 200 else ''}"
+                )
             if not isinstance(translation_items, list) or len(translation_items) != len(source_references_per_item):
                 raise ToolExecutionError(
                     "Interim translation response must be a list with one entry per context."
@@ -1903,8 +1946,10 @@ def translate_range_contents(
                 retry_prompt_sections = extraction_prompt_sections + [
                     "",
                     "IMPORTANT:",
-                    "- Respond with a pure JSON array only. Do not include explanations before or after the array.",
-                    "- If no pairs are found, reply with [] (an empty JSON array).",
+                    "- 出力は純粋なJSON配列のみ。配列外に説明・改行・要約を付けない。",
+                    "- 各要素は必ず {\"target_sentences\": [\"...\"]} 形式とし、キー名や構造を変更しない。",
+                    "- 文が存在しない場合は [] (空のJSON配列) を返し、その他のテキストは書かない。",
+                    "- サンプル: [{\"target_sentences\": [\"Sentence 1\", \"Sentence 2\"]}] または [].",
                 ]
                 retry_prompt = "\n".join(retry_prompt_sections)
                 actions.log_progress(
@@ -1914,18 +1959,14 @@ def translate_range_contents(
 
             if extraction_items is None:
                 snippet = raw_extraction_response.strip().replace("\n", " ")
-                actions.log_progress(
-                    f"参照ペア再試行も失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
+                raise ToolExecutionError(
+                    "Failed to parse target reference response as JSON: "
+                    f"{snippet[:200]}{'…' if len(snippet) > 200 else ''}"
                 )
-                actions.log_progress(
-                    "翻訳参照文応答をJSONとして解釈できなかったため、参照文なしとして処理を継続します。"
-                )
-                extraction_items = [{"target_sentences": []} for _ in translated_reference_sentences_per_item]
             if not isinstance(extraction_items, list) or len(extraction_items) != len(translated_reference_sentences_per_item):
-                actions.log_progress(
-                    "翻訳参照文応答の形式が想定外だったため、参照文なしとして処理を継続します。"
+                raise ToolExecutionError(
+                    "Target reference response must be a list with one entry per context."
                 )
-                extraction_items = [{"target_sentences": []} for _ in translated_reference_sentences_per_item]
 
             cleaned_results: List[List[str]] = [[] for _ in translated_reference_sentences_per_item]
             for item_index, entry in enumerate(extraction_items):

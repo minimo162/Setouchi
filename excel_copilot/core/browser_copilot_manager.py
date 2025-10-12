@@ -51,6 +51,7 @@ class BrowserCopilotManager:
         self.page: Optional[Page] = None
         self._logger = logging.getLogger(__name__)
         self._focus_suppressed_once = False
+        self._chat_sessions_started = 0
 
     def __enter__(self):
         self.start()
@@ -90,6 +91,7 @@ class BrowserCopilotManager:
             self._logger.info("Copilotページに移動します...")
             self.page.goto("https://m365.cloud.microsoft/chat/", timeout=self.goto_timeout_ms)
             self._logger.info("ページに接続しました。初期化を開始します...")
+            self._chat_sessions_started = 0
             self._initialize_copilot_mode()
             if COPILOT_SUPPRESS_BROWSER_FOCUS:
                 self._suppress_browser_focus()
@@ -1254,6 +1256,56 @@ class BrowserCopilotManager:
             raise
 
 
+    def _start_new_chat_session(self) -> None:
+        """既存スレッドをリセットし、新しいチャットを開始した上でGPT-5モードを再度有効化する"""
+        if not self.page:
+            return
+
+        button_factories = [
+            ("data-testid=newChatButton", lambda: self.page.get_by_test_id("newChatButton")),
+            ("role=button 新しいチャット", lambda: self.page.get_by_role("button", name="新しいチャット")),
+            ("role=button New chat", lambda: self.page.get_by_role("button", name=re.compile("New chat", re.IGNORECASE))),
+            ("aria-label contains 新しいチャット", lambda: self.page.locator('[aria-label*="新しいチャット"]')),
+            ("aria-label contains new chat", lambda: self.page.locator('[aria-label*=\"new chat\" i]')),
+        ]
+
+        try:
+            new_chat_button = self._wait_for_first_visible(
+                "新しいチャットボタン",
+                button_factories,
+                timeout=15000,
+            )
+        except RuntimeError as locate_error:
+            print("新しいチャットボタンが見つからなかったため、既存スレッドを継続します。")
+            print(locate_error)
+            return
+
+        try:
+            new_chat_button.scroll_into_view_if_needed()
+        except Exception:
+            pass
+
+        print("新しいチャットを開始します...")
+        try:
+            new_chat_button.click(timeout=5000)
+        except Exception as click_error:
+            try:
+                new_chat_button.click(force=True, timeout=5000)
+            except Exception:
+                print(f"新しいチャットボタンのクリックに失敗しました: {click_error}")
+                return
+
+        try:
+            self.page.wait_for_timeout(800)
+        except Exception:
+            time.sleep(0.8)
+
+        try:
+            self._initialize_copilot_mode()
+        except Exception as reinit_error:
+            print(f"新しいチャット開始後のGPT-5再初期化で警告が発生しました: {reinit_error}")
+
+
     def ask(self, prompt: str, stop_event: Optional[Event] = None) -> str:
         """プロンプトを送信し、Copilotからの応答をクリップボード経由で取得する"""
         if not self.page:
@@ -1268,8 +1320,12 @@ class BrowserCopilotManager:
                     pass
                 raise UserStopRequested("ユーザーによる中断が要求されました。")
 
+        prompt_submitted = False
         try:
             _ensure_not_stopped()
+            if self._chat_sessions_started > 0:
+                self._start_new_chat_session()
+                _ensure_not_stopped()
             # 応答のコピーボタンの現在の数を数える
             copy_button_selector = '[data-testid="CopyButtonTestId"]'
             initial_copy_button_count = self.page.locator(copy_button_selector).count()
@@ -1388,11 +1444,13 @@ class BrowserCopilotManager:
                 )
                 _ensure_not_stopped()
                 send_button.click()
+                prompt_submitted = True
             except Exception as send_error:
                 print(f"送信ボタンをクリックできませんでした: {send_error}. キーボード送信を試みます。")
                 _ensure_not_stopped()
                 if not self._submit_chat_input_via_keyboard(chat_input):
                     raise RuntimeError("送信ボタンが見つからず、キーボード送信にも失敗しました。") from send_error
+                prompt_submitted = True
 
             _ensure_not_stopped()
             # 新しいコピーボタン（＝ユーザー入力・応答）が出現するのを待つ
@@ -1482,6 +1540,9 @@ class BrowserCopilotManager:
             raise
         except Exception as e:
             return f"エラー: ブラウザ操作中に予期せぬエラーが発生しました: {e}"
+        finally:
+            if prompt_submitted:
+                self._chat_sessions_started += 1
 
     def request_stop(self) -> bool:
         if not self.page:
@@ -1543,6 +1604,7 @@ class BrowserCopilotManager:
         self.context = None
         self.playwright = None
         self._focus_suppressed_once = False
+        self._chat_sessions_started = 0
 
     def _ensure_browser_visible(self):
         if self.headless or not self.page:
