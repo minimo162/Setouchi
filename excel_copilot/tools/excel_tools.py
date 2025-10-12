@@ -1892,10 +1892,12 @@ def translate_range_contents(
                     "Failed to parse target reference pair response as JSON: "
                     f"{snippet[:200]}{'…' if len(snippet) > 200 else ''}"
                 )
-            if not isinstance(extraction_items, list) or len(extraction_items) != len(source_references_per_item):
-                raise ToolExecutionError(
-                    "Target reference pair response must be a list with one entry per context."
-                )
+            if not isinstance(extraction_items, list):
+                raise ToolExecutionError("Target reference pair response must be a list.")
+            if len(extraction_items) < len(source_references_per_item):
+                extraction_items.extend({"pairs": []} for _ in range(len(source_references_per_item) - len(extraction_items)))
+
+            cleaned_results: List[List[Dict[str, str]]] = [[] for _ in source_references_per_item]
 
             cleaned_results: List[List[Dict[str, str]]] = [[] for _ in source_references_per_item]
             for item_index, entry in enumerate(extraction_items):
@@ -2001,7 +2003,6 @@ def translate_range_contents(
                 translation_context = [
                     {
                         "reference_pairs": reference_pairs_context[index] if index < len(reference_pairs_context) else [],
-                        "source_reference_sentences": source_references_per_item[index] if index < len(source_references_per_item) else [],
                     }
                     for index, _ in enumerate(current_texts)
                 ]
