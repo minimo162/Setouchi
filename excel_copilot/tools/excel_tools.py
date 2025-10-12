@@ -1846,12 +1846,18 @@ def translate_range_contents(
                     f"暫定翻訳応答解析失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
                 )
                 _ensure_not_stopped()
-                retry_prompt_sections = translation_prompt_sections + [
+                retry_prompt_sections = [
+                    "IMPORTANT: すべての回答を純粋なJSON配列のみで返してください。",
+                    "- 追加の説明文や会話文は含めない。",
+                    "- 各要素を {\"translations\": [\"...\"]} 形式に統一する。",
+                    "- 文が存在しない場合は [] (空配列) を返す。",
                     "",
-                    "IMPORTANT:",
-                    "- 出力は純粋なJSON配列のみとし、余分な文章や説明を含めないでください。",
-                    "- 各要素は {\"translations\": [\"...\"]} 形式に統一し、先頭や末尾に説明文を付けないでください。",
-                    "- 文が存在しない場合は [] (空のJSON配列) を返してください。",
+                    "次の引用文を英語に翻訳してください。",
+                    "",
+                    "items(JSON):",
+                    items_json,
+                    "",
+                    "注意: JSON以外のテキストを含めると再解析に失敗します。",
                 ]
                 retry_prompt = "\n".join(retry_prompt_sections)
                 actions.log_progress("暫定翻訳がJSON形式ではなかったため、JSON限定指示で再試行します。")
@@ -1918,19 +1924,23 @@ def translate_range_contents(
             target_reference_urls_json = json.dumps(target_reference_urls_payload, ensure_ascii=False)
 
             extraction_prompt_sections: List[str] = [
-                f"以下の翻訳文に対応する{target_language}参照資料上の文章を抽出してください。",
+                f"以下の翻訳文 (Step 3 の成果) に意味的に対応する {target_language} 参照資料の原文を抽出してください。",
+                "",
+                "入力構成:",
+                "- translated_sentences: 翻訳済みの英文。",
+                "- key_phrases: 翻訳の根拠となったキーフレーズ（参考情報）。",
                 "",
                 "手順:",
-                "- 各 context_id について、translated_sentences の意味と key_phrases を手掛かりに target_reference_urls の本文から直接一致する文を最大6文抽出する。",
-                "- 抽出する文は参照資料に実際に存在する文をそのまま引用し、語尾や句読点も資料の表記を保つ。",
-                "- 翻訳文を再構成した推測文や要約文を作成しない。該当文がない場合は空配列を返す。",
-                "- 同一内容が複数箇所に現れる場合は最も直接的に一致する部分を選ぶ。",
-                "- 参考文献一覧や書誌情報、ヘッダー/フッター、要約・メタ説明など本文以外は抽出しない。",
-                "- 出力は純粋なJSON配列のみとし、前後に説明やコメントを付けない。",
+                "- 各 context_id ごとに translated_sentences を読み、target_reference_urls で指定された資料本文から意味が最も近い原文を最大6文抽出する。",
+                "- 引用する文は資料内に実在するテキストをそのまま用い、語尾・句読点・大文字小文字を含め原文表記を保持する。",
+                "- 翻訳文を推測で書き換えた文章や要約文は返さない。該当する文がなければ空配列を返す。",
+                "- 同じ文を繰り返し取得しないようにし、もっとも直接的に対応する文を選択する。",
+                "- 目次・見出し・要約・脚注など本文以外の要素は除外する。",
                 "",
                 "出力形式:",
-                "- JSON配列。各要素は {\"target_sentences\": [\"...\"]} 形式で、translated_sentences と同じ順序・最大件数で文を並べる。",
-                "- 文が見つからない場合は空配列を返す。",
+                "- 回答は純粋なJSON配列のみ。",
+                "- 各要素は {\"target_sentences\": [\"...\"]} 形式で、入力順序を保持する。",
+                "- 見つからない場合は [] を返す。",
                 "",
                 "items(JSON):",
                 extraction_items_json,
@@ -1965,14 +1975,25 @@ def translate_range_contents(
                     f"参照ペア応答解析失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
                 )
                 _ensure_not_stopped()
-                retry_prompt_sections = extraction_prompt_sections + [
+                retry_prompt_sections = [
+                    "IMPORTANT: 回答は純粋なJSON配列のみで返してください。",
+                    "- 各要素は {\"target_sentences\": [\"...\"]} 形式に統一する。",
+                    "- 見つかった文がない場合は [] を返し、余計な文章は書かない。",
+                    "- 例: [{\"target_sentences\": [\"Sentence 1\", \"Sentence 2\"]}] または [].",
                     "",
-                    "IMPORTANT:",
-                    "- 出力は純粋なJSON配列のみ。配列外に説明・改行・要約を付けない。",
-                    "- 各要素は必ず {\"target_sentences\": [\"...\"]} 形式とし、キー名や構造を変更しない。",
-                    "- 文が存在しない場合は [] (空のJSON配列) を返し、その他のテキストは書かない。",
-                    "- サンプル: [{\"target_sentences\": [\"Sentence 1\", \"Sentence 2\"]}] または [].",
+                    f"以下の翻訳文 (Step 3) に対応する {target_language} 参照文を抽出してください。",
+                    "",
+                    "items(JSON):",
+                    extraction_items_json,
                 ]
+                if target_reference_urls_payload:
+                    retry_prompt_sections.extend(
+                        [
+                            "",
+                            "target_reference_urls(JSON):",
+                            target_reference_urls_json,
+                        ]
+                    )
                 retry_prompt = "\n".join(retry_prompt_sections)
                 actions.log_progress(
                     "翻訳参照文応答がJSON形式ではなかったため、JSON限定指示で再試行します。"
