@@ -109,6 +109,24 @@ class CopilotApp:
         self._manual_refresh_in_progress = False
         self._workbook_refresh_button_default_text = "\u30d6\u30c3\u30af\u4e00\u89a7\u3092\u66f4\u65b0"
 
+        self._auto_test_prompt: Optional[str] = os.getenv("COPILOT_AUTOTEST_PROMPT")
+        self._auto_test_workbook: Optional[str] = os.getenv("COPILOT_AUTOTEST_WORKBOOK")
+        self._auto_test_sheet: Optional[str] = os.getenv("COPILOT_AUTOTEST_SHEET")
+        try:
+            self._auto_test_delay: float = max(
+                0.0, float(os.getenv("COPILOT_AUTOTEST_DELAY", "1.0"))
+            )
+        except ValueError:
+            self._auto_test_delay = 1.0
+        self._auto_test_enabled = bool(self._auto_test_prompt)
+        self._auto_test_triggered = False
+        print(
+            f"AUTOTEST: enabled={self._auto_test_enabled}, "
+            f"workbook={self._auto_test_workbook or '(unchanged)'}, "
+            f"sheet={self._auto_test_sheet or '(unchanged)'}",
+            flush=True,
+        )
+
         self._configure_page()
         self._build_layout()
         self._register_window_handlers()
@@ -1177,6 +1195,17 @@ class CopilotApp:
 
                 self._last_excel_snapshot = snapshot
 
+                if self._auto_test_enabled:
+                    print(
+                        "AUTOTEST: excel context ready",
+                        {
+                            "workbooks": workbook_names,
+                            "active_workbook": active_workbook,
+                            "active_sheet": active_sheet,
+                        },
+                        flush=True,
+                    )
+
                 controls_changed = False
 
                 existing_workbook_values = [
@@ -1259,6 +1288,8 @@ class CopilotApp:
 
             except Exception as ex:
                 error_message = f"Excelの情報取得に失敗しました: {ex}"
+                if self._auto_test_enabled:
+                    print(f"AUTOTEST: excel context error - {error_message}", flush=True)
                 self.sheet_selection_updating = True
                 self.sheet_selector.options = []
                 self.sheet_selector.value = None
@@ -1492,6 +1523,9 @@ class CopilotApp:
             if self.status_label:
                 self.status_label.value = response.content or self.status_label.value
             self._focus_app_window()
+            if self._auto_test_enabled:
+                print("AUTOTEST: initialization complete", flush=True)
+            self._schedule_auto_test()
         elif response.type is ResponseType.STATUS:
             status_text = (response.content or "").strip()
             if status_text:
@@ -1504,6 +1538,8 @@ class CopilotApp:
                 self.status_label.value = status_text
                 if status_text:
                     self.status_label.color = self._status_color_override or status_palette["info"]
+            if self._auto_test_enabled and status_text:
+                print(f"AUTOTEST: status '{status_text}'", flush=True)
         elif response.type is ResponseType.ERROR:
             if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
                 if self.status_label:
@@ -1512,16 +1548,22 @@ class CopilotApp:
                     self.status_label.opacity = 0.9
                 if response.content:
                     self._add_message(response.type, response.content)
+                if self._auto_test_triggered:
+                    print(f"AUTOTEST: error '{response.content}'", flush=True)
             else:
                 self._set_state(AppState.ERROR)
                 if response.content:
                     self._add_message(response.type, response.content)
+                    if self._auto_test_triggered:
+                        print(f"AUTOTEST: error '{response.content}'", flush=True)
             if self._browser_reset_in_progress:
                 self._browser_reset_in_progress = False
                 if self.new_chat_button and self.app_state in {AppState.READY, AppState.ERROR}:
                     self.new_chat_button.disabled = False
         elif response.type is ResponseType.END_OF_TASK:
             self._set_state(AppState.READY)
+            if self._auto_test_triggered:
+                print("AUTOTEST: task marked as completed", flush=True)
         elif response.type is ResponseType.INFO:
             action = response.metadata.get("action") if response.metadata else None
             if action == "focus_excel_window":
@@ -1547,7 +1589,81 @@ class CopilotApp:
             if response.content:
                 self._add_message(type_value, response.content)
 
+        if response.type is ResponseType.FINAL_ANSWER and self._auto_test_triggered:
+            print("AUTOTEST: received final answer", flush=True)
+        elif self._auto_test_enabled and response.type in {ResponseType.OBSERVATION, ResponseType.ACTION, ResponseType.THOUGHT}:
+            snippet = (response.content or "").strip()
+            if snippet:
+                print(f"AUTOTEST: {response.type.value} '{snippet[:120]}'", flush=True)
+
         self._update_ui()
+
+    def _schedule_auto_test(self) -> None:
+        if (
+            self._auto_test_triggered
+            or not self._auto_test_prompt
+            or not self.page
+        ):
+            return
+
+        self._auto_test_triggered = True
+        print(
+            f"AUTOTEST: scheduled (delay={self._auto_test_delay}s, "
+            f"workbook={self._auto_test_workbook or '(unchanged)'}, "
+            f"sheet={self._auto_test_sheet or '(unchanged)'})",
+            flush=True,
+        )
+
+        def _runner():
+            try:
+                if self._auto_test_delay:
+                    time.sleep(self._auto_test_delay)
+                self._execute_auto_test()
+            except Exception as exc:
+                print(f"Auto-test execution failed: {exc}", flush=True)
+
+        try:
+            self.page.run_thread(_runner)
+        except Exception:
+            _runner()
+
+    def _execute_auto_test(self) -> None:
+        if self.app_state not in {AppState.READY, AppState.ERROR}:
+            return
+
+        def _select_option(dropdown: ft.Dropdown, value: Optional[str], updating_flag: str) -> None:
+            if not dropdown or not value:
+                return
+            options = dropdown.options or []
+            option_values = {(option.key or option.text): option for option in options}
+            if value not in option_values:
+                return
+            setattr(self, updating_flag, True)
+            dropdown.value = value
+            setattr(self, updating_flag, False)
+            try:
+                dropdown.update()
+            except Exception:
+                pass
+
+        _select_option(self.workbook_selector, self._auto_test_workbook, "workbook_selection_updating")
+        _select_option(self.sheet_selector, self._auto_test_sheet, "sheet_selection_updating")
+
+        print(
+            "AUTOTEST: dispatching prompt",
+            {
+                "workbook": self.workbook_selector.value if self.workbook_selector else None,
+                "sheet": self.sheet_selector.value if self.sheet_selector else None,
+            },
+            flush=True,
+        )
+
+        if self.user_input:
+            self.user_input.value = self._auto_test_prompt
+            self.user_input.update()
+        self._update_ui()
+        self._run_copilot(None)
+        print("AUTOTEST: prompt submitted", flush=True)
 
     def _force_exit(self, reason: str = ""):
         if self.shutdown_requested:
