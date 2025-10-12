@@ -63,6 +63,12 @@ def _is_truthy_env(value: Optional[str]) -> bool:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
+def _is_autotest_mode_enabled() -> bool:
+    """Check whether the application should run its auto-test scenario."""
+    if _is_truthy_env(os.getenv("COPILOT_AUTOTEST_ENABLED")):
+        return True
+    return bool(os.getenv("COPILOT_AUTOTEST_PROMPT"))
+
 class CopilotApp:
     def __init__(self, page: ft.Page):
         self.page = page
@@ -1851,7 +1857,11 @@ if __name__ == "__main__":
         app_kwargs["port"] = args.port
     if args.web_renderer:
         app_kwargs["web_renderer"] = args.web_renderer
-    if args.no_browser or COPILOT_HEADLESS:
+    autotest_active = _is_autotest_mode_enabled()
+    if autotest_active:
+        logging.info("Auto test mode detected; forcing Flet view to display.")
+        app_kwargs["view"] = ft.AppView.WEB_BROWSER
+    elif args.no_browser or COPILOT_HEADLESS:
         app_kwargs["view"] = None
     else:
         app_kwargs["view"] = ft.AppView.WEB_BROWSER
