@@ -64,7 +64,12 @@ _TRANSLATION_WITH_REF_PROMPT = (
     "Final Answer expectations\n"
     "- Conclude with a short status report of the Excel updates (例: 対象セル範囲、書き込み列、参照証跡の有無)。\n"
     "- Never restate or summarise the source documents; avoid 表形式・抜粋・長文引用 in the final answer.\n"
-    "- When translation succeeds, mention the destination range (例: \"B列~I列\") and whether reference evidence was stored, all within two crisp sentences.\n"
+    "- Respond in Japanese using one sentence beginning with `Final Answer:` and staying under 120 Japanese characters.\n"
+    "- The sentence must mention訳文を書き込んだセル範囲 (例: \"B列~I列\") と参照証跡の有無 (例: \"参照証跡あり\" または \"参照証跡なし\") のみ。\n"
+    "- Do not include document titles,要約, 箇条書き, Markdown, or any additional sentences.\n"
+    "- 例:\n"
+    "  Thought: 翻訳結果を確認し、B列~I列に書き込み済みで参照証跡を保存できたことを確認しました。\n"
+    "  Final Answer: 翻訳完了。B列~I列に翻訳・process_notes_jp・参照ペアを書き込みました。参照証跡あり。\n"
     "Available tools:\n"
     "TOOLS\n"
 )

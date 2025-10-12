@@ -192,6 +192,11 @@ class ReActAgent:
             if final_answer_candidate is not None:
                 return "", None, final_answer_candidate
 
+            preview = response.replace("\n", " ").strip()
+            print(
+                f"LLM parse error raw response: {preview[:300]}{'…' if len(preview) > 300 else ''}",
+                flush=True,
+            )
             raise LLMResponseError("応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。")
 
         if action_match:

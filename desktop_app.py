@@ -177,6 +177,7 @@ class CopilotApp:
         self._auto_test_triggered = False
         self._auto_test_completed = False
         self._auto_test_deadline: Optional[float] = None
+        self._auto_test_shutdown_scheduled = False
         print(
             f"AUTOTEST: enabled={self._auto_test_enabled}, "
             f"workbook={self._auto_test_workbook or '(unchanged)'}, "
@@ -1658,15 +1659,39 @@ class CopilotApp:
             if response.content:
                 self._add_message(type_value, response.content)
 
-        if response.type is ResponseType.FINAL_ANSWER and self._auto_test_triggered:
-            self._auto_test_completed = True
-            print("AUTOTEST: received final answer", flush=True)
+        if response.type is ResponseType.FINAL_ANSWER:
+            if self._auto_test_triggered:
+                final_text = (response.content or "").strip()
+                self._auto_test_completed = True
+                print(f"AUTOTEST: final answer '{final_text}'", flush=True)
+                self._schedule_autotest_shutdown()
+            elif response.content:
+                print(f"Final answer received outside autotest: {(response.content or '').strip()}", flush=True)
         elif self._auto_test_enabled and response.type in {ResponseType.OBSERVATION, ResponseType.ACTION, ResponseType.THOUGHT}:
             snippet = (response.content or "").strip()
             if snippet:
                 print(f"AUTOTEST: {response.type.value} '{snippet[:120]}'", flush=True)
 
         self._update_ui()
+
+    def _schedule_autotest_shutdown(self) -> None:
+        if self._auto_test_shutdown_scheduled:
+            return
+        self._auto_test_shutdown_scheduled = True
+
+        def _shutdown():
+            try:
+                time.sleep(1.0)
+            except Exception:
+                pass
+            print("AUTOTEST: shutting down after final answer", flush=True)
+            try:
+                self.page.window.prevent_close = False
+            except Exception:
+                pass
+            self._force_exit(reason="autotest-final-answer")
+
+        threading.Thread(target=_shutdown, daemon=True).start()
 
     def _schedule_auto_test(self) -> None:
         if (
