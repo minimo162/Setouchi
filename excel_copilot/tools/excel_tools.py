@@ -8,7 +8,7 @@ import string
 from threading import Event
 from typing import List, Any, Optional, Dict, Tuple, Set
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.core.exceptions import ToolExecutionError, UserStopRequested
@@ -32,6 +32,21 @@ _NO_QUOTES_PLACEHOLDER = "引用なし"
 _HTML_ENTITY_PATTERN = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]{1,31}|#[0-9]{1,7}|#x[0-9A-Fa-f]{1,6});")
 DEFAULT_REFERENCE_PAIR_COLUMNS = 6
 _MIN_CONTEXT_BLOCK_WIDTH = 2 + DEFAULT_REFERENCE_PAIR_COLUMNS
+_REFERENCE_FALLBACK_ROOTS: List[Path] = []
+
+_REFERENCE_FALLBACK_ROOTS.append(Path.cwd())
+downloads_dir = Path.home() / "Downloads"
+if downloads_dir.is_dir():
+    _REFERENCE_FALLBACK_ROOTS.append(downloads_dir)
+extra_dirs = os.getenv("COPILOT_REFERENCE_DIRS", "")
+if extra_dirs:
+    for token in extra_dirs.split(os.pathsep):
+        token = token.strip()
+        if not token:
+            continue
+        candidate = Path(token).expanduser()
+        if candidate.is_dir():
+            _REFERENCE_FALLBACK_ROOTS.append(candidate)
 
 if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
     logging.basicConfig(level=logging.DEBUG)
@@ -1123,6 +1138,27 @@ def translate_range_contents(
             except Exception:
                 workbook_dir = None
 
+        def _resolve_local_reference_copy(url: str) -> Optional[Path]:
+            try:
+                parsed = urlparse(url)
+            except Exception:
+                return None
+            filename = unquote(Path(parsed.path).name)
+            if not filename:
+                return None
+            candidates: List[Path] = []
+            for root in _REFERENCE_FALLBACK_ROOTS:
+                candidates.append(root / filename)
+            # allow nested directories encoded in URL
+            if "/" in filename:
+                path_fragment = Path(filename)
+                for root in _REFERENCE_FALLBACK_ROOTS:
+                    candidates.append(root / path_fragment)
+            for candidate in candidates:
+                if candidate.exists():
+                    return candidate.resolve()
+            return None
+
         def _resolve_file_reference(value: str) -> Optional[Path]:
             candidate = value.strip()
             if not candidate:
@@ -1257,11 +1293,19 @@ def translate_range_contents(
                 if not normalized_url:
                     continue
                 if _is_probable_url(normalized_url):
+                    local_copy = _resolve_local_reference_copy(normalized_url)
+                    if local_copy is not None:
+                        resolved_url = local_copy.as_uri()
+                        coerced_notes.append(
+                            f"{label} の値 '{original_value}' をローカルファイル '{local_copy.name}' に置き換えて利用します。"
+                        )
+                    else:
+                        resolved_url = normalized_url
                     if normalized_url not in seen_urls:
-                        seen_urls.add(normalized_url)
+                        seen_urls.add(resolved_url)
                         entries.append({
                             "id": f"{label[:1].upper()}{len(entries) + 1}",
-                            "url": normalized_url,
+                            "url": resolved_url,
                         })
                     continue
                 resolved_path = _resolve_file_reference(normalized_url)
@@ -1646,6 +1690,7 @@ def translate_range_contents(
                 "- 1つの段落に複数の意味が含まれる場合は「。」や改行などの区切りで文を分割し、意味が異なる部分は別々の文として抽出する。",
                 "- 文中のURLや脚注記号（例: [1]）は除去し、本文だけを残す。",
                 "- 参考文献一覧や書誌情報、ヘッダー/フッター、本文要約など本文以外のセクションは抽出しない。",
+                "- 以下の items(JSON) に含まれる原文テキストをそのままコピーして提出しない。参照資料内で一致する文のみを引用する。",
                 "- 原文と一致しない情報、推測、要約は含めない。",
                 "- 出力はJSON配列のみ。各要素は {\"source_sentences\": [...]} 形式で、入力順と一致させる。",
                 "",
@@ -1737,6 +1782,7 @@ def translate_range_contents(
                 "手順:",
                 "- source_sentences の各文に対して、参照資料から意味的に最も対応する翻訳先言語の文を1文選ぶ。",
                 "- 必ず参照資料に実際に存在する文をそのまま引用し、新たに文章を生成したり書き換えたりしない。語尾や句読点も資料の表記を保つ。",
+                "- source_sentences を翻訳した推測文を target_sentence として出力しない。target_reference_urls で示した参照資料に存在する文のみを引用する。",
                 "- 対応する文が複数ある場合は、最も直接的に一致するものを選択する。",
                 "- 適合する文が見つからないsource_sentenceはペアに含めない。",
                 "- 文は資料からそのまま引用し、不要な引用符やURLを含めない。",
@@ -1764,17 +1810,21 @@ def translate_range_contents(
             _ensure_not_stopped()
             actions.log_progress("対になる英語参照文抽出: Copilotに依頼中...")
 
-            def _request_pairing(prompt: str) -> Optional[List[Any]]:
+            def _request_pairing(prompt: str) -> Tuple[Optional[List[Any]], str]:
                 response = browser_manager.ask(prompt, stop_event=stop_event)
                 try:
                     match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
                     payload_json = match.group(0) if match else response
-                    return json.loads(payload_json)
+                    return json.loads(payload_json), response
                 except json.JSONDecodeError:
-                    return None
+                    return None, response
 
-            pairing_items = _request_pairing(pairing_prompt)
+            pairing_items, raw_pairing_response = _request_pairing(pairing_prompt)
             if pairing_items is None:
+                snippet = raw_pairing_response.strip().replace("\n", " ")
+                actions.log_progress(
+                    f"参照ペア応答解析失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
+                )
                 _ensure_not_stopped()
                 retry_prompt_sections = pairing_prompt_sections + [
                     "",
@@ -1786,9 +1836,13 @@ def translate_range_contents(
                 actions.log_progress(
                     "参照ペア応答がJSON形式ではなかったため、JSON限定指示で再試行します。"
                 )
-                pairing_items = _request_pairing(retry_prompt)
+                pairing_items, raw_pairing_response = _request_pairing(retry_prompt)
 
             if pairing_items is None:
+                snippet = raw_pairing_response.strip().replace("\n", " ")
+                actions.log_progress(
+                    f"参照ペア再試行も失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
+                )
                 actions.log_progress(
                     "参照ペア応答をJSONとして解釈できなかったため、参照ペアなしとして処理を継続します。"
                 )
@@ -2043,7 +2097,52 @@ def translate_range_contents(
                         if include_context_columns
                         else ""
                     )
-                    reference_pairs_list: List[Dict[str, str]] = list(reference_pairs_output)
+                    context_pairs: List[Dict[str, str]] = []
+                    if include_context_columns:
+                        if reference_pairs_context and item_index < len(reference_pairs_context):
+                            context_pairs = [
+                                pair for pair in reference_pairs_context[item_index]
+                                if isinstance(pair, dict)
+                            ]
+                    reference_pairs_list: List[Dict[str, str]] = []
+                    if include_context_columns:
+                        reference_pairs_list = list(context_pairs)
+                        if reference_pairs_output:
+                            merged: List[Dict[str, str]] = []
+                            seen_keys: Set[Tuple[str, str]] = set()
+                            for candidate in reference_pairs_output:
+                                if not isinstance(candidate, dict):
+                                    continue
+                                src = candidate.get("source_sentence")
+                                tgt = candidate.get("target_sentence") or candidate.get("translated") or candidate.get("en")
+                                if not isinstance(src, str) or not isinstance(tgt, str):
+                                    continue
+                                key = (src.strip(), tgt.strip())
+                                if key in seen_keys:
+                                    continue
+                                seen_keys.add(key)
+                                merged.append(
+                                    {
+                                        "source_sentence": src.strip(),
+                                        "target_sentence": tgt.strip(),
+                                    }
+                                )
+                            for ctx_pair in context_pairs:
+                                src = ctx_pair.get("source_sentence") if isinstance(ctx_pair, dict) else None
+                                tgt = ctx_pair.get("target_sentence") if isinstance(ctx_pair, dict) else None
+                                if not isinstance(src, str) or not isinstance(tgt, str):
+                                    continue
+                                key = (src.strip(), tgt.strip())
+                                if key in seen_keys:
+                                    continue
+                                seen_keys.add(key)
+                                merged.append(
+                                    {
+                                        "source_sentence": src.strip(),
+                                        "target_sentence": tgt.strip(),
+                                    }
+                                )
+                            reference_pairs_list = merged
                     cell_key = (local_row, col_idx)
                     multi_segment_state = multi_line_segments.get(cell_key)
                     if multi_segment_state and segment_index is not None:
@@ -2118,10 +2217,11 @@ def translate_range_contents(
                                 "target_sentence": target_clean,
                             })
                         if include_context_columns:
+                            expected_pairs = len(source_references_per_item[item_index]) if item_index < len(source_references_per_item) else 0
+                            actions.log_progress(
+                                f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): {len(sanitized_pairs)} 件 / source_sentences={expected_pairs}"
+                            )
                             if sanitized_pairs:
-                                actions.log_progress(
-                                    f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): {len(sanitized_pairs)} 件"
-                                )
                                 for idx, pair in enumerate(sanitized_pairs, start=1):
                                     actions.log_progress(
                                         f"参照ペア[{item_index + 1}-{idx}]: {pair['source_sentence']} -> {pair['target_sentence']}"
@@ -2129,11 +2229,6 @@ def translate_range_contents(
                             else:
                                 actions.log_progress(
                                     f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): 0 件 (参照資料に一致する文が見つかりませんでした)"
-                                )
-                            expected_pairs = len(source_references_per_item[item_index]) if item_index < len(source_references_per_item) else 0
-                            if expected_pairs and len(sanitized_pairs) < expected_pairs:
-                                actions.log_progress(
-                                    f"参照ペア警告 ({item_index + 1}/{len(current_texts)}): source_sentences {expected_pairs} 件のうち {len(sanitized_pairs)} 件のみ一致"
                                 )
 
                     formatted_pairs: List[str] = []

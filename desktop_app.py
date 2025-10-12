@@ -44,12 +44,14 @@ PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
 # Container in this Flet build lacks min-height/constraints helpers, so keep a fixed base height.
 CHAT_PANEL_BASE_HEIGHT = 600
 
-DEFAULT_AUTOTEST_TIMEOUT_SECONDS = 180.0
+DEFAULT_AUTOTEST_TIMEOUT_SECONDS = 180.0  # 3-minute auto-test timeout
 DEFAULT_AUTOTEST_SOURCE_REFERENCE_URL = (
-    "https://ralleti.sharepoint.com/:b:/s/test/ES7NUzlbE29Ng1c-8smAb-wBBUmzQGNtqenf0XcOoi5xeg?e=9IxUSS"
+    "https://ralleti-my.sharepoint.com/:b:/g/personal/yuukikod_ralleti_onmicrosoft_com/"
+    "Eao1vzScMVdMpyecR1s8KFEBzr0LMPNp5u5ksA3U3TCMwQ?e=jwmAly"
 )
 DEFAULT_AUTOTEST_TARGET_REFERENCE_URL = (
-    "https://ralleti.sharepoint.com/:b:/s/test/EZ5EWz_WX4tAvKZNY_unLSgBaWRXIZJxIvf2lOnN8xHXxg?e=oMnLBU"
+    "https://ralleti-my.sharepoint.com/:b:/g/personal/yuukikod_ralleti_onmicrosoft_com/"
+    "EdJ586XuxedLsaSArCCve9kB1K79F0BvGqxzuZBhfWWS-w?e=wjR4C2"
 )
 DEFAULT_AUTOTEST_PROMPT_TEMPLATE = (
     "A1セルを日本語参照: {source_url} 英語参照: {target_url} で英訳し、B列以降に出力してください。"
