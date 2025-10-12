@@ -62,7 +62,9 @@ _TRANSLATION_WITH_REF_PROMPT = (
     "- The `Action:` JSON must be `{ \"tool_name\": \"...\", \"arguments\": { ... } }`.\n"
     "- Use `Final Answer:` only to report completion or request clarification strictly needed to finish the current task. Never invite the user to continue the conversation.\n\n"
     "Final Answer expectations\n"
-    "- Conclude with a concise summary of the Excel updates (e.g., 対象セル範囲や参照出力列) rather than document overviews or unrelated narrative.\n"
+    "- Conclude with a short status report of the Excel updates (例: 対象セル範囲、書き込み列、参照証跡の有無)。\n"
+    "- Never restate or summarise the source documents; avoid 表形式・抜粋・長文引用 in the final answer.\n"
+    "- When translation succeeds, mention the destination range (例: \"B列~I列\") and whether reference evidence was stored, all within two crisp sentences.\n"
     "Available tools:\n"
     "TOOLS\n"
 )

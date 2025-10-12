@@ -1616,72 +1616,11 @@ def translate_range_contents(
         else:
             items_per_request = max(1, rows_per_batch or _ITEMS_PER_TRANSLATION_REQUEST)
 
-        def _generate_key_phrases_batch(current_texts: List[str]) -> List[List[str]]:
-            if not include_context_columns:
-                return [[] for _ in current_texts]
-            if not current_texts:
-                return []
-
-            texts_json = json.dumps(current_texts, ensure_ascii=False)
-            keyphrase_prompt_sections: List[str] = [
-                "以下の日本語原文それぞれについて、主要な論点・関係者・背景を押さえるキーフレーズを日本語で6個作成してください。",
-                "ルール:",
-                "- 各キーフレーズは3〜12文字程度で簡潔にまとめる。",
-                "- 同じ語や言い回しを繰り返さず、視点や焦点を変えて多面的にカバーする。",
-                "- 番号や箇条書き記号は使わず文章で記載する。",
-                "- 出力はJSON配列のみ。各要素は {\"key_phrases\": [...]} 形式で、入力順と同じ長さにする。",
-                "",
-                "日本語原文(JSON):",
-                texts_json,
-            ]
-            keyphrase_prompt = "\n".join(keyphrase_prompt_sections)
-            _ensure_not_stopped()
-            actions.log_progress("キーフレーズ生成: Copilotに依頼中...")
-            keyphrase_response = browser_manager.ask(keyphrase_prompt, stop_event=stop_event)
-            try:
-                match = re.search(r'{.*}|\[.*\]', keyphrase_response, re.DOTALL)
-                keyphrase_payload = match.group(0) if match else keyphrase_response
-                keyphrase_items = json.loads(keyphrase_payload)
-            except json.JSONDecodeError as exc:
-                raise ToolExecutionError(
-                    f"Failed to parse key phrase generation response as JSON: {keyphrase_response}"
-                ) from exc
-            if not isinstance(keyphrase_items, list) or len(keyphrase_items) != len(current_texts):
-                raise ToolExecutionError(
-                    "Key phrase response must be a list with one entry per source text."
-                )
-
-            cleaned_results: List[List[str]] = [[] for _ in current_texts]
-            for item_index, item in enumerate(keyphrase_items):
-                raw_phrases: List[str] = []
-                if isinstance(item, dict):
-                    raw_phrases = item.get("key_phrases") or item.get("keywords") or []
-                elif isinstance(item, list):
-                    raw_phrases = item
-                if not isinstance(raw_phrases, list):
-                    raw_phrases = []
-                cleaned_phrases: List[str] = []
-                for phrase in raw_phrases:
-                    if not isinstance(phrase, str):
-                        continue
-                    stripped = phrase.strip()
-                    if not stripped or stripped in cleaned_phrases:
-                        continue
-                    cleaned_phrases.append(stripped)
-                    if len(cleaned_phrases) >= 6:
-                        break
-                if not cleaned_phrases:
-                    fallback_phrase = current_texts[item_index][:30].strip()
-                    cleaned_phrases = [fallback_phrase] if fallback_phrase else ["原文"]
-                cleaned_results[item_index] = cleaned_phrases
-            return cleaned_results
-
         def _normalize_for_comparison(text: str) -> str:
             return re.sub(r"\s+", "", text)
 
         def _extract_source_sentences_batch(
             current_texts: List[str],
-            key_phrases_per_item: List[List[str]],
         ) -> List[List[str]]:
             if not (use_references and source_reference_url_entries):
                 return [[] for _ in current_texts]
@@ -1689,10 +1628,11 @@ def translate_range_contents(
                 return []
 
             items_payload: List[Dict[str, Any]] = []
-            for idx, _source_text in enumerate(current_texts):
+            for idx, source_text in enumerate(current_texts):
+                normalized_source = source_text if isinstance(source_text, str) else ""
                 entry = {
                     "context_id": idx,
-                    "key_phrases": key_phrases_per_item[idx] if idx < len(key_phrases_per_item) else [],
+                    "source_text": normalized_source,
                 }
                 items_payload.append(entry)
             items_json = json.dumps(items_payload, ensure_ascii=False)
@@ -1704,15 +1644,15 @@ def translate_range_contents(
             source_reference_urls_json = json.dumps(source_reference_urls_payload, ensure_ascii=False)
 
             source_sentence_prompt_sections: List[str] = [
-                "以下の入力に基づき、直前に抽出したキーフレーズと最も関連する参照資料の文章を抽出してください。",
+                "以下の入力に基づき、翻訳対象の日本語原文と意味が一致する参照資料本文の文を抽出してください。",
                 "",
                 "手順:",
-                "- 各項目の key_phrases を手掛かりに参照URLを開き、キーフレーズの意味・用語・事実を裏付ける本文の文を最大6文まで特定する。",
+                "- 各 context_id について、source_text に含まれる内容を手掛かりに参照URLを開き、原文と同じ事実・意味を持つ本文の文を最大6文まで特定する。",
                 "- 必ず参照資料本文に実際に存在する文をそのまま引用し、新しい文章の生成や要約、原文の翻訳で置き換えない。語尾・句読点も原文どおりに保持する。",
                 "- 1つの段落に複数の意味が含まれる場合は「。」や改行などで区切り、意味が異なる部分は別々の文として抽出する。",
                 "- 文中のURLや脚注記号（例: [1]）は除去し、本文だけを残す。",
                 "- 参考文献一覧や書誌情報、ヘッダー/フッター、要約・メタ説明など本文以外は抽出しない。",
-                "- key_phrases の文言をそのままコピーせず、参照資料内で一致する文のみを引用する。",
+                "- 原文の引用や翻訳を作らず、参照資料内で実際に確認できる文章のみを返す。",
                 "- 一致する文が見つからない場合は空配列で返し、推測や翻訳文を入れない。",
                 "- 出力はJSON配列のみ。各要素は {\"source_sentences\": [...]} 形式で、入力順と一致させる。",
                 "- `source_sentences` は参照資料から抜き出した引用文の配列であり、原文を翻訳した文ではないことを明示的に守る。",
@@ -1758,13 +1698,6 @@ def translate_range_contents(
                 cleaned_sentences: List[str] = []
                 original_text = current_texts[item_index] if item_index < len(current_texts) else ""
                 original_normalized = _normalize_for_comparison(original_text) if isinstance(original_text, str) else ""
-                keyphrase_candidates = key_phrases_per_item[item_index] if item_index < len(key_phrases_per_item) else []
-                keyphrase_normalized: Set[str] = set()
-                for phrase in keyphrase_candidates or []:
-                    if isinstance(phrase, str):
-                        normalized_phrase = _normalize_for_comparison(phrase)
-                        if normalized_phrase:
-                            keyphrase_normalized.add(normalized_phrase)
 
                 for sentence in raw_sentences:
                     if not isinstance(sentence, str):
@@ -1780,8 +1713,6 @@ def translate_range_contents(
                     candidate_normalized = _normalize_for_comparison(stripped)
                     if original_normalized and candidate_normalized == original_normalized:
                         continue
-                    if candidate_normalized in keyphrase_normalized:
-                        continue
                     cleaned_sentences.append(stripped)
                     if len(cleaned_sentences) >= 6:
                         break
@@ -1790,7 +1721,7 @@ def translate_range_contents(
 
         def _pair_target_sentences_batch(
             source_references_per_item: List[List[str]],
-            key_phrases_per_item: List[List[str]],
+            current_texts: List[str],
         ) -> List[List[Dict[str, str]]]:
             if not (use_references and target_reference_url_entries):
                 return [[] for _ in source_references_per_item]
@@ -1803,7 +1734,7 @@ def translate_range_contents(
                     {
                         "context_id": idx,
                         "source_sentences": source_sentences,
-                        "key_phrases": key_phrases_per_item[idx] if idx < len(key_phrases_per_item) else [],
+                        "source_text": current_texts[idx] if idx < len(current_texts) and isinstance(current_texts[idx], str) else "",
                     }
                 )
             extraction_items_json = json.dumps(extraction_payload, ensure_ascii=False)
@@ -1815,7 +1746,7 @@ def translate_range_contents(
             target_reference_urls_json = json.dumps(target_reference_urls_payload, ensure_ascii=False)
 
             extraction_prompt_sections: List[str] = [
-                f"以下の日本語引用文 (Step 2) に意味が対応する {target_language} 参照文を target_reference_urls から抽出し、対訳ペアを作成してください。",
+                f"以下の日本語引用文 (Step 2) と原文 (source_text) に意味が対応する {target_language} 参照文を target_reference_urls から抽出し、対訳ペアを作成してください。",
                 "",
                 "手順:",
                 "- 各 context_id について、source_sentences の各文に最も意味が近い {target_language} 文を最大6件まで抽出する。",
@@ -1867,7 +1798,7 @@ def translate_range_contents(
                     "- 見つかった文がない場合は [] を返し、余計な文章は書かない。",
                     "- 例: [{\"target_sentences\": [\"Sentence 1\", \"Sentence 2\"]}] または [].",
                     "",
-                    f"以下の翻訳文 (Step 3) に対応する {target_language} 参照文を抽出してください。",
+                    f"以下の日本語引用文 (Step 2) に対応する {target_language} 参照文を抽出してください。",
                     "",
                     "items(JSON):",
                     extraction_items_json,
@@ -1991,21 +1922,22 @@ def translate_range_contents(
                 current_texts = [text for text, _ in entry_slice]
                 current_positions = [pos for _, pos in entry_slice]
 
-                key_phrases_per_item = _generate_key_phrases_batch(current_texts)
-                source_references_per_item = _extract_source_sentences_batch(current_texts, key_phrases_per_item)
+                source_references_per_item = _extract_source_sentences_batch(current_texts)
                 reference_pairs_context = _pair_target_sentences_batch(
                     source_references_per_item,
-                    key_phrases_per_item,
+                    current_texts,
                 )
 
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
 
-                translation_context = [
-                    {
-                        "reference_pairs": reference_pairs_context[index] if index < len(reference_pairs_context) else [],
-                    }
-                    for index, _ in enumerate(current_texts)
-                ]
+                translation_context = []
+                for index, _ in enumerate(current_texts):
+                    translation_context.append(
+                        {
+                            "source_sentences": source_references_per_item[index] if index < len(source_references_per_item) else [],
+                            "reference_pairs": reference_pairs_context[index] if index < len(reference_pairs_context) else [],
+                        }
+                    )
                 translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
                 final_prompt_parts = [
