@@ -1666,13 +1666,13 @@ def translate_range_contents(
             if not current_texts:
                 return []
 
-            items_payload: List[Dict[str, Any]] = [
-                {
-                    "japanese": source_text,
+            items_payload: List[Dict[str, Any]] = []
+            for idx, _source_text in enumerate(current_texts):
+                entry = {
+                    "context_id": idx,
                     "key_phrases": key_phrases_per_item[idx] if idx < len(key_phrases_per_item) else [],
                 }
-                for idx, source_text in enumerate(current_texts)
-            ]
+                items_payload.append(entry)
             items_json = json.dumps(items_payload, ensure_ascii=False)
             source_reference_urls_payload: List[str] = [
                 entry["url"]
@@ -1690,7 +1690,7 @@ def translate_range_contents(
                 "- 1つの段落に複数の意味が含まれる場合は「。」や改行などで区切り、意味が異なる部分は別々の文として抽出する。",
                 "- 文中のURLや脚注記号（例: [1]）は除去し、本文だけを残す。",
                 "- 参考文献一覧や書誌情報、ヘッダー/フッター、要約・メタ説明など本文以外は抽出しない。",
-                "- items(JSON) に含まれる原文テキストや key_phrases をそのままコピーしない。参照資料内で一致する文のみを引用する。",
+                "- key_phrases の文言をそのままコピーせず、参照資料内で一致する文のみを引用する。",
                 "- 一致する文が見つからない場合は空配列で返し、推測や翻訳文を入れない。",
                 "- 出力はJSON配列のみ。各要素は {\"source_sentences\": [...]} 形式で、入力順と一致させる。",
                 "- `source_sentences` は参照資料から抜き出した引用文の配列であり、原文を翻訳した文ではないことを明示的に守る。",
@@ -1751,25 +1751,101 @@ def translate_range_contents(
                 cleaned_results[item_index] = cleaned_sentences
             return cleaned_results
 
-        def _pair_target_sentences_batch(
-            current_texts: List[str],
-            key_phrases_per_item: List[List[str]],
+        def _translate_source_reference_sentences_batch(
             source_references_per_item: List[List[str]],
-        ) -> List[List[Dict[str, str]]]:
+        ) -> List[List[str]]:
+            if not source_references_per_item:
+                return [[] for _ in source_references_per_item]
+
+            any_sentences = any(sentences for sentences in source_references_per_item)
+            if not any_sentences:
+                return [[] for _ in source_references_per_item]
+
+            items_payload: List[Dict[str, Any]] = []
+            for idx, sentences in enumerate(source_references_per_item):
+                items_payload.append(
+                    {
+                        "context_id": idx,
+                        "source_sentences": sentences,
+                    }
+                )
+            items_json = json.dumps(items_payload, ensure_ascii=False)
+
+            translation_prompt_sections: List[str] = [
+                f"次の引用文を{target_language}に翻訳してください。",
+                "",
+                "手順:",
+                "- 各 context_id について、source_sentences の順序を保ったまま自然な表現で翻訳する。",
+                "- 参照文に含まれる事実・数値・固有名詞は正確に維持し、新しい情報を追加しない。",
+                "- 翻訳文は参照文と1対1に対応させ、文の削除や結合を行わない。",
+                "- 出力はJSON配列のみとし、入力と同じ順序で context_id ごとの配列を並べる。",
+                "",
+                "出力形式:",
+                "- JSON配列。各要素は {\"translations\": [\"...\"]} 形式で、source_sentences と同じ件数の翻訳文を含める。",
+                "- 必要があれば空配列を返すが、推測で文を追加したり再構成したりしない。",
+                "",
+                "items(JSON):",
+                items_json,
+            ]
+
+            translation_prompt = "\n".join(translation_prompt_sections)
+            _ensure_not_stopped()
+            actions.log_progress("参照文の暫定翻訳: Copilotに依頼中...")
+            translation_response = browser_manager.ask(translation_prompt, stop_event=stop_event)
+            try:
+                match = re.search(r'{.*}|\[.*\]', translation_response, re.DOTALL)
+                translation_payload = match.group(0) if match else translation_response
+                translation_items = json.loads(translation_payload)
+            except json.JSONDecodeError as exc:
+                raise ToolExecutionError(
+                    f"Failed to parse interim translation response as JSON: {translation_response}"
+                ) from exc
+            if not isinstance(translation_items, list) or len(translation_items) != len(source_references_per_item):
+                raise ToolExecutionError(
+                    "Interim translation response must be a list with one entry per context."
+                )
+
+            cleaned_results: List[List[str]] = [[] for _ in source_references_per_item]
+            for idx, entry in enumerate(translation_items):
+                translations: List[str] = []
+                if isinstance(entry, dict):
+                    translations = entry.get("translations") or entry.get("sentences") or []
+                elif isinstance(entry, list):
+                    translations = entry
+                if not isinstance(translations, list):
+                    translations = []
+                cleaned_translations: List[str] = []
+                for sentence in translations:
+                    if not isinstance(sentence, str):
+                        continue
+                    stripped = sentence.strip()
+                    if not stripped:
+                        continue
+                    cleaned_translations.append(stripped)
+                    if len(cleaned_translations) >= 6:
+                        break
+                cleaned_results[idx] = cleaned_translations
+            return cleaned_results
+
+        def _extract_target_sentences_batch(
+            translated_reference_sentences_per_item: List[List[str]],
+            key_phrases_per_item: List[List[str]],
+        ) -> List[List[str]]:
             if not (use_references and target_reference_url_entries):
-                return [[] for _ in current_texts]
-            if not current_texts:
+                return [[] for _ in translated_reference_sentences_per_item]
+            if not translated_reference_sentences_per_item:
                 return []
 
-            pairing_payload: List[Dict[str, Any]] = [
-                {
-                    "japanese": source_text,
-                    "key_phrases": key_phrases_per_item[idx] if idx < len(key_phrases_per_item) else [],
-                    "source_sentences": source_references_per_item[idx] if idx < len(source_references_per_item) else [],
-                }
-                for idx, source_text in enumerate(current_texts)
-            ]
-            pairing_items_json = json.dumps(pairing_payload, ensure_ascii=False)
+            extraction_payload: List[Dict[str, Any]] = []
+            for idx, translations in enumerate(translated_reference_sentences_per_item):
+                extraction_payload.append(
+                    {
+                        "context_id": idx,
+                        "translated_sentences": translations,
+                        "key_phrases": key_phrases_per_item[idx] if idx < len(key_phrases_per_item) else [],
+                    }
+                )
+            extraction_items_json = json.dumps(extraction_payload, ensure_ascii=False)
             target_reference_urls_payload: List[str] = [
                 entry["url"]
                 for entry in target_reference_url_entries
@@ -1777,29 +1853,26 @@ def translate_range_contents(
             ]
             target_reference_urls_json = json.dumps(target_reference_urls_payload, ensure_ascii=False)
 
-            pairing_prompt_sections: List[str] = [
-                f"以下の情報を使い、原文参照文と{target_language}参照文のペアを作成してください。",
+            extraction_prompt_sections: List[str] = [
+                f"以下の翻訳文に対応する{target_language}参照資料上の文章を抽出してください。",
                 "",
                 "手順:",
-                "- source_sentences の各文に対して、参照資料から意味的に最も対応する翻訳先言語の文を1文選ぶ。",
-                "- 必ず参照資料に実際に存在する文をそのまま引用し、新たに文章を生成したり書き換えたりしない。語尾や句読点も資料の表記を保つ。",
-                "- source_sentences を翻訳した推測文を target_sentence として出力しない。target_reference_urls で示した参照資料に存在する文のみを引用する。",
-                "- 対応する文が複数ある場合は、最も直接的に一致するものを選択する。",
-                "- 適合する文が見つからないsource_sentenceはペアに含めない。",
-                "- 文は資料からそのまま引用し、不要な引用符やURLを含めない。",
-                "- source_sentences が複数ある場合は、それぞれに対応する文を探し、可能な限り同数のペアを作成する。",
-                "- 参考文献や書誌情報、翻訳以外の付録・注記はペアに含めない。",
+                "- 各 context_id について、translated_sentences の意味と key_phrases を手掛かりに target_reference_urls の本文から直接一致する文を最大6文抽出する。",
+                "- 抽出する文は参照資料に実際に存在する文をそのまま引用し、語尾や句読点も資料の表記を保つ。",
+                "- 翻訳文を再構成した推測文や要約文を作成しない。該当文がない場合は空配列を返す。",
+                "- 同一内容が複数箇所に現れる場合は最も直接的に一致する部分を選ぶ。",
+                "- 参考文献一覧や書誌情報、ヘッダー/フッター、要約・メタ説明など本文以外は抽出しない。",
                 "- 出力は純粋なJSON配列のみとし、前後に説明やコメントを付けない。",
                 "",
                 "出力形式:",
-                "- JSON配列。各要素は {\"pairs\": [{\"source_sentence\": \"...\", \"target_sentence\": \"...\"}, ...]}。",
-                "- ペアは source_sentence の順序を保ち、入力長と一致させる。",
+                "- JSON配列。各要素は {\"target_sentences\": [\"...\"]} 形式で、translated_sentences と同じ順序・最大件数で文を並べる。",
+                "- 文が見つからない場合は空配列を返す。",
                 "",
                 "items(JSON):",
-                pairing_items_json,
+                extraction_items_json,
             ]
             if target_reference_urls_payload:
-                pairing_prompt_sections.extend(
+                extraction_prompt_sections.extend(
                     [
                         "",
                         "target_reference_urls(JSON):",
@@ -1807,11 +1880,11 @@ def translate_range_contents(
                     ]
                 )
 
-            pairing_prompt = "\n".join(pairing_prompt_sections)
+            extraction_prompt = "\n".join(extraction_prompt_sections)
             _ensure_not_stopped()
-            actions.log_progress("対になる英語参照文抽出: Copilotに依頼中...")
+            actions.log_progress("翻訳参照文抽出: Copilotに依頼中...")
 
-            def _request_pairing(prompt: str) -> Tuple[Optional[List[Any]], str]:
+            def _request_extraction(prompt: str) -> Tuple[Optional[List[Any]], str]:
                 response = browser_manager.ask(prompt, stop_event=stop_event)
                 try:
                     match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
@@ -1820,14 +1893,14 @@ def translate_range_contents(
                 except json.JSONDecodeError:
                     return None, response
 
-            pairing_items, raw_pairing_response = _request_pairing(pairing_prompt)
-            if pairing_items is None:
-                snippet = raw_pairing_response.strip().replace("\n", " ")
+            extraction_items, raw_extraction_response = _request_extraction(extraction_prompt)
+            if extraction_items is None:
+                snippet = raw_extraction_response.strip().replace("\n", " ")
                 actions.log_progress(
                     f"参照ペア応答解析失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
                 )
                 _ensure_not_stopped()
-                retry_prompt_sections = pairing_prompt_sections + [
+                retry_prompt_sections = extraction_prompt_sections + [
                     "",
                     "IMPORTANT:",
                     "- Respond with a pure JSON array only. Do not include explanations before or after the array.",
@@ -1835,55 +1908,45 @@ def translate_range_contents(
                 ]
                 retry_prompt = "\n".join(retry_prompt_sections)
                 actions.log_progress(
-                    "参照ペア応答がJSON形式ではなかったため、JSON限定指示で再試行します。"
+                    "翻訳参照文応答がJSON形式ではなかったため、JSON限定指示で再試行します。"
                 )
-                pairing_items, raw_pairing_response = _request_pairing(retry_prompt)
+                extraction_items, raw_extraction_response = _request_extraction(retry_prompt)
 
-            if pairing_items is None:
-                snippet = raw_pairing_response.strip().replace("\n", " ")
+            if extraction_items is None:
+                snippet = raw_extraction_response.strip().replace("\n", " ")
                 actions.log_progress(
                     f"参照ペア再試行も失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
                 )
                 actions.log_progress(
-                    "参照ペア応答をJSONとして解釈できなかったため、参照ペアなしとして処理を継続します。"
+                    "翻訳参照文応答をJSONとして解釈できなかったため、参照文なしとして処理を継続します。"
                 )
-                pairing_items = [{"pairs": []} for _ in current_texts]
-            if not isinstance(pairing_items, list) or len(pairing_items) != len(current_texts):
+                extraction_items = [{"target_sentences": []} for _ in translated_reference_sentences_per_item]
+            if not isinstance(extraction_items, list) or len(extraction_items) != len(translated_reference_sentences_per_item):
                 actions.log_progress(
-                    "参照ペア応答の形式が想定外だったため、参照ペアなしとして処理を継続します。"
+                    "翻訳参照文応答の形式が想定外だったため、参照文なしとして処理を継続します。"
                 )
-                pairing_items = [{"pairs": []} for _ in current_texts]
+                extraction_items = [{"target_sentences": []} for _ in translated_reference_sentences_per_item]
 
-            cleaned_results: List[List[Dict[str, str]]] = [[] for _ in current_texts]
-            for item_index, entry in enumerate(pairing_items):
-                raw_pairs: List[Any] = []
+            cleaned_results: List[List[str]] = [[] for _ in translated_reference_sentences_per_item]
+            for item_index, entry in enumerate(extraction_items):
+                raw_sentences: List[Any] = []
                 if isinstance(entry, dict):
-                    raw_pairs = entry.get("pairs") or entry.get("reference_pairs") or []
+                    raw_sentences = entry.get("target_sentences") or entry.get("sentences") or []
                 elif isinstance(entry, list):
-                    raw_pairs = entry
-                if not isinstance(raw_pairs, list):
-                    raw_pairs = []
-                cleaned_pairs: List[Dict[str, str]] = []
-                for pair in raw_pairs:
-                    if not isinstance(pair, dict):
+                    raw_sentences = entry
+                if not isinstance(raw_sentences, list):
+                    raw_sentences = []
+                cleaned_sentences: List[str] = []
+                for sentence in raw_sentences:
+                    if not isinstance(sentence, str):
                         continue
-                    source_sentence = pair.get("source_sentence") or pair.get("jp") or ""
-                    target_sentence = pair.get("target_sentence") or pair.get("translated") or pair.get("en") or ""
-                    if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
+                    stripped = _strip_reference_urls_from_quote(sentence.strip())
+                    if not stripped:
                         continue
-                    source_clean = source_sentence.strip()
-                    target_clean = _strip_reference_urls_from_quote(target_sentence.strip())
-                    if not source_clean or not target_clean:
-                        continue
-                    cleaned_pairs.append(
-                        {
-                            "source_sentence": source_clean,
-                            "target_sentence": target_clean,
-                        }
-                    )
-                    if len(cleaned_pairs) >= 6:
+                    cleaned_sentences.append(stripped)
+                    if len(cleaned_sentences) >= 6:
                         break
-                cleaned_results[item_index] = cleaned_pairs
+                cleaned_results[item_index] = cleaned_sentences
             return cleaned_results
 
         for row_start in range(0, source_rows, batch_size):
@@ -1943,17 +2006,43 @@ def translate_range_contents(
 
                 key_phrases_per_item = _generate_key_phrases_batch(current_texts)
                 source_references_per_item = _extract_source_sentences_batch(current_texts, key_phrases_per_item)
-                reference_pairs_context = _pair_target_sentences_batch(
-                    current_texts,
+                interim_translations_per_item = _translate_source_reference_sentences_batch(source_references_per_item)
+                target_reference_sentences_per_item = _extract_target_sentences_batch(
+                    interim_translations_per_item,
                     key_phrases_per_item,
-                    source_references_per_item,
                 )
+
+                reference_pairs_context: List[List[Dict[str, str]]] = []
+                for idx, source_sentences in enumerate(source_references_per_item):
+                    target_sentences = (
+                        target_reference_sentences_per_item[idx]
+                        if idx < len(target_reference_sentences_per_item)
+                        else []
+                    )
+                    pair_count = min(len(source_sentences), len(target_sentences))
+                    pairs: List[Dict[str, str]] = []
+                    for pair_index in range(pair_count):
+                        pairs.append(
+                            {
+                                "source_sentence": source_sentences[pair_index],
+                                "target_sentence": target_sentences[pair_index],
+                            }
+                        )
+                    if len(source_sentences) and pair_count < len(source_sentences):
+                        actions.log_progress(
+                            f"参照ペア整理 ({idx + 1}/{len(source_references_per_item)}): "
+                            f"{pair_count}/{len(source_sentences)} 件の対応する {target_language} 文を取得。"
+                        )
+                    reference_pairs_context.append(pairs)
 
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
 
                 translation_context = [
                     {
                         "reference_pairs": reference_pairs_context[index] if index < len(reference_pairs_context) else [],
+                        "source_reference_sentences": source_references_per_item[index] if index < len(source_references_per_item) else [],
+                        "interim_translations": interim_translations_per_item[index] if index < len(interim_translations_per_item) else [],
+                        "target_reference_sentences": target_reference_sentences_per_item[index] if index < len(target_reference_sentences_per_item) else [],
                     }
                     for index, _ in enumerate(current_texts)
                 ]
