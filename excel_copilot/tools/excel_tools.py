@@ -1643,6 +1643,7 @@ def translate_range_contents(
                 "手順:",
                 "- 各日本語原文について、参照URLを開き、内容から原文の意味や用語に直結する文を最大6文特定する。",
                 "- 必ず参照資料本文に実際に存在する文をそのまま引用し、新たに文章を生成したり要約文を作成しない。テキストをコピーする際は語尾や句読点も原文どおりに保持する。",
+                "- 1つの段落に複数の意味が含まれる場合は「。」や改行などの区切りで文を分割し、意味が異なる部分は別々の文として抽出する。",
                 "- 文中のURLや脚注記号（例: [1]）は除去し、本文だけを残す。",
                 "- 参考文献一覧や書誌情報、ヘッダー/フッター、本文要約など本文以外のセクションは抽出しない。",
                 "- 原文と一致しない情報、推測、要約は含めない。",
@@ -1739,7 +1740,9 @@ def translate_range_contents(
                 "- 対応する文が複数ある場合は、最も直接的に一致するものを選択する。",
                 "- 適合する文が見つからないsource_sentenceはペアに含めない。",
                 "- 文は資料からそのまま引用し、不要な引用符やURLを含めない。",
+                "- source_sentences が複数ある場合は、それぞれに対応する文を探し、可能な限り同数のペアを作成する。",
                 "- 参考文献や書誌情報、翻訳以外の付録・注記はペアに含めない。",
+                "- 出力は純粋なJSON配列のみとし、前後に説明やコメントを付けない。",
                 "",
                 "出力形式:",
                 "- JSON配列。各要素は {\"pairs\": [{\"source_sentence\": \"...\", \"target_sentence\": \"...\"}, ...]}。",
@@ -1760,12 +1763,32 @@ def translate_range_contents(
             pairing_prompt = "\n".join(pairing_prompt_sections)
             _ensure_not_stopped()
             actions.log_progress("対になる英語参照文抽出: Copilotに依頼中...")
-            pairing_response = browser_manager.ask(pairing_prompt, stop_event=stop_event)
-            try:
-                match = re.search(r'{.*}|\[.*\]', pairing_response, re.DOTALL)
-                pairing_payload_json = match.group(0) if match else pairing_response
-                pairing_items = json.loads(pairing_payload_json)
-            except json.JSONDecodeError as exc:
+
+            def _request_pairing(prompt: str) -> Optional[List[Any]]:
+                response = browser_manager.ask(prompt, stop_event=stop_event)
+                try:
+                    match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
+                    payload_json = match.group(0) if match else response
+                    return json.loads(payload_json)
+                except json.JSONDecodeError:
+                    return None
+
+            pairing_items = _request_pairing(pairing_prompt)
+            if pairing_items is None:
+                _ensure_not_stopped()
+                retry_prompt_sections = pairing_prompt_sections + [
+                    "",
+                    "IMPORTANT:",
+                    "- Respond with a pure JSON array only. Do not include explanations before or after the array.",
+                    "- If no pairs are found, reply with [] (an empty JSON array).",
+                ]
+                retry_prompt = "\n".join(retry_prompt_sections)
+                actions.log_progress(
+                    "参照ペア応答がJSON形式ではなかったため、JSON限定指示で再試行します。"
+                )
+                pairing_items = _request_pairing(retry_prompt)
+
+            if pairing_items is None:
                 actions.log_progress(
                     "参照ペア応答をJSONとして解釈できなかったため、参照ペアなしとして処理を継続します。"
                 )
@@ -2058,6 +2081,11 @@ def translate_range_contents(
                         output_matrix[local_row][translation_col_index] = translation_value
                         output_dirty = True
                         row_dirty_flags[local_row] = True
+                    if include_context_columns:
+                        preview = translation_value
+                        if len(preview) > 120:
+                            preview = preview[:117] + "..."
+                        actions.log_progress(f"翻訳結果プレビュー ({item_index + 1}/{len(current_texts)}): {preview}")
                     if not writing_to_source_directly and overwrite_source:
                         existing_source_value = source_matrix[local_row][col_idx]
                         if translation_value != existing_source_value:
@@ -2089,6 +2117,24 @@ def translate_range_contents(
                                 "source_sentence": source_clean,
                                 "target_sentence": target_clean,
                             })
+                        if include_context_columns:
+                            if sanitized_pairs:
+                                actions.log_progress(
+                                    f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): {len(sanitized_pairs)} 件"
+                                )
+                                for idx, pair in enumerate(sanitized_pairs, start=1):
+                                    actions.log_progress(
+                                        f"参照ペア[{item_index + 1}-{idx}]: {pair['source_sentence']} -> {pair['target_sentence']}"
+                                    )
+                            else:
+                                actions.log_progress(
+                                    f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): 0 件 (参照資料に一致する文が見つかりませんでした)"
+                                )
+                            expected_pairs = len(source_references_per_item[item_index]) if item_index < len(source_references_per_item) else 0
+                            if expected_pairs and len(sanitized_pairs) < expected_pairs:
+                                actions.log_progress(
+                                    f"参照ペア警告 ({item_index + 1}/{len(current_texts)}): source_sentences {expected_pairs} 件のうち {len(sanitized_pairs)} 件のみ一致"
+                                )
 
                     formatted_pairs: List[str] = []
                     if include_context_columns:
