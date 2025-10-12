@@ -1527,17 +1527,25 @@ def translate_range_contents(
                 elif cite_cols == source_cols * 3:
                     citation_mode = "translation_triplets"
                 else:
-                    raise ToolExecutionError(
-                        "citation_output_range must have either one column, match the source column count, or provide two or three columns per source column (for explanation/quotes or the translation output layout)."
+                    fallback_note = (
+                        "指定された citation_output_range の列数がサポート外のため、参照出力を翻訳結果の列に内包します。"
                     )
-                cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
-                existing_citation = actions.read_range(citation_range, citation_sheet)
-                try:
-                    citation_matrix = _reshape_to_dimensions(existing_citation, cite_rows, cite_cols)
-                except ToolExecutionError:
-                    citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
-                if citation_matrix is not None:
-                    citation_matrix = _unescape_matrix_values(citation_matrix)
+                    actions.log_progress(fallback_note)
+                    citation_note = fallback_note
+                    citation_sheet = None
+                    citation_range = None
+                    citation_matrix = None
+                    citation_mode = None
+                    cite_rows = cite_cols = cite_start_row = cite_start_col = 0
+                if citation_mode is not None:
+                    cite_start_row, cite_start_col, _, _ = _parse_range_bounds(citation_range)
+                    existing_citation = actions.read_range(citation_range, citation_sheet)
+                    try:
+                        citation_matrix = _reshape_to_dimensions(existing_citation, cite_rows, cite_cols)
+                    except ToolExecutionError:
+                        citation_matrix = [["" for _ in range(cite_cols)] for _ in range(cite_rows)]
+                    if citation_matrix is not None:
+                        citation_matrix = _unescape_matrix_values(citation_matrix)
 
         messages: List[str] = []
         explanation_fallback_notes: List[str] = []
@@ -1762,13 +1770,15 @@ def translate_range_contents(
                 pairing_payload_json = match.group(0) if match else pairing_response
                 pairing_items = json.loads(pairing_payload_json)
             except json.JSONDecodeError as exc:
-                raise ToolExecutionError(
-                    f"Failed to parse reference pairing response as JSON: {pairing_response}"
-                ) from exc
-            if not isinstance(pairing_items, list) or len(pairing_items) != len(current_texts):
-                raise ToolExecutionError(
-                    "Reference pairing response must be a list with one entry per source text."
+                actions.log_progress(
+                    "参照ペア応答をJSONとして解釈できなかったため、参照ペアなしとして処理を継続します。"
                 )
+                pairing_items = [{"pairs": []} for _ in current_texts]
+            if not isinstance(pairing_items, list) or len(pairing_items) != len(current_texts):
+                actions.log_progress(
+                    "参照ペア応答の形式が想定外だったため、参照ペアなしとして処理を継続します。"
+                )
+                pairing_items = [{"pairs": []} for _ in current_texts]
 
             cleaned_results: List[List[Dict[str, str]]] = [[] for _ in current_texts]
             for item_index, entry in enumerate(pairing_items):

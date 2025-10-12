@@ -118,8 +118,16 @@ class CopilotApp:
             )
         except ValueError:
             self._auto_test_delay = 1.0
+        try:
+            self._auto_test_timeout: float = max(
+                0.0, float(os.getenv("COPILOT_AUTOTEST_TIMEOUT", "180"))
+            )
+        except ValueError:
+            self._auto_test_timeout = 180.0
         self._auto_test_enabled = bool(self._auto_test_prompt)
         self._auto_test_triggered = False
+        self._auto_test_completed = False
+        self._auto_test_deadline: Optional[float] = None
         print(
             f"AUTOTEST: enabled={self._auto_test_enabled}, "
             f"workbook={self._auto_test_workbook or '(unchanged)'}, "
@@ -1560,9 +1568,12 @@ class CopilotApp:
                 self._browser_reset_in_progress = False
                 if self.new_chat_button and self.app_state in {AppState.READY, AppState.ERROR}:
                     self.new_chat_button.disabled = False
+            if self._auto_test_triggered:
+                self._auto_test_completed = True
         elif response.type is ResponseType.END_OF_TASK:
             self._set_state(AppState.READY)
             if self._auto_test_triggered:
+                self._auto_test_completed = True
                 print("AUTOTEST: task marked as completed", flush=True)
         elif response.type is ResponseType.INFO:
             action = response.metadata.get("action") if response.metadata else None
@@ -1590,6 +1601,7 @@ class CopilotApp:
                 self._add_message(type_value, response.content)
 
         if response.type is ResponseType.FINAL_ANSWER and self._auto_test_triggered:
+            self._auto_test_completed = True
             print("AUTOTEST: received final answer", flush=True)
         elif self._auto_test_enabled and response.type in {ResponseType.OBSERVATION, ResponseType.ACTION, ResponseType.THOUGHT}:
             snippet = (response.content or "").strip()
@@ -1607,12 +1619,32 @@ class CopilotApp:
             return
 
         self._auto_test_triggered = True
+        self._auto_test_completed = False
         print(
             f"AUTOTEST: scheduled (delay={self._auto_test_delay}s, "
             f"workbook={self._auto_test_workbook or '(unchanged)'}, "
             f"sheet={self._auto_test_sheet or '(unchanged)'})",
             flush=True,
         )
+        if self._auto_test_timeout:
+            self._auto_test_deadline = time.monotonic() + self._auto_test_timeout
+            def _timeout_watch():
+                try:
+                    remaining = self._auto_test_timeout
+                    while remaining > 0 and not self._auto_test_completed:
+                        time.sleep(min(1.0, remaining))
+                        remaining = self._auto_test_deadline - time.monotonic()
+                    if not self._auto_test_completed and self._auto_test_enabled:
+                        print(
+                            f"AUTOTEST: timeout reached after {self._auto_test_timeout}s",
+                            flush=True,
+                        )
+                except Exception:
+                    pass
+            try:
+                self.page.run_thread(_timeout_watch)
+            except Exception:
+                threading.Thread(target=_timeout_watch, daemon=True).start()
 
         def _runner():
             try:

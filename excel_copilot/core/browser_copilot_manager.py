@@ -1355,7 +1355,10 @@ class BrowserCopilotManager:
                         )
 
                 if normalized_current != expected_text:
-                    raise RuntimeError("チャット入力欄にプロンプト全体を反映できませんでした。")
+                    print(
+                        "警告: チャット入力欄にプロンプト全体を反映できませんでしたが、"
+                        "現在の内容で送信を試行します。"
+                    )
 
             # Allow the pasted content to settle before sending
             try:
