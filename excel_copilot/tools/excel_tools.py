@@ -2,6 +2,7 @@ import html
 import re
 import difflib
 import logging
+import math
 import os
 import string
 from threading import Event
@@ -29,6 +30,8 @@ def _review_debug(message: str) -> None:
 
 _NO_QUOTES_PLACEHOLDER = "引用なし"
 _HTML_ENTITY_PATTERN = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]{1,31}|#[0-9]{1,7}|#x[0-9A-Fa-f]{1,6});")
+DEFAULT_REFERENCE_PAIR_COLUMNS = 6
+_MIN_CONTEXT_BLOCK_WIDTH = 2 + DEFAULT_REFERENCE_PAIR_COLUMNS
 
 if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
     logging.basicConfig(level=logging.DEBUG)
@@ -1153,7 +1156,9 @@ def translate_range_contents(
         range_adjustment_note: Optional[str] = None
         writing_to_source_directly = translation_output_range is None
         include_context_columns = output_mode != "translation_only"
-        translation_block_width = 3 if include_context_columns else 1
+        translation_block_width = (
+            _MIN_CONTEXT_BLOCK_WIDTH if include_context_columns else 1
+        )
         citation_should_include_explanations = writing_to_source_directly and include_context_columns
         out_rows = source_rows
         out_cols = source_cols if writing_to_source_directly else source_cols * translation_block_width
@@ -1173,21 +1178,12 @@ def translate_range_contents(
         else:
             output_sheet, output_range = _split_sheet_and_range(translation_output_range, target_sheet)
             out_rows, out_cols = _parse_range_dimensions(output_range)
-            min_required_width = 3 if include_context_columns else 1
+            min_required_width = _MIN_CONTEXT_BLOCK_WIDTH if include_context_columns else 1
             if out_rows < source_rows:
                 raise ToolExecutionError(
                     "translation_output_range must span the same number of rows as the source range."
                 )
-            if out_cols < source_cols * min_required_width:
-                if include_context_columns:
-                    raise ToolExecutionError(
-                        "translation_output_range must provide at least three columns "
-                        "(translation, process explanation, reference pairs) per source column."
-                    )
-                raise ToolExecutionError(
-                    "translation_output_range must provide at least one translation column per source column."
-                )
-            per_column_width = out_cols // source_cols
+            per_column_width = math.ceil(out_cols / source_cols)
             if per_column_width < min_required_width:
                 per_column_width = min_required_width
             adjusted_total_cols = per_column_width * source_cols
@@ -1212,10 +1208,8 @@ def translate_range_contents(
                 output_range = adjusted_range
                 out_rows, out_cols = source_rows, adjusted_total_cols
             translation_block_width = out_cols // source_cols
-            if include_context_columns and translation_block_width < 3:
-                raise ToolExecutionError(
-                    "translation_output_range must provide at least three columns (translation, explanation, references) per source column."
-                )
+            if include_context_columns and translation_block_width < min_required_width:
+                translation_block_width = min_required_width
             raw_output = actions.read_range(output_range, output_sheet)
             try:
                 output_matrix = _reshape_to_dimensions(raw_output, out_rows, out_cols)
@@ -1367,17 +1361,17 @@ def translate_range_contents(
         prompt_parts: List[str]
         if include_context_columns:
             prompt_parts = [
-                "You are given Japanese source sentences along with supporting material.\n",
+                "You are given Japanese source sentences together with extracted reference sentence pairs.\n",
                 "Translate each sentence into natural English while keeping the original order and translating all content; never leave Japanese text untranslated.\n",
-                "Use the supporting expressions only when they reinforce the same facts or terminology. Do not add new facts or entities, and do not change the subject stated in the Japanese sentence.\n",
-                "Ignore bibliographies, reference lists, document metadata, and any material that does not convey the core meaning of the source sentences; rely on them only to confirm terminology.\n",
+                "Use only the provided reference_pairs as supporting evidence. Do not invent information, and do not rely on any material outside these pairs.\n",
+                "Ignore bibliographies, reference lists, document metadata, and any material that does not convey the core meaning of the source sentences.\n",
                 "Return a JSON array. Each element must contain exactly these keys:\n",
                 "- \"translated_text\": the English translation.\n",
                 "- \"process_notes_jp\": 2-6 Japanese sentences summarizing key translation decisions and terminology choices. Use natural Japanese.\n",
                 "- \"reference_pairs\": an array of objects `{ \"source_sentence\": \"...\", \"target_sentence\": \"...\" }` listing the reference sentence pairs you actually relied on (use an empty array when none are available).\n",
                 "Do not include markup, comments, or extra keys. The output must be valid JSON only.\n",
                 "Source sentences are provided below as a JSON array in the original order.\n",
-                "Supporting information for each sentence is listed after the source list.\n",
+                "Supporting reference_pairs for each sentence are listed after the source list.\n",
             ]
             prompt_preamble = "".join(prompt_parts)
         else:
@@ -1879,12 +1873,9 @@ def translate_range_contents(
 
                 translation_context = [
                     {
-                        "source_text": text,
-                        "key_phrases": key_phrases_per_item[index] if index < len(key_phrases_per_item) else [],
-                        "source_references": source_references_per_item[index] if index < len(source_references_per_item) else [],
                         "reference_pairs": reference_pairs_context[index] if index < len(reference_pairs_context) else [],
                     }
-                    for index, text in enumerate(current_texts)
+                    for index, _ in enumerate(current_texts)
                 ]
                 translation_context_json = json.dumps(translation_context, ensure_ascii=False)
 
@@ -1895,15 +1886,6 @@ def translate_range_contents(
                     "Supporting data (JSON):",
                     translation_context_json,
                 ]
-                if source_reference_url_entries or target_reference_url_entries:
-                    references_bundle = {
-                        "source_reference_urls": source_reference_url_entries,
-                        "target_reference_urls": target_reference_url_entries,
-                    }
-                    final_prompt_parts.extend([
-                        "Reference URLs (JSON):",
-                        json.dumps(references_bundle, ensure_ascii=False),
-                    ])
                 final_prompt = "\n".join(final_prompt_parts) + "\n"
                 _ensure_not_stopped()
                 response = browser_manager.ask(final_prompt, stop_event=stop_event)

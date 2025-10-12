@@ -44,6 +44,23 @@ PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
 # Container in this Flet build lacks min-height/constraints helpers, so keep a fixed base height.
 CHAT_PANEL_BASE_HEIGHT = 600
 
+DEFAULT_AUTOTEST_TIMEOUT_SECONDS = 180.0
+DEFAULT_AUTOTEST_SOURCE_REFERENCE_URL = (
+    "https://ralleti.sharepoint.com/:b:/s/test/ES7NUzlbE29Ng1c-8smAb-wBBUmzQGNtqenf0XcOoi5xeg?e=9IxUSS"
+)
+DEFAULT_AUTOTEST_TARGET_REFERENCE_URL = (
+    "https://ralleti.sharepoint.com/:b:/s/test/EZ5EWz_WX4tAvKZNY_unLSgBaWRXIZJxIvf2lOnN8xHXxg?e=oMnLBU"
+)
+DEFAULT_AUTOTEST_PROMPT_TEMPLATE = (
+    "A1セルを日本語参照: {source_url} 英語参照: {target_url} で英訳し、B列以降に出力してください。"
+)
+
+
+def _is_truthy_env(value: Optional[str]) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 class CopilotApp:
     def __init__(self, page: ft.Page):
         self.page = page
@@ -109,7 +126,23 @@ class CopilotApp:
         self._manual_refresh_in_progress = False
         self._workbook_refresh_button_default_text = "\u30d6\u30c3\u30af\u4e00\u89a7\u3092\u66f4\u65b0"
 
-        self._auto_test_prompt: Optional[str] = os.getenv("COPILOT_AUTOTEST_PROMPT")
+        auto_test_prompt_override = os.getenv("COPILOT_AUTOTEST_PROMPT")
+        auto_test_enabled_flag = os.getenv("COPILOT_AUTOTEST_ENABLED")
+        self._auto_test_source_url: str = os.getenv(
+            "COPILOT_AUTOTEST_SOURCE_URL", DEFAULT_AUTOTEST_SOURCE_REFERENCE_URL
+        )
+        self._auto_test_target_url: str = os.getenv(
+            "COPILOT_AUTOTEST_TARGET_URL", DEFAULT_AUTOTEST_TARGET_REFERENCE_URL
+        )
+        if auto_test_prompt_override:
+            self._auto_test_prompt = auto_test_prompt_override
+        elif _is_truthy_env(auto_test_enabled_flag):
+            self._auto_test_prompt = DEFAULT_AUTOTEST_PROMPT_TEMPLATE.format(
+                source_url=self._auto_test_source_url,
+                target_url=self._auto_test_target_url,
+            )
+        else:
+            self._auto_test_prompt = None
         self._auto_test_workbook: Optional[str] = os.getenv("COPILOT_AUTOTEST_WORKBOOK")
         self._auto_test_sheet: Optional[str] = os.getenv("COPILOT_AUTOTEST_SHEET")
         try:
@@ -120,10 +153,16 @@ class CopilotApp:
             self._auto_test_delay = 1.0
         try:
             self._auto_test_timeout: float = max(
-                0.0, float(os.getenv("COPILOT_AUTOTEST_TIMEOUT", "180"))
+                0.0,
+                float(
+                    os.getenv(
+                        "COPILOT_AUTOTEST_TIMEOUT",
+                        str(int(DEFAULT_AUTOTEST_TIMEOUT_SECONDS)),
+                    )
+                ),
             )
         except ValueError:
-            self._auto_test_timeout = 180.0
+            self._auto_test_timeout = DEFAULT_AUTOTEST_TIMEOUT_SECONDS
         self._auto_test_enabled = bool(self._auto_test_prompt)
         self._auto_test_triggered = False
         self._auto_test_completed = False
@@ -132,6 +171,15 @@ class CopilotApp:
             f"AUTOTEST: enabled={self._auto_test_enabled}, "
             f"workbook={self._auto_test_workbook or '(unchanged)'}, "
             f"sheet={self._auto_test_sheet or '(unchanged)'}",
+            flush=True,
+        )
+        print(
+            "AUTOTEST: references",
+            {
+                "source_url": self._auto_test_source_url,
+                "target_url": self._auto_test_target_url,
+                "timeout": self._auto_test_timeout,
+            },
             flush=True,
         )
 

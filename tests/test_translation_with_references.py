@@ -192,7 +192,7 @@ def test_translate_range_with_references_pipeline(workbook_path: Path):
             target_reference_urls=[
                 "https://example.com/target_reference.pdf",
             ],
-            translation_output_range="Sheet!B1:E1",
+            translation_output_range="Sheet!B1:I1",
             overwrite_source=False,
         )
     except Exception:
@@ -201,7 +201,7 @@ def test_translate_range_with_references_pipeline(workbook_path: Path):
         raise
 
     # 期待するログ／書き込みが行われたか確認
-    assert "Wrote range B1:E1" in message
+    assert "Wrote range B1:I1" in message
     assert any("キーフレーズ生成" in log for log in actions.progress_log)
     assert any("日本語参照文章抽出" in log for log in actions.progress_log)
     assert any("対になる英語参照文抽出" in log for log in actions.progress_log)
@@ -212,6 +212,10 @@ def test_translate_range_with_references_pipeline(workbook_path: Path):
     process_notes = ws["C1"].value
     pair_1 = ws["D1"].value
     pair_2 = ws["E1"].value
+    pair_3 = ws["F1"].value
+    pair_4 = ws["G1"].value
+    pair_5 = ws["H1"].value
+    pair_6 = ws["I1"].value
     wb.close()
 
     assert translation is not None and "consolidated forecast" in translation
@@ -226,3 +230,7 @@ def test_translate_range_with_references_pipeline(workbook_path: Path):
         "---\n"
         "We determined our approach while carefully assessing the trajectory of U.S. government tariff policies."
     )
+    assert pair_3 in (None, "")
+    assert pair_4 in (None, "")
+    assert pair_5 in (None, "")
+    assert pair_6 in (None, "")
