@@ -1293,15 +1293,29 @@ def translate_range_contents(
                 if not normalized_url:
                     continue
                 if _is_probable_url(normalized_url):
-                    local_copy = _resolve_local_reference_copy(normalized_url)
+                    resolved_url = normalized_url
+                    try:
+                        parsed = urlparse(normalized_url)
+                        scheme = (parsed.scheme or "").lower()
+                        has_remote_netloc = bool(parsed.netloc)
+                    except Exception:
+                        parsed = None
+                        scheme = ""
+                        has_remote_netloc = False
+
+                    local_copy: Optional[Path] = None
+                    # Only coerce to a local file when the reference is already a file-style URL
+                    # (e.g. file:// or relative paths encoded as URLs). Remote HTTP(S) URLs are
+                    # preserved exactly as entered so that the AI receives the original links.
+                    if scheme in {"file"} or not has_remote_netloc:
+                        local_copy = _resolve_local_reference_copy(normalized_url)
+
                     if local_copy is not None:
                         resolved_url = local_copy.as_uri()
                         coerced_notes.append(
                             f"{label} の値 '{original_value}' をローカルファイル '{local_copy.name}' に置き換えて利用します。"
                         )
-                    else:
-                        resolved_url = normalized_url
-                    if normalized_url not in seen_urls:
+                    if resolved_url not in seen_urls:
                         seen_urls.add(resolved_url)
                         entries.append({
                             "id": f"{label[:1].upper()}{len(entries) + 1}",
