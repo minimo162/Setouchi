@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import queue
+import platform
 import threading
 import time
 from datetime import datetime
@@ -65,6 +66,13 @@ DEFAULT_AUTOTEST_PROMPT_TEMPLATE = (
 )
 
 
+MODE_PLACEHOLDERS = {
+    CopilotMode.TRANSLATION: "翻訳（通常）用の指示を入力してください。例: B列を翻訳し、結果をC列に書き込んでください。",
+    CopilotMode.TRANSLATION_WITH_REFERENCES: "翻訳（参照あり）用の指示を入力してください。例: B列を翻訳し、指定した参照URLを使ってC:E列に翻訳・引用・解説を書き込んでください。",
+    CopilotMode.REVIEW: "翻訳チェックの指示を入力してください。例: 原文(B列)、翻訳(C列)、レビュー結果をD:F列に書き込んでください。",
+}
+
+
 def _is_truthy_env(value: Optional[str]) -> bool:
     if value is None:
         return False
@@ -97,6 +105,7 @@ class CopilotApp:
         self.mode_selector: Optional[ft.RadioGroup] = None
 
         self._primary_font_family = "Yu Gothic UI"
+        self._hint_font_family = "Yu Gothic UI"
         self.status_label: Optional[ft.Text] = None
         self.workbook_selector: Optional[ft.Dropdown] = None
         self.sheet_selector: Optional[ft.Dropdown] = None
@@ -243,7 +252,12 @@ class CopilotApp:
                 font_path,
                 font_family,
             )
+        if platform.system() == "Windows":
+            hint_family = "Yu Gothic UI"
+        else:
+            hint_family = font_family
         self._primary_font_family = font_family
+        self._hint_font_family = hint_family
         self.page.theme = ft.Theme(
             color_scheme_seed=palette["primary"],
             use_material3=True,
@@ -422,7 +436,7 @@ class CopilotApp:
         )
 
         self.user_input = ft.TextField(
-            hint_text="",
+            hint_text=self._get_input_placeholder(self.mode),
             expand=True,
             multiline=True,
             min_lines=3,
@@ -436,7 +450,7 @@ class CopilotApp:
             filled=True,
             fill_color=palette["surface_variant"],
             text_style=ft.TextStyle(color=palette["on_surface"], font_family=self._primary_font_family),
-            hint_style=ft.TextStyle(color=palette["on_surface_variant"], font_family=self._primary_font_family),
+            hint_style=ft.TextStyle(color=palette["on_surface_variant"], font_family=self._hint_font_family),
             content_padding=ft.Padding(18, 16, 18, 16),
         )
         self._apply_mode_to_input_placeholder()
@@ -862,15 +876,16 @@ class CopilotApp:
             self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
         self._update_ui()
 
+    def _get_input_placeholder(self, mode: CopilotMode) -> str:
+        try:
+            return MODE_PLACEHOLDERS[mode]
+        except KeyError:
+            return MODE_PLACEHOLDERS[CopilotMode.TRANSLATION_WITH_REFERENCES]
+
     def _apply_mode_to_input_placeholder(self):
         if not self.user_input:
             return
-        if self.mode is CopilotMode.TRANSLATION:
-            self.user_input.hint_text = "\u7ffb\u8a33\uff08\u901a\u5e38\uff09\u7528\u306e\u6307\u793a\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u4f8b: B\u5217\u3092\u7ffb\u8a33\u3057\u3001\u7d50\u679c\u3092C\u5217\u306b\u66f8\u304d\u8fbc\u3093\u3067\u304f\u3060\u3055\u3044\u3002"
-        elif self.mode is CopilotMode.TRANSLATION_WITH_REFERENCES:
-            self.user_input.hint_text = "\u7ffb\u8a33\uff08\u53c2\u7167\u3042\u308a\uff09\u7528\u306e\u6307\u793a\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u4f8b: B\u5217\u3092\u7ffb\u8a33\u3057\u3001\u6307\u5b9a\u3057\u305f\u53c2\u7167URL\u3092\u4f7f\u3063\u3066C:E\u5217\u306b\u7ffb\u8a33\u30fb\u5f15\u7528\u30fb\u89e3\u8aac\u3092\u66f8\u304d\u8fbc\u3093\u3067\u304f\u3060\u3055\u3044\u3002"
-        else:
-            self.user_input.hint_text = "\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af\u306e\u6307\u793a\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u4f8b: \u539f\u6587(B\u5217)\u3001\u7ffb\u8a33(C\u5217)\u3001\u30ec\u30d3\u30e5\u30fc\u7d50\u679c\u3092D:F\u5217\u306b\u66f8\u304d\u8fbc\u3093\u3067\u304f\u3060\u3055\u3044\u3002"
+        self.user_input.hint_text = self._get_input_placeholder(self.mode)
 
     def _on_mode_change(self, e: Optional[ft.ControlEvent]):
         control = getattr(e, "control", None) if e else None
