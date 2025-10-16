@@ -70,7 +70,7 @@ The translation tools rely on a shared `BrowserCopilotManager` instance to submi
      - Normalizes entries by stripping quotes, resolving local file paths, and deduplicating. Invalid tokens generate warnings surfaced to the user.  
      - Reference directories are looked up in `_REFERENCE_FALLBACK_ROOTS`, which include the current working directory, the user’s Downloads folder, and any extra directories supplied through `COPILOT_REFERENCE_DIRS`.
   2. **Source sentence extraction**  
-     - When references are available, constructs a multi-step prompt asking Copilot to locate up to ten quotations per `context_id` that match the source Japanese sentence. The request now includes automatically generated keyword hints and requires each quotation to contain at least one of them. Non-body content (navigation, references) is filtered out, and any returned sentences that fail a token-overlap check versus the source are discarded (falling back to empty arrays when no close match exists).
+     - When references are available, sends a fully Japanese instruction that asks Copilot to collect up to ten quotations per `context_id`, emphasizing variety while staying on the same topic. Non-body content (navigation, references) is still excluded, and the prompt itself guides the model to avoid unrelated passages without post-filtering.
   3. **Target pair extraction**  
      - Using the extracted Japanese sentences and the target-language URLs, requests aligned sentence pairs. Each pair must reuse the exact wording from the reference documents.
   4. **Translation prompt**  

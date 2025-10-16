@@ -318,89 +318,6 @@ def _normalize_for_match(text: str) -> str:
 
 
 
-_REFERENCE_KEYWORD_PATTERN = re.compile(r"[A-Za-z0-9\u3040-\u30FF\u3400-\u9FFF\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A\u30FC]{2,}")
-_REFERENCE_KEYWORD_PARTICLE_SPLIT = re.compile(r"[のをにへでがとや及び並びにまたはならびにはもよりまでから〜～\-・/]")
-_MIN_REFERENCE_OVERLAP = 0.30
-_FALLBACK_REFERENCE_OVERLAP = 0.18
-
-
-def _tokenize_reference_text(text: str) -> List[str]:
-    if not isinstance(text, str):
-        return []
-    tokens: List[str] = []
-    for match in _REFERENCE_KEYWORD_PATTERN.finditer(text):
-        candidate = match.group().strip("・ー")
-        if not candidate or len(candidate) < 2:
-            continue
-        tokens.append(candidate)
-    return tokens
-
-
-def _build_reference_token_set(text: str) -> Set[str]:
-    token_set: Set[str] = set()
-    for token in _tokenize_reference_text(text):
-        lowered = token.lower()
-        token_set.add(token)
-        token_set.add(lowered)
-    return token_set
-
-
-def _expand_reference_keyword(keyword: str) -> List[str]:
-    variants: List[str] = []
-    if not keyword:
-        return variants
-    variants.append(keyword)
-    fragments = [frag for frag in _REFERENCE_KEYWORD_PARTICLE_SPLIT.split(keyword) if len(frag) >= 2]
-    for fragment in fragments:
-        if fragment not in variants:
-            variants.append(fragment)
-    if len(keyword) >= 4:
-        for window in range(len(keyword) - 3):
-            slice_candidate = keyword[window:window + 4]
-            if len(slice_candidate) >= 4 and slice_candidate not in variants:
-                variants.append(slice_candidate)
-    return variants
-
-
-def _select_reference_keywords(text: str, max_keywords: int = 8) -> List[str]:
-    tokens = _tokenize_reference_text(text)
-    deduped: List[str] = []
-    seen: Set[str] = set()
-    for token in tokens:
-        if token in seen:
-            continue
-        seen.add(token)
-        deduped.append(token)
-    scored: List[Tuple[float, int, str]] = []
-    for index, token in enumerate(deduped):
-        score = float(len(token))
-        if re.search(r"[A-Za-z]", token):
-            score += 0.5
-        if re.search(r"[0-9０-９]", token):
-            score += 0.75
-        if re.search(r"[\u4E00-\u9FFF]", token):
-            score += 1.5
-        if "予想" in token or "業績" in token or "公表" in token or "算定" in token:
-            score += 1.2
-        scored.append((score, index, token))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    selected: List[str] = []
-    for _, _, token in scored:
-        selected.append(token)
-        if len(selected) >= max_keywords:
-            break
-    return selected
-
-
-def _reference_keyword_variants(keywords: List[str]) -> List[str]:
-    variants: List[str] = []
-    for keyword in keywords:
-        for variant in _expand_reference_keyword(keyword):
-            if variant and variant not in variants:
-                variants.append(variant)
-    return variants
-
-
 def _split_sheet_and_range(range_ref: str, default_sheet: Optional[str]) -> Tuple[Optional[str], str]:
     cleaned = (range_ref or "").strip()
     if not cleaned:
@@ -1521,25 +1438,23 @@ def translate_range_contents(
         prompt_parts: List[str]
         if include_context_columns:
             prompt_parts = [
-                "You are given Japanese source sentences together with extracted reference sentence pairs.\n",
-                "Translate each sentence into natural English while keeping the original order and translating all content; never leave Japanese text untranslated.\n",
-                "Use the provided reference_pairs as your primary guidance for terminology, phrasing, and tone. When a reference sentence covers the same idea, borrow its wording as long as it fits the source meaning, and keep terminology choices aligned with it.\n",
-                "You may adjust grammar to read naturally, but do not introduce new facts or supporting sentences that are not grounded in the source or these reference_pairs. Always check the references first, and only fall back to source-driven translation when no relevant reference is available.\n",
-                "Ignore bibliographies, reference lists, document metadata, and any material that does not convey the core meaning of the source sentences.\n",
-                "Return a JSON array. Each element must contain exactly these keys:\n",
-                "- \"translated_text\": the English translation.\n",
-                "- \"process_notes_jp\": 2-6 Japanese sentences summarizing key translation decisions, terminology choices, and how the reference_pairs informed the output. Use natural Japanese.\n",
-                "- \"reference_pairs\": an array of objects `{ \"source_sentence\": \"...\", \"target_sentence\": \"...\" }` listing the reference sentence pairs you actually relied on (use an empty array when none are available).\n",
-                "Do not include markup, comments, or extra keys. The output must be valid JSON only.\n",
-                "Source sentences are provided below as a JSON array in the original order.\n",
-                "Supporting reference_pairs for each sentence are listed after the source list.\n",
+                f"あなたは日本語原文と参照対訳ペアを受け取り、{target_language} への翻訳を生成するアシスタントです。\n",
+                "各行の日本語原文を入力順のまま漏れなく翻訳し、未訳部分を残さないでください。\n",
+                "参照ペアは訳語選定の主要な根拠として活用し、同じ概念を扱っていれば語彙や表現を可能な限り合わせてください。\n",
+                f"自然な {target_language} の文章になるよう文法を整えて構いませんが、原文と参照ペアに含まれない情報は追加しないでください。\n",
+                "出力は JSON 配列のみです。各要素には次のキーを必ず含めてください。\n",
+                f"- \"translated_text\": {target_language} での翻訳文。\n",
+                "- \"process_notes_jp\": 日本語で 2〜6 文の翻訳メモ。訳語の根拠や参照ペアの使い方を簡潔に記述してください。\n",
+                "- \"reference_pairs\": 実際に参考にしたペアの配列。利用しなかった場合は空配列を返してください。\n",
+                "余分なコメントやマークダウンを付けず、純粋な JSON だけを返してください。\n",
+                "以下に日本語原文の配列、続いて参照ペアの配列を示します。\n",
             ]
             prompt_preamble = "".join(prompt_parts)
         else:
             prompt_preamble = (
-                "Translate each Japanese entry below into English while preserving order and meaning.\n"
-                "Return a JSON array of strings matching the input order. Each element must be the natural English translation only; no explanations, quotes, or additional keys.\n"
-                "Output must be pure JSON with no extra text before or after the array.\n"
+                f"以下の日本語テキストを {target_language} に翻訳してください。\n"
+                "入力順を維持し、すべての文を翻訳してください。\n"
+                "出力は翻訳文のみを要素とする JSON 配列とし、説明やコメントは含めないでください。\n"
             )
         if references_requested or use_references:
             rows_per_batch = 1
@@ -1725,17 +1640,6 @@ def translate_range_contents(
             if not current_texts:
                 return []
 
-            source_token_sets: List[Set[str]] = []
-            keyword_hints_per_item: List[List[str]] = []
-            keyword_variants_per_item: List[List[str]] = []
-            for source_text in current_texts:
-                normalized_source_text = source_text if isinstance(source_text, str) else ""
-                token_set = _build_reference_token_set(normalized_source_text)
-                source_token_sets.append(token_set)
-                hints = _select_reference_keywords(normalized_source_text, max_keywords=8)
-                keyword_hints_per_item.append(hints)
-                keyword_variants_per_item.append(_reference_keyword_variants(hints))
-
             items_payload: List[Dict[str, Any]] = []
             for idx, source_text in enumerate(current_texts):
                 normalized_source = source_text if isinstance(source_text, str) else ""
@@ -1752,57 +1656,28 @@ def translate_range_contents(
             ]
             source_reference_urls_json = json.dumps(source_reference_urls_payload, ensure_ascii=False)
 
-            keyword_hint_lines: List[str] = []
-            for idx, hints in enumerate(keyword_hints_per_item):
-                if not hints:
-                    continue
-                hint_preview = ", ".join(hints[:5])
-                keyword_hint_lines.append(f"- context_id {idx}: {hint_preview}")
-
             source_sentence_prompt_sections: List[str] = [
-                "タスク: 以下の日本語原文 (source_text) を読み、論点が一致する参照資料本文の文を抽出してください。",
+                "タスク: 以下の日本語原文 (source_text) を読み、意味・論点が一致する参照資料本文の文を抽出してください。",
                 "",
                 "進め方:",
-                "- context_id ごとに固有名詞・数値・専門用語などを拾い、指定された参照URLの本文内で該当箇所を検索する。",
-                "- 探索対象は提供された参照URL群に限定し、見出しや段落を順番に確認して最も関連度の高い文を優先的に抽出する。",
-                "- 1つの context_id につき最大10文まで。意味が異なる部分は文単位で分割し、原文と意味が合致する短い引用単位で返す。",
-                "- 引用する文は参照資料に実際に存在する文字列をそのまま用い、書き換え・要約・翻訳をしない。句読点や記号も原文どおりに残す。",
-                "- 文中のURLや脚注番号 (例: [1]) などの付加情報は除外し、本文のみを返す。",
-                "- 参照資料一覧や書誌情報、ヘッダー/フッター、サイトナビゲーションなど本文以外は抽出しない。",
-                "- `source_reference_urls(JSON)` が与えられる場合は、そのURL内だけを閲覧し、外部検索や別ページへの移動は行わない。",
-                "- 該当文が見つからない場合は空配列 [] を返し、推測や生成文は含めない。",
+                "- context_id ごとに固有名詞・数値・年月・施策名などを手がかりに、指定された参照URLの本文から同じ話題を扱う段落を探してください。",
+                "- 引用候補が複数ある場合は、意味が近いものを優先しつつ表現が異なる文も最大10文まで集め、多様な表現で原文を支援してください。",
+                "- 引用する文は参照資料に記載された文字列をそのまま用い、句読点や記号も改変しないでください。要約・意訳・翻訳は行わないこと。",
+                "- 文中のURLや脚注番号 (例: [1]) などの付加情報は除外し、本文のみを返してください。",
+                "- 参照資料一覧、ヘッダー/フッター、目次など本文以外の要素は抽出しないでください。",
+                "- `source_reference_urls(JSON)` が与えられる場合は、そのURLの範囲のみを閲覧し、外部検索や別ページへの移動は行わないでください。",
+                "- 適切な文が見つからない場合は空配列 [] を返し、推測による文章は作成しないでください。",
+                "",
+                "出力フォーマット:",
+                '- JSON配列のみを返してください。各要素は {"source_sentences": [...]} 形式で、context_id の順と揃えてください。',
+                '- `source_sentences` には参照資料からの引用文のみを含め、原文を翻訳した文や要約は入れないでください。',
+                "",
+                "言語ポリシー:",
+                "- 思考の説明を含めすべて日本語で記述し、余分なコメントを追加しないでください。",
+                "",
+                "items(JSON):",
+                items_json,
             ]
-            if keyword_hint_lines:
-                source_sentence_prompt_sections.extend(
-                    [
-                        "",
-                        "キーフレーズ条件:",
-                        "- context_id ごとのキーフレーズ一覧を下記に示す。各引用文は該当 context_id に列挙された語句のうち最低1語を必ず含めること。該当語が見つからない場合は空配列 [] を返す。",
-                    ]
-                    + keyword_hint_lines
-                )
-            else:
-                source_sentence_prompt_sections.extend(
-                    [
-                        "",
-                        "キーフレーズ条件:",
-                        "- source_text に含まれる重要語句 (固有名詞・機能名・数値など) を必ず含む引用文だけを返し、該当文が無ければ空配列 [] を返す。",
-                    ]
-                )
-            source_sentence_prompt_sections.extend(
-                [
-                    "",
-                    "出力フォーマット:",
-                    "- JSON配列のみを返す。各要素は {\"source_sentences\": [...]} 形式で、context_id の順序と揃える。",
-                    "- `source_sentences` は参照資料からの引用文の配列であり、原文を翻訳した文を入れない。",
-                    "",
-                    "言語ポリシー:",
-                    "- ツール実行中の説明や思考 (AI thought など) も含め、すべて日本語で記述する。",
-                    "",
-                    "items(JSON):",
-                    items_json,
-                ]
-            )
             if source_reference_urls_payload:
                 source_sentence_prompt_sections.extend(
                     [
@@ -1841,6 +1716,7 @@ def translate_range_contents(
                 cleaned_sentences: List[str] = []
                 original_text = current_texts[item_index] if item_index < len(current_texts) else ""
                 original_normalized = _normalize_for_comparison(original_text) if isinstance(original_text, str) else ""
+
                 for sentence in raw_sentences:
                     if not isinstance(sentence, str):
                         continue
@@ -1858,40 +1734,8 @@ def translate_range_contents(
                     cleaned_sentences.append(stripped)
                     if len(cleaned_sentences) >= 10:
                         break
-                if cleaned_sentences:
-                    keyword_variants = keyword_variants_per_item[item_index] if item_index < len(keyword_variants_per_item) else []
-                    source_tokens = source_token_sets[item_index] if item_index < len(source_token_sets) else set()
-                    filtered_sentences: List[str] = []
-                    scored_candidates: List[Tuple[float, str]] = []
-                    for candidate in cleaned_sentences:
-                        has_keyword = True
-                        if keyword_variants:
-                            has_keyword = any(variant in candidate for variant in keyword_variants)
-                        if not has_keyword:
-                            continue
-                        overlap = 1.0
-                        if source_tokens:
-                            candidate_tokens = _build_reference_token_set(candidate)
-                            common_tokens = candidate_tokens & source_tokens
-                            overlap = len(common_tokens) / max(len(source_tokens), 1)
-                        if overlap >= _MIN_REFERENCE_OVERLAP:
-                            filtered_sentences.append(candidate)
-                        scored_candidates.append((overlap, candidate))
-                    if not filtered_sentences and scored_candidates:
-                        best_overlap, best_candidate = max(scored_candidates, key=lambda item: item[0])
-                        if best_overlap >= _FALLBACK_REFERENCE_OVERLAP:
-                            filtered_sentences = [best_candidate]
-                    if filtered_sentences:
-                        cleaned_sentences = filtered_sentences[:10]
-                    else:
-                        cleaned_sentences = []
-                        if keyword_variants or source_tokens:
-                            reference_warning_notes.append(
-                                f"context_id {item_index}: 参照資料に十分一致する引用文が見つからなかったため空配列を返します。"
-                            )
                 cleaned_results[item_index] = cleaned_sentences
             return cleaned_results
-
         def _pair_target_sentences_batch(
             source_references_per_item: List[List[str]],
             current_texts: List[str],
@@ -1919,23 +1763,20 @@ def translate_range_contents(
             target_reference_urls_json = json.dumps(target_reference_urls_payload, ensure_ascii=False)
 
             extraction_prompt_sections: List[str] = [
-                f"タスク: 以下の日本語引用文 (Step 2) と原文 (source_text) を読み、意味が対応する {target_language} の参照文を target_reference_urls から抽出して対訳ペアを作成してください。",
+                f"タスク: 以下の source_sentences (日本語引用文) と原文 (source_text) を照合し、意味が一致する {target_language} の参照文を target_reference_urls から抽出して対訳ペアを作成してください。",
                 "",
                 "進め方:",
-                f"- context_id ごとに `source_sentences` の各文の主題・固有名詞・数値・文脈を手掛かりに、指定された target_reference_urls の本文で対応する {target_language} 文を探す。",
-                "- 参照対象は提供済みの URL に限定し、見出しや段落を順番に確認して最も関連度の高い文を優先的に抽出する。外部検索や別ページへの移動は行わない。",
-                "- 1つの `source_sentence` につき最大1文を選び、必要に応じて段落を文単位に分割して最も意味が合致する部分のみを引用する。",
-                "- 引用する文は参照資料に記載された文字列をそのまま用い、意訳・要約・翻訳・語順変更を行わない。句読点や記号も原文どおりに保持する。",
-                "- 引用文に含まれる脚注番号やURLなどの付加情報は除去し、本文のみを残す。",
-                "- 対応する文が見つからない場合はペアを生成せず、context_id ごとに {\"pairs\": []} を返す。推測で文を作成しない。",
-                f"- `source_sentences` の順序を保ち、対応した {target_language} 文のみを返す。",
-                "",
+                f"- context_id ごとに `source_sentences` の各文を読み、固有名詞・数値・文脈を手がかりに指定された target_reference_urls の本文から対応する {target_language} 文を探してください。",
+                "- 引用候補が複数ある場合は意味が近いものを優先しつつ、表現が異なる文も最大10件まで収集し、多様な言い回しを確保してください。",
+                "- 引用する文は参照資料に記載された文字列をそのまま使用し、意訳・要約・語順変更は行わないでください。句読点や記号も原文どおり保持してください。",
+                "- 文中の脚注番号やURLなど本文以外の付加情報は削除してください。",
+                '- 対応する文が見つからない場合はその `source_sentence` に対するペアを生成せず、context_id ごとに {"pairs": []} を返してください。推測や生成は行わないでください。',
+                '- JSON配列のみを返し、各要素は {"pairs": [{"source_sentence": "...", "target_sentence": "..."}, ...]} 形式とします。',
+                f'- {target_language} で適合する文が見つからない場合は {{"pairs": []}} を返してください。',
                 "出力フォーマット:",
-                "- JSON配列のみを返す。各要素は {\"pairs\": [{\"source_sentence\": \"...\", \"target_sentence\": \"...\"}, ...]} 形式とし、context_id の順序を守る。",
-                f"- 一致する {target_language} 文が見つからない場合は {{\"pairs\": []}} を返す。",
                 "",
                 "言語ポリシー:",
-                "- ツール実行中の説明や思考 (AI thought など) も含め、すべて日本語で記述する。",
+                "- 思考の説明を含めすべて日本語で記述し、余分なコメントを追加しないでください。",
                 "",
                 "items(JSON):",
                 extraction_items_json,
