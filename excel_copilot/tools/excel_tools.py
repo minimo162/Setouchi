@@ -318,6 +318,89 @@ def _normalize_for_match(text: str) -> str:
 
 
 
+_REFERENCE_KEYWORD_PATTERN = re.compile(r"[A-Za-z0-9\u3040-\u30FF\u3400-\u9FFF\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A\u30FC]{2,}")
+_REFERENCE_KEYWORD_PARTICLE_SPLIT = re.compile(r"[のをにへでがとや及び並びにまたはならびにはもよりまでから〜～\-・/]")
+_MIN_REFERENCE_OVERLAP = 0.30
+_FALLBACK_REFERENCE_OVERLAP = 0.18
+
+
+def _tokenize_reference_text(text: str) -> List[str]:
+    if not isinstance(text, str):
+        return []
+    tokens: List[str] = []
+    for match in _REFERENCE_KEYWORD_PATTERN.finditer(text):
+        candidate = match.group().strip("・ー")
+        if not candidate or len(candidate) < 2:
+            continue
+        tokens.append(candidate)
+    return tokens
+
+
+def _build_reference_token_set(text: str) -> Set[str]:
+    token_set: Set[str] = set()
+    for token in _tokenize_reference_text(text):
+        lowered = token.lower()
+        token_set.add(token)
+        token_set.add(lowered)
+    return token_set
+
+
+def _expand_reference_keyword(keyword: str) -> List[str]:
+    variants: List[str] = []
+    if not keyword:
+        return variants
+    variants.append(keyword)
+    fragments = [frag for frag in _REFERENCE_KEYWORD_PARTICLE_SPLIT.split(keyword) if len(frag) >= 2]
+    for fragment in fragments:
+        if fragment not in variants:
+            variants.append(fragment)
+    if len(keyword) >= 4:
+        for window in range(len(keyword) - 3):
+            slice_candidate = keyword[window:window + 4]
+            if len(slice_candidate) >= 4 and slice_candidate not in variants:
+                variants.append(slice_candidate)
+    return variants
+
+
+def _select_reference_keywords(text: str, max_keywords: int = 8) -> List[str]:
+    tokens = _tokenize_reference_text(text)
+    deduped: List[str] = []
+    seen: Set[str] = set()
+    for token in tokens:
+        if token in seen:
+            continue
+        seen.add(token)
+        deduped.append(token)
+    scored: List[Tuple[float, int, str]] = []
+    for index, token in enumerate(deduped):
+        score = float(len(token))
+        if re.search(r"[A-Za-z]", token):
+            score += 0.5
+        if re.search(r"[0-9０-９]", token):
+            score += 0.75
+        if re.search(r"[\u4E00-\u9FFF]", token):
+            score += 1.5
+        if "予想" in token or "業績" in token or "公表" in token or "算定" in token:
+            score += 1.2
+        scored.append((score, index, token))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    selected: List[str] = []
+    for _, _, token in scored:
+        selected.append(token)
+        if len(selected) >= max_keywords:
+            break
+    return selected
+
+
+def _reference_keyword_variants(keywords: List[str]) -> List[str]:
+    variants: List[str] = []
+    for keyword in keywords:
+        for variant in _expand_reference_keyword(keyword):
+            if variant and variant not in variants:
+                variants.append(variant)
+    return variants
+
+
 def _split_sheet_and_range(range_ref: str, default_sheet: Optional[str]) -> Tuple[Optional[str], str]:
     cleaned = (range_ref or "").strip()
     if not cleaned:
@@ -1642,6 +1725,17 @@ def translate_range_contents(
             if not current_texts:
                 return []
 
+            source_token_sets: List[Set[str]] = []
+            keyword_hints_per_item: List[List[str]] = []
+            keyword_variants_per_item: List[List[str]] = []
+            for source_text in current_texts:
+                normalized_source_text = source_text if isinstance(source_text, str) else ""
+                token_set = _build_reference_token_set(normalized_source_text)
+                source_token_sets.append(token_set)
+                hints = _select_reference_keywords(normalized_source_text, max_keywords=8)
+                keyword_hints_per_item.append(hints)
+                keyword_variants_per_item.append(_reference_keyword_variants(hints))
+
             items_payload: List[Dict[str, Any]] = []
             for idx, source_text in enumerate(current_texts):
                 normalized_source = source_text if isinstance(source_text, str) else ""
@@ -1658,11 +1752,18 @@ def translate_range_contents(
             ]
             source_reference_urls_json = json.dumps(source_reference_urls_payload, ensure_ascii=False)
 
+            keyword_hint_lines: List[str] = []
+            for idx, hints in enumerate(keyword_hints_per_item):
+                if not hints:
+                    continue
+                hint_preview = ", ".join(hints[:5])
+                keyword_hint_lines.append(f"- context_id {idx}: {hint_preview}")
+
             source_sentence_prompt_sections: List[str] = [
-                "タスク: 以下の入力を読み、翻訳対象の日本語原文 (source_text) と論点が一致する参照資料本文の文を抽出してください。",
+                "タスク: 以下の日本語原文 (source_text) を読み、論点が一致する参照資料本文の文を抽出してください。",
                 "",
                 "進め方:",
-                "- context_id ごとに固有名詞・数値・専門用語などを拾い、対応する参照URLの本文内で該当箇所を検索する。",
+                "- context_id ごとに固有名詞・数値・専門用語などを拾い、指定された参照URLの本文内で該当箇所を検索する。",
                 "- 探索対象は提供された参照URL群に限定し、見出しや段落を順番に確認して最も関連度の高い文を優先的に抽出する。",
                 "- 1つの context_id につき最大10文まで。意味が異なる部分は文単位で分割し、原文と意味が合致する短い引用単位で返す。",
                 "- 引用する文は参照資料に実際に存在する文字列をそのまま用い、書き換え・要約・翻訳をしない。句読点や記号も原文どおりに残す。",
@@ -1670,17 +1771,38 @@ def translate_range_contents(
                 "- 参照資料一覧や書誌情報、ヘッダー/フッター、サイトナビゲーションなど本文以外は抽出しない。",
                 "- `source_reference_urls(JSON)` が与えられる場合は、そのURL内だけを閲覧し、外部検索や別ページへの移動は行わない。",
                 "- 該当文が見つからない場合は空配列 [] を返し、推測や生成文は含めない。",
-                "",
-                "出力フォーマット:",
-                "- JSON配列のみを返す。各要素は {\"source_sentences\": [...]} 形式で、context_id の順序と揃える。",
-                "- `source_sentences` は参照資料からの引用文の配列であり、原文を翻訳した文を入れない。",
-                "",
-                "言語ポリシー:",
-                "- ツール実行中の説明や思考 (AI thought など) も含め、すべて日本語で記述する。",
-                "",
-                "items(JSON):",
-                items_json,
             ]
+            if keyword_hint_lines:
+                source_sentence_prompt_sections.extend(
+                    [
+                        "",
+                        "キーフレーズ条件:",
+                        "- context_id ごとのキーフレーズ一覧を下記に示す。各引用文は該当 context_id に列挙された語句のうち最低1語を必ず含めること。該当語が見つからない場合は空配列 [] を返す。",
+                    ]
+                    + keyword_hint_lines
+                )
+            else:
+                source_sentence_prompt_sections.extend(
+                    [
+                        "",
+                        "キーフレーズ条件:",
+                        "- source_text に含まれる重要語句 (固有名詞・機能名・数値など) を必ず含む引用文だけを返し、該当文が無ければ空配列 [] を返す。",
+                    ]
+                )
+            source_sentence_prompt_sections.extend(
+                [
+                    "",
+                    "出力フォーマット:",
+                    "- JSON配列のみを返す。各要素は {\"source_sentences\": [...]} 形式で、context_id の順序と揃える。",
+                    "- `source_sentences` は参照資料からの引用文の配列であり、原文を翻訳した文を入れない。",
+                    "",
+                    "言語ポリシー:",
+                    "- ツール実行中の説明や思考 (AI thought など) も含め、すべて日本語で記述する。",
+                    "",
+                    "items(JSON):",
+                    items_json,
+                ]
+            )
             if source_reference_urls_payload:
                 source_sentence_prompt_sections.extend(
                     [
@@ -1719,7 +1841,6 @@ def translate_range_contents(
                 cleaned_sentences: List[str] = []
                 original_text = current_texts[item_index] if item_index < len(current_texts) else ""
                 original_normalized = _normalize_for_comparison(original_text) if isinstance(original_text, str) else ""
-
                 for sentence in raw_sentences:
                     if not isinstance(sentence, str):
                         continue
@@ -1737,6 +1858,37 @@ def translate_range_contents(
                     cleaned_sentences.append(stripped)
                     if len(cleaned_sentences) >= 10:
                         break
+                if cleaned_sentences:
+                    keyword_variants = keyword_variants_per_item[item_index] if item_index < len(keyword_variants_per_item) else []
+                    source_tokens = source_token_sets[item_index] if item_index < len(source_token_sets) else set()
+                    filtered_sentences: List[str] = []
+                    scored_candidates: List[Tuple[float, str]] = []
+                    for candidate in cleaned_sentences:
+                        has_keyword = True
+                        if keyword_variants:
+                            has_keyword = any(variant in candidate for variant in keyword_variants)
+                        if not has_keyword:
+                            continue
+                        overlap = 1.0
+                        if source_tokens:
+                            candidate_tokens = _build_reference_token_set(candidate)
+                            common_tokens = candidate_tokens & source_tokens
+                            overlap = len(common_tokens) / max(len(source_tokens), 1)
+                        if overlap >= _MIN_REFERENCE_OVERLAP:
+                            filtered_sentences.append(candidate)
+                        scored_candidates.append((overlap, candidate))
+                    if not filtered_sentences and scored_candidates:
+                        best_overlap, best_candidate = max(scored_candidates, key=lambda item: item[0])
+                        if best_overlap >= _FALLBACK_REFERENCE_OVERLAP:
+                            filtered_sentences = [best_candidate]
+                    if filtered_sentences:
+                        cleaned_sentences = filtered_sentences[:10]
+                    else:
+                        cleaned_sentences = []
+                        if keyword_variants or source_tokens:
+                            reference_warning_notes.append(
+                                f"context_id {item_index}: 参照資料に十分一致する引用文が見つからなかったため空配列を返します。"
+                            )
                 cleaned_results[item_index] = cleaned_sentences
             return cleaned_results
 
