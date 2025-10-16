@@ -1766,7 +1766,7 @@ def translate_range_contents(
 
             extraction_prompt_sections: List[str] = [
                 (
-                    f"タスク: 各 context_id について、`source_sentences` に含まれる日本語引用文と、指定された `target_reference_urls` からそのまま引用した {target_language} の文を最大5件まで対応付けてください。"
+                    f"タスク: 各 context_id について、`source_sentences` に含まれる日本語引用文と、指定された `target_reference_urls` からそのまま引用した {target_language} の文を必要なだけ対応付けてください。"
                 ),
                 "",
                 "手順:",
@@ -1886,8 +1886,6 @@ def translate_range_contents(
                             "target_sentence": target_clean,
                         }
                     )
-                    if len(cleaned_pairs) >= 5:
-                        break
                 cleaned_results[item_index] = cleaned_pairs
             return cleaned_results
 
