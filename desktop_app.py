@@ -631,7 +631,7 @@ class CopilotApp:
             composer_spacing = 12
             action_alignment = ft.alignment.center
             action_margin = ft.margin.only(top=12)
-            preferred_chat_height = 320
+            preferred_chat_height = 360
             context_alignment = ft.MainAxisAlignment.START
             main_column_spacing = 18
             list_spacing = 18
@@ -643,7 +643,7 @@ class CopilotApp:
             composer_spacing = 14
             action_alignment = ft.alignment.center_right
             action_margin = ft.margin.only(left=10)
-            preferred_chat_height = 360
+            preferred_chat_height = 420
             context_alignment = ft.MainAxisAlignment.END
             main_column_spacing = 20
             list_spacing = 20
@@ -655,7 +655,7 @@ class CopilotApp:
             composer_spacing = 16
             action_alignment = ft.alignment.center_right
             action_margin = ft.margin.only(left=10)
-            preferred_chat_height = 340
+            preferred_chat_height = 520
             context_alignment = ft.MainAxisAlignment.END
             main_column_spacing = 20
             list_spacing = 22
@@ -710,15 +710,15 @@ class CopilotApp:
                 spacing_total = max(0, main_column_spacing) * 2
                 calculated = available_height - composer_est - mode_est - spacing_total
                 if layout_key == "compact":
-                    min_chat_height = 200
-                elif layout_key == "cozy":
-                    min_chat_height = 220
-                else:
                     min_chat_height = 240
-                max_chat_height = preferred_chat_height
+                elif layout_key == "cozy":
+                    min_chat_height = 280
+                else:
+                    min_chat_height = 320
                 if calculated <= 0:
                     chat_height = min_chat_height
                 else:
+                    max_chat_height = max(preferred_chat_height, calculated)
                     chat_height = max(min_chat_height, min(max_chat_height, calculated))
             else:
                 chat_height = preferred_chat_height
