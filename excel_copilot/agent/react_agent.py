@@ -166,47 +166,48 @@ class ReActAgent:
         final_answer: Optional[str] = None
 
         colon_pattern = r"\s*[:：]"
-        final_answer_match = re.search(rf"Final Answer{colon_pattern}", response, re.IGNORECASE)
-        if final_answer_match:
-            thought_match = re.search(
-                rf"Thought{colon_pattern}",
-                response[:final_answer_match.start()],
-                re.IGNORECASE,
-            )
-            if thought_match:
-                thought = response[thought_match.end():final_answer_match.start()].strip()
-            final_answer = response[final_answer_match.end():].strip()
-            return thought, None, final_answer
-
         action_match = re.search(rf"Action{colon_pattern}", response, re.IGNORECASE)
         thought_match = re.search(rf"Thought{colon_pattern}", response, re.IGNORECASE)
-
-        if thought_match:
-            thought_end = action_match.start() if action_match else len(response)
-            thought = response[thought_match.end():thought_end].strip()
-        elif action_match:
-            # Thoughtラベルが無くActionのみのケースを許容する
-            thought = response[:action_match.start()].strip()
-        else:
-            final_answer_candidate = _interpret_completion_response(response)
-            if final_answer_candidate is not None:
-                return "", None, final_answer_candidate
-
-            preview = response.replace("\n", " ").strip()
-            print(
-                f"LLM parse error raw response: {preview[:300]}{'…' if len(preview) > 300 else ''}",
-                flush=True,
-            )
-            raise LLMResponseError("応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。")
+        final_answer_match = re.search(rf"Final Answer{colon_pattern}", response, re.IGNORECASE)
 
         if action_match:
+            if thought_match and thought_match.start() < action_match.start():
+                thought = response[thought_match.end():action_match.start()].strip()
+            elif thought_match:
+                thought = response[thought_match.end():action_match.start()].strip()
+            else:
+                thought = response[:action_match.start()].strip()
+
             action_str_raw = response[action_match.end():].strip()
             json_payload = _extract_json_payload(action_str_raw)
             if not json_payload:
-                raise LLMResponseError("Actionブロック内にJSONが見つかりませんでした。")
-            action_str = json_payload
+                raise LLMResponseError("ActionブロックからJSONが検出できませんでした。")
+            return thought, json_payload, None
 
-        return thought, action_str, final_answer
+        if final_answer_match:
+            if thought_match and thought_match.start() < final_answer_match.start():
+                thought = response[thought_match.end():final_answer_match.start()].strip()
+            elif thought_match:
+                thought = response[thought_match.end():final_answer_match.start()].strip()
+            else:
+                thought = response[:final_answer_match.start()].strip()
+            final_answer = response[final_answer_match.end():].strip()
+            return thought, None, final_answer
+
+        if thought_match:
+            thought = response[thought_match.end():].strip()
+            return thought, None, None
+
+        final_answer_candidate = _interpret_completion_response(response)
+        if final_answer_candidate is not None:
+            return "", None, final_answer_candidate
+
+        preview = response.replace("\n", " ").strip()
+        print(
+            f"LLM parse error raw response: {preview[:300]}{'…' if len(preview) > 300 else ''}",
+            flush=True,
+        )
+        raise LLMResponseError("応答解析に失敗しました。'Thought:' または 'Final Answer:' が見つかりません。")
 
     def _ensure_reference_support(self, arguments: Dict[str, Any], excel_actions: ExcelActions) -> None:
         """Ensure translate_range_with_references receives usable supporting material."""

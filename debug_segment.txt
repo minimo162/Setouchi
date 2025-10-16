@@ -1,0 +1,7 @@
+        colon_pattern = r"\s*[:�F]"
+        action_match = re.search(rf"Action{colon_pattern}", response, re.IGNORECASE)
+        thought_match = re.search(rf"Thought{colon_pattern}", response, re.IGNORECASE)
+        final_answer_match = re.search(rf"Final Answer{colon_pattern}", response, re.IGNORECASE)
+
+        if action_match:
+            if thought_match and thought_match.start() < action_match

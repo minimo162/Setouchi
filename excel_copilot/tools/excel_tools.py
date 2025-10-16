@@ -3118,7 +3118,7 @@ def check_translation_quality(
                     status_matrix[row_idx][col_idx] = "OK"
                     issue_matrix[row_idx][col_idx] = ""
                 elif status_value in revise_statuses:
-                    status_matrix[row_idx][col_idx] = "要修正"
+                    status_matrix[row_idx][col_idx] = "REVISE"
                     issue_matrix[row_idx][col_idx] = _format_issue_notes(notes_value)
                     needs_revision_count += 1
                 else:
