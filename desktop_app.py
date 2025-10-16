@@ -44,6 +44,10 @@ PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
 # Container in this Flet build lacks min-height/constraints helpers, so keep a fixed base height.
 CHAT_PANEL_BASE_HEIGHT = 600
 
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+DEFAULT_FONT_PATH = ASSETS_DIR / "fonts" / "NotoSansCJKjp-Regular.otf"
+PRIMARY_FONT_FAMILY = "NotoSansJP"
+
 DEFAULT_AUTOTEST_TIMEOUT_SECONDS = 180.0  # 3-minute auto-test timeout
 DEFAULT_AUTOTEST_SOURCE_REFERENCE_URL = (
     "https://ralleti-my.sharepoint.com/:b:/g/personal/yuukikod_ralleti_onmicrosoft_com/"
@@ -91,6 +95,7 @@ class CopilotApp:
         self.mode = CopilotMode.TRANSLATION_WITH_REFERENCES
         self.mode_selector: Optional[ft.RadioGroup] = None
 
+        self._primary_font_family = "Yu Gothic UI"
         self.status_label: Optional[ft.Text] = None
         self.workbook_selector: Optional[ft.Dropdown] = None
         self.sheet_selector: Optional[ft.Dropdown] = None
@@ -224,10 +229,19 @@ class CopilotApp:
         self.page.window.min_width = 480
         self.page.window.min_height = 520
         palette = EXPRESSIVE_PALETTE
+        font_family = PRIMARY_FONT_FAMILY
+        font_path = DEFAULT_FONT_PATH
+        if font_path.is_file():
+            existing_fonts = dict(getattr(self.page, "fonts", {}) or {})
+            existing_fonts[font_family] = str(font_path)
+            self.page.fonts = existing_fonts
+        else:
+            font_family = "Yu Gothic UI"
+        self._primary_font_family = font_family
         self.page.theme = ft.Theme(
             color_scheme_seed=palette["primary"],
             use_material3=True,
-            font_family="Yu Gothic UI",
+            font_family=font_family,
         )
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.bgcolor = palette["background"]
@@ -262,6 +276,7 @@ class CopilotApp:
             "\u521d\u671f\u5316\u4e2d...",
             size=12,
             color=palette["on_surface_variant"],
+            font_family=self._primary_font_family,
             animate_opacity=300,
             animate_scale=600,
         )
@@ -301,8 +316,8 @@ class CopilotApp:
             "focused_border_color": palette["primary"],
             "fill_color": palette["surface_variant"],
             # Slightly smaller text keeps long workbook/sheet names visible without clipping.
-            "text_style": ft.TextStyle(color=palette["on_surface"], size=12),
-            "hint_style": ft.TextStyle(color=palette["on_surface_variant"], size=12),
+            "text_style": ft.TextStyle(color=palette["on_surface"], size=12, font_family=self._primary_font_family),
+            "hint_style": ft.TextStyle(color=palette["on_surface_variant"], size=12, font_family=self._primary_font_family),
             "disabled": True,
             "filled": True,
             "suffix_icon": ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, color=palette["on_surface_variant"]),
@@ -377,9 +392,9 @@ class CopilotApp:
                     status_chip,
                     ft.Column(
                         [
-                            ft.Text("\u30d6\u30c3\u30af", size=13, color=palette["on_surface_variant"]),
+                            ft.Text("\u30d6\u30c3\u30af", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
                             self.workbook_selector_wrapper,
-                            ft.Text("\u30b7\u30fc\u30c8", size=13, color=palette["on_surface_variant"]),
+                            ft.Text("\u30b7\u30fc\u30c8", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
                             self.sheet_selector_wrapper,
                         ],
                         spacing=14,
@@ -414,8 +429,8 @@ class CopilotApp:
             selection_color=ft.Colors.with_opacity(0.3, palette["primary"]),
             filled=True,
             fill_color=palette["surface_variant"],
-            text_style=ft.TextStyle(color=palette["on_surface"]),
-            hint_style=ft.TextStyle(color=palette["on_surface_variant"]),
+            text_style=ft.TextStyle(color=palette["on_surface"], font_family=self._primary_font_family),
+            hint_style=ft.TextStyle(color=palette["on_surface_variant"], font_family=self._primary_font_family),
             content_padding=ft.Padding(18, 16, 18, 16),
         )
         self._apply_mode_to_input_placeholder()
@@ -779,6 +794,7 @@ class CopilotApp:
                 size=14,
                 weight=ft.FontWeight.BOLD,
                 color=palette["on_surface"],
+                font_family=self._primary_font_family,
             )
             card_body = ft.Container(
                 bgcolor=palette["surface"],
