@@ -1456,7 +1456,7 @@ class BrowserCopilotManager:
             # 新しいコピーボタン（＝ユーザー入力・応答）が出現するのを待つ
             print("Copilotの応答を待っています...")
             new_copy_button_locator = self.page.locator(copy_button_selector).nth(initial_copy_button_count)
-            deadline = time.monotonic() + 180
+            deadline = time.monotonic() + 300
             while True:
                 try:
                     new_copy_button_locator.wait_for(state="visible", timeout=1000)
