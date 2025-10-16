@@ -5,7 +5,7 @@ old = """            extraction_prompt_sections: List[str] = [
                 f"以下の日本語引用文 (Step 2) と原文 (source_text) に意味が対応する {target_language} 参照文を target_reference_urls から抽出し、対訳ペアを作成してください。",
                 "",
                 "手順:",
-                "- 各 context_id について、source_sentences の各文に最も意味が近い {target_language} 文を最大6件まで抽出する。",
+                "- 各 context_id について、source_sentences の各文に最も意味が近い {target_language} 文を最大10件まで抽出する。",
                 "- 抽出する文は資料本文に実際に存在する文章をそのまま引用し、語尾・句読点・大文字小文字を保持する。",
                 "- 推測や要約を返さず、該当文がない場合は {\"pairs\": []} を返す。",
                 "- 同じ文を重複して返さない。",

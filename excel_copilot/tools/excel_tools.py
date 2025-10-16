@@ -30,7 +30,7 @@ def _review_debug(message: str) -> None:
 
 _NO_QUOTES_PLACEHOLDER = "引用なし"
 _HTML_ENTITY_PATTERN = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]{1,31}|#[0-9]{1,7}|#x[0-9A-Fa-f]{1,6});")
-DEFAULT_REFERENCE_PAIR_COLUMNS = 6
+DEFAULT_REFERENCE_PAIR_COLUMNS = 10
 _MIN_CONTEXT_BLOCK_WIDTH = 2 + DEFAULT_REFERENCE_PAIR_COLUMNS
 _REFERENCE_FALLBACK_ROOTS: List[Path] = []
 
@@ -1664,7 +1664,7 @@ def translate_range_contents(
                 "進め方:",
                 "- context_id ごとに固有名詞・数値・専門用語などを拾い、対応する参照URLの本文内で該当箇所を検索する。",
                 "- 探索対象は提供された参照URL群に限定し、見出しや段落を順番に確認して最も関連度の高い文を優先的に抽出する。",
-                "- 1つの context_id につき最大6文まで。意味が異なる部分は文単位で分割し、原文と意味が合致する短い引用単位で返す。",
+                "- 1つの context_id につき最大10文まで。意味が異なる部分は文単位で分割し、原文と意味が合致する短い引用単位で返す。",
                 "- 引用する文は参照資料に実際に存在する文字列をそのまま用い、書き換え・要約・翻訳をしない。句読点や記号も原文どおりに残す。",
                 "- 文中のURLや脚注番号 (例: [1]) などの付加情報は除外し、本文のみを返す。",
                 "- 参照資料一覧や書誌情報、ヘッダー/フッター、サイトナビゲーションなど本文以外は抽出しない。",
@@ -1735,7 +1735,7 @@ def translate_range_contents(
                     if original_normalized and candidate_normalized == original_normalized:
                         continue
                     cleaned_sentences.append(stripped)
-                    if len(cleaned_sentences) >= 6:
+                    if len(cleaned_sentences) >= 10:
                         break
                 cleaned_results[item_index] = cleaned_sentences
             return cleaned_results
@@ -1888,7 +1888,7 @@ def translate_range_contents(
                             "target_sentence": target_clean,
                         }
                     )
-                    if len(cleaned_pairs) >= 6:
+                    if len(cleaned_pairs) >= 10:
                         break
                 cleaned_results[item_index] = cleaned_pairs
             return cleaned_results
