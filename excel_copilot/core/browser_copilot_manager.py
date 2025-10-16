@@ -1,4 +1,4 @@
-# excel_copilot/core/browser_copilot_manager.py
+﻿# excel_copilot/core/browser_copilot_manager.py
 
 from playwright.sync_api import (
     sync_playwright,
@@ -1586,6 +1586,56 @@ class BrowserCopilotManager:
         self.start()
 
 
+    def reset_chat_session(self) -> bool:
+        """Copilot の新しいチャットを開始し、GPT-5 モードを再選択する。"""
+
+        if not self.page:
+            self._logger.warning("reset_chat_session: page が初期化されていないため処理をスキップします。")
+            return False
+
+        self._logger.info("Copilot の新しいチャットを開始し、GPT-5 に切り替えます。")
+
+        try:
+            self.page.get_by_test_id("newChatButton").click(timeout=5000)
+        except Exception:
+            self._logger.debug("newChatButton のクリックに失敗したためフォールバック処理を実行します。", exc_info=True)
+            try:
+                self._start_new_chat_session()
+            except Exception as fallback_error:
+                self._logger.warning("Copilot セッションのリセットに失敗しました: %s", fallback_error)
+                return False
+        else:
+            try:
+                self.page.wait_for_timeout(600)
+            except Exception:
+                time.sleep(0.6)
+
+        try:
+            gpt_button = self.page.get_by_role("button", name="GPT-5 を試す")
+            if gpt_button.count() == 0:
+                raise RuntimeError("GPT-5 ボタンが見つかりませんでした。")
+            gpt_button.first.click(timeout=5000)
+        except Exception:
+            self._logger.debug("GPT-5 ボタンのクリックに失敗したため既存の初期化処理を利用します。", exc_info=True)
+            try:
+                self._initialize_copilot_mode()
+            except Exception as init_error:
+                self._logger.warning("GPT-5 モードの再設定に失敗しました: %s", init_error)
+                return False
+        else:
+            try:
+                self.page.wait_for_timeout(500)
+            except Exception:
+                time.sleep(0.5)
+            try:
+                self._initialize_copilot_mode()
+            except Exception:
+                pass
+
+        self._chat_sessions_started = 0
+        self._logger.info("Copilot チャットのリセットが完了しました。")
+        return True
+
     def close(self):
         """ブラウザとPlaywrightセッションを安全に閉じる"""
         if self.context:
@@ -1755,3 +1805,4 @@ class BrowserCopilotManager:
         except Exception:
             rendered = str(snapshot)
         print(f"Debug: chat input snapshot ({label}): {rendered}")
+

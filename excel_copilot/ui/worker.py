@@ -134,23 +134,35 @@ class CopilotWorker:
         if not self.browser_manager:
             return True
 
-        self._emit_response(ResponseMessage(ResponseType.STATUS, "ブラウザを初期化しています..."))
+        self._emit_response(ResponseMessage(ResponseType.STATUS, "Copilot セッションをリセットしています..."))
         try:
-            self.browser_manager.restart()
+            reset_ok = self.browser_manager.reset_chat_session()
         except Exception as e:
-            error_message = f"ブラウザの再初期化に失敗しました: {e}"
+            error_message = f"Copilot セッションのリセットに失敗しました: {e}"
             print(error_message)
             traceback.print_exc()
-            try:
-                self.browser_manager.close()
-            except Exception:
-                pass
-            self.browser_manager = None
-            self.agent = None
-            self.tool_functions = []
-            self.tool_schemas = []
             self._emit_response(ResponseMessage(ResponseType.ERROR, error_message))
             return False
+
+        if not reset_ok:
+            self._emit_response(ResponseMessage(ResponseType.STATUS, "Copilot セッションのリセットに失敗したためブラウザを再初期化しています..."))
+            try:
+                self.browser_manager.restart()
+            except Exception as e:
+                error_message = f"ブラウザの再初期化に失敗しました: {e}"
+                print(error_message)
+                traceback.print_exc()
+                try:
+                    self.browser_manager.close()
+                except Exception:
+                    pass
+                self.browser_manager = None
+                self.agent = None
+                self.tool_functions = []
+                self.tool_schemas = []
+                self._emit_response(ResponseMessage(ResponseType.ERROR, error_message))
+                return False
+
 
         if self.agent:
             try:
@@ -162,7 +174,7 @@ class CopilotWorker:
             ResponseMessage(
                 ResponseType.STATUS,
                 "ブラウザの初期化が完了しました。",
-                metadata={"browser_ready": True},
+                "Copilot セッションの準備が整いました。",
             )
         )
         return True
