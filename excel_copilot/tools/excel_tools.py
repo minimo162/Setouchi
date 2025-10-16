@@ -1762,21 +1762,25 @@ def translate_range_contents(
             ]
             target_reference_urls_json = json.dumps(target_reference_urls_payload, ensure_ascii=False)
 
+
+
             extraction_prompt_sections: List[str] = [
-                f"タスク: 以下の source_sentences (日本語引用文) と原文 (source_text) を照合し、意味が一致する {target_language} の参照文を target_reference_urls から抽出して対訳ペアを作成してください。",
+                (
+                    f"タスク: 各 context_id について、`source_sentences` に含まれる日本語引用文と、指定された `target_reference_urls` からそのまま引用した {target_language} の文を最大5件まで対応付けてください。"
+                ),
                 "",
-                "進め方:",
-                f"- context_id ごとに `source_sentences` の各文を読み、固有名詞・数値・文脈を手がかりに指定された target_reference_urls の本文から対応する {target_language} 文を探してください。",
-                "- 引用候補が複数ある場合は意味が近いものを優先しつつ、表現が異なる文も最大10件まで収集し、多様な言い回しを確保してください。",
-                "- 引用する文は参照資料に記載された文字列をそのまま使用し、意訳・要約・語順変更は行わないでください。句読点や記号も原文どおり保持してください。",
-                "- 文中の脚注番号やURLなど本文以外の付加情報は削除してください。",
-                '- 対応する文が見つからない場合はその `source_sentence` に対するペアを生成せず、context_id ごとに {"pairs": []} を返してください。推測や生成は行わないでください。',
-                '- JSON配列のみを返し、各要素は {"pairs": [{"source_sentence": "...", "target_sentence": "..."}, ...]} 形式とします。',
-                f'- {target_language} で適合する文が見つからない場合は {{"pairs": []}} を返してください。',
-                "出力フォーマット:",
+                "手順:",
+                "- `context_id` ごとに順番に処理し、`source_text` は話題の把握だけに利用してください。",
+                "- `target_reference_urls` で指定されたページ内のみを探索し、ナビゲーションやヘッダー、目次など本文外の要素は無視してください。",
+                "- 文は掲載されているとおりにコピーし、翻訳・要約・言い換え・句読点や大小文字の変更は行わないでください。",
+                "- 固有名詞や数値など特徴的な語が一致する文を優先し、曖昧または一般的な一致は採用しないでください。",
+                "- 信頼できる一致が見つからない場合は、その `context_id` の `pairs` を空のままにしてください。",
                 "",
-                "言語ポリシー:",
-                "- 思考の説明を含めすべて日本語で記述し、余分なコメントを追加しないでください。",
+                "出力形式:",
+                "- 応答は `items(JSON)` と同じ長さの JSON 配列にしてください。",
+                '- 各要素は `{"pairs": [{"source_sentence": "...", "target_sentence": "..."}]}` 形式のオブジェクトにしてください。',
+                f"- `target_sentence` には参照資料からコピーした {target_language} の文を、`source_sentence` には対応する日本語引用文をそのまま記載してください。",
+                "- 適切な一致が無い場合は `pairs` を空配列にしてください。",
                 "",
                 "items(JSON):",
                 extraction_items_json,
@@ -1808,16 +1812,17 @@ def translate_range_contents(
             if extraction_items is None:
                 snippet = raw_extraction_response.strip().replace("\n", " ")
                 actions.log_progress(
-                    f"英語参照ペア応答解析失敗: {snippet[:180]}{'…' if len(snippet) > 180 else ''}"
+                    f"英語参照文ペア抽出が失敗しました: {snippet[:180]}{'...' if len(snippet) > 180 else ''}"
                 )
                 _ensure_not_stopped()
                 retry_prompt_sections = [
-                    "IMPORTANT: 回答は純粋なJSON配列のみで返してください。",
-                    "- 各要素は {\"target_sentences\": [\"...\"]} 形式に統一する。",
-                    "- 見つかった文がない場合は [] を返し、余計な文章は書かない。",
-                    "- 例: [{\"target_sentences\": [\"Sentence 1\", \"Sentence 2\"]}] または [].",
+                    "重要: 応答は JSON のみで返してください。",
+                    "- 出力は `items(JSON)` と同じ順序・件数の JSON 配列にしてください。",
+                    '- 各要素は {\"pairs\": [{\"source_sentence\": \"...\", \"target_sentence\": \"...\"}]} 形式にしてください。',
+                    "- 文は元テキストをそのまま用い、一致しない場合は `pairs` を空配列にしてください。",
+                    '- 例: [{\"pairs\": [{\"source_sentence\": \"…\", \"target_sentence\": \"…\"}]}, {\"pairs\": []}]',
                     "",
-                    f"以下の日本語引用文 (Step 2) に対応する {target_language} 参照文を抽出してください。",
+                    f"以下の日本語引用文に対応する {target_language} の参照文を再度抽出してください。",
                     "",
                     "items(JSON):",
                     extraction_items_json,
@@ -1825,21 +1830,21 @@ def translate_range_contents(
                 if target_reference_urls_payload:
                     retry_prompt_sections.extend(
                         [
-                            "",
-                            "target_reference_urls(JSON):",
+                            '',
+                            'target_reference_urls(JSON):',
                             target_reference_urls_json,
                         ]
                     )
                 retry_prompt = "\n".join(retry_prompt_sections)
                 actions.log_progress(
-                    "英語参照ペア応答がJSON形式ではなかったため、JSON限定指示で再試行します。"
+                    '英語参照文ペア抽出をJSON指定で再試行します。'
                 )
                 extraction_items, raw_extraction_response = _request_extraction(retry_prompt)
 
             if extraction_items is None:
                 snippet = raw_extraction_response.strip().replace("\n", " ")
                 raise ToolExecutionError(
-                    "Failed to parse target reference pair response as JSON: "
+                    "ターゲット参照ペアの応答をJSONとして解析できませんでした: "
                     f"{snippet[:200]}{'…' if len(snippet) > 200 else ''}"
                 )
             if not isinstance(extraction_items, list):
@@ -1881,7 +1886,7 @@ def translate_range_contents(
                             "target_sentence": target_clean,
                         }
                     )
-                    if len(cleaned_pairs) >= 10:
+                    if len(cleaned_pairs) >= 5:
                         break
                 cleaned_results[item_index] = cleaned_pairs
             return cleaned_results
