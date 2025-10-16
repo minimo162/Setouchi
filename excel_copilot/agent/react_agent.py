@@ -8,7 +8,7 @@ from typing import Generator, List, Dict, Any, Optional, Tuple, Callable, Set
 
 from excel_copilot.config import MAX_ITERATIONS, HISTORY_MAX_MESSAGES
 from excel_copilot.core.exceptions import LLMResponseError, ToolExecutionError, UserStopRequested
-from excel_copilot.agent.prompts import CopilotMode, build_system_prompt
+from excel_copilot.agent.prompts import CopilotMode, build_stage_prompt, build_system_prompt
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.core.excel_manager import ExcelManager, ExcelConnectionError
 from excel_copilot.tools.actions import ExcelActions
@@ -135,22 +135,13 @@ class ReActAgent:
         return prompt
 
     def _build_stage_instruction(self) -> Optional[str]:
-        tool_names = ", ".join([f"`{name}`" for name in self.tools.keys()]) or "the available tool"
+        tool_name_list = list(self.tools.keys())
         last_user_message = next((msg for msg in reversed(self.messages) if msg.get("role") == "user"), None)
         last_content = last_user_message.get("content", "") if last_user_message else ""
         awaiting_followup = last_content.startswith("Observation:")
         expecting_action = (not awaiting_followup) or last_content.startswith("Error:")
 
-        if expecting_action:
-            return (
-                "Respond with `Thought:` explaining your next step, then emit exactly one `Action:` that calls "
-                f"{tool_names} using JSON arguments. Do not provide `Final Answer:` yet."
-            )
-
-        return (
-            "Review the latest Observation in `Thought:`. If the task is complete, return a concise `Final Answer:`. "
-            "Otherwise, call a tool again with a fresh `Action`."
-        )
+        return build_stage_prompt(self.mode, expecting_action, tool_name_list)
 
     def _parse_llm_output(self, response: str) -> Tuple[str, Optional[str], Optional[str]]:
         """LLMの出力を Thought, Action, Final Answer に分割する。"""
