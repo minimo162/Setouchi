@@ -173,8 +173,8 @@ class CopilotWorker:
         self._emit_response(
             ResponseMessage(
                 ResponseType.STATUS,
-                "ブラウザの初期化が完了しました。",
-                "Copilot セッションの準備が整いました。",
+                "ブラウザの初期化が完了しました。\nCopilot セッションの準備が整いました。",
+                metadata={"browser_ready": True},
             )
         )
         return True
