@@ -7,6 +7,7 @@ from playwright.sync_api import (
     Playwright,
     TimeoutError as PlaywrightTimeoutError,
     Locator,
+    ElementHandle,
 )
 import json
 import logging
@@ -52,6 +53,8 @@ class BrowserCopilotManager:
         self._logger = logging.getLogger(__name__)
         self._focus_suppressed_once = False
         self._chat_sessions_started = 0
+        self._active_copilot_mode: Optional[str] = None
+        self._last_gpt_mode_confirmed_at: Optional[float] = None
 
     def __enter__(self):
         self.start()
@@ -1106,7 +1109,100 @@ class BrowserCopilotManager:
 
         return locator
 
-    def _initialize_copilot_mode(self):
+    def _is_toggle_selected(self, element: Union[Locator, ElementHandle, None]) -> bool:
+        """指定されたトグル要素がアクティブ状態かを判定する。"""
+        if element is None:
+            return False
+
+        truthy_values = {"true", "1", "pressed", "checked", "selected", "on"}
+        attribute_candidates = (
+            "aria-pressed",
+            "aria-checked",
+            "data-pressed",
+            "data-selected",
+            "data-checked",
+            "data-is-selected",
+            "data-state",
+        )
+
+        for attr in attribute_candidates:
+            try:
+                value = element.get_attribute(attr)
+            except Exception:
+                value = None
+            if value and str(value).strip().lower() in truthy_values:
+                return True
+
+        try:
+            class_attr = element.get_attribute("class") or ""
+        except Exception:
+            class_attr = ""
+        selected_markers = (
+            "is-selected",
+            "is-checked",
+            "is-active",
+            "fui-ToggleButton--checked",
+            "fui-ToggleButton--selected",
+        )
+        if any(marker in class_attr for marker in selected_markers):
+            return True
+
+        try:
+            is_pressed = element.evaluate(
+                "node => Boolean(node && (node.ariaPressed === true || node.getAttribute?.('aria-pressed') === 'true'))"
+            )
+            if is_pressed:
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    def _is_gpt5_mode_already_selected(self) -> bool:
+        """DOM を基に GPT-5 モードが既に有効かどうかを簡易判定する。"""
+        if not self.page:
+            return False
+
+        selector_candidates = [
+            "button.fui-ToggleButton:has-text('GPT-5')",
+            "button:has-text('GPT-5 で質問')",
+            "button:has-text('GPT-5 を使用')",
+            "button:has-text('Copilot GPT-5')",
+            "button[aria-label*='GPT-5']",
+        ]
+
+        for selector in selector_candidates:
+            try:
+                handle = self.page.query_selector(selector)
+            except Exception:
+                handle = None
+
+            if not handle:
+                continue
+
+            if self._is_toggle_selected(handle):
+                try:
+                    handle.dispose()
+                except Exception:
+                    pass
+                return True
+
+            try:
+                handle.dispose()
+            except Exception:
+                pass
+
+        if self._active_copilot_mode == "gpt-5":
+            try:
+                opt_in_button = self.page.query_selector("button:has-text('GPT-5 を試す')")
+            except Exception:
+                opt_in_button = None
+            if opt_in_button is None:
+                return True
+
+        return False
+
+    def _initialize_copilot_mode(self, *, force_mode_refresh: bool = False):
         """GPT-5 チャットモードを有効化し、入力欄を準備する"""
         try:
             copilot_url_patterns = [
@@ -1136,71 +1232,106 @@ class BrowserCopilotManager:
             self.page.wait_for_load_state('domcontentloaded')
             self.page.wait_for_timeout(500)
 
-            gpt5_button_factories = [
-                ("button.fui-ToggleButton:has-text('GPT-5 を試す')", lambda: self.page.locator("button.fui-ToggleButton:has-text('GPT-5 を試す')")),
-                ("button role GPT-5 を試す", lambda: self.page.get_by_role("button", name="GPT-5 を試す")),
-                ("button role GPT-5 を試す (部分一致)", lambda: self.page.get_by_role("button", name="GPT-5 を試す", exact=False)),
-                ("button role GPT-5 で質問", lambda: self.page.get_by_role("button", name="GPT-5 で質問")),
-                ("button role GPT-5 を使用", lambda: self.page.get_by_role("button", name="GPT-5 を使用")),
-                ("button role GPT-5", lambda: self.page.get_by_role("button", name="GPT-5")),
-                ("button role Copilot GPT-5", lambda: self.page.get_by_role("button", name="Copilot GPT-5")),
-                ("button role regex GPT-5", lambda: self.page.get_by_role("button", name=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
-                ("menuitem regex GPT-5", lambda: self.page.get_by_role("menuitem", name=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
-                ("button:has-text GPT-5", lambda: self.page.locator("button", has_text=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
-                ("aria-label=GPT-5 を試す", lambda: self.page.locator('[aria-label="GPT-5 を試す" i]')),
-                ("aria-label contains GPT-5", lambda: self.page.locator('[aria-label*="GPT-5"]')),
-                ("data-testid=gpt5Button", lambda: self.page.locator('[data-testid="gpt5Button"]')),
-                ("data-testid=GPT5Button", lambda: self.page.locator('[data-testid="GPT5Button"]')),
-                ("text=GPT-5 を試す", lambda: self.page.get_by_text("GPT-5 を試す", exact=False)),
-                ("text=Try GPT-5", lambda: self.page.get_by_text("Try GPT-5", exact=False)),
-            ]
+            skip_toggle = False
+            gpt5_confirmed = False
 
-            gpt5_button = None
-            try:
-                gpt5_button = self._wait_for_first_visible(
-                    "GPT-5 モード切り替えボタン",
-                    gpt5_button_factories,
-                    timeout=20000,
-                )
-            except RuntimeError as gpt5_error:
-                print("GPT-5 モードボタンが見つからなかったため、フォールバック探索を行います。")
-                print(gpt5_error)
-                fallback_factories = [
-                    ("role=button GPT-5 を試す (再探索)", lambda: self.page.get_by_role("button", name="GPT-5 を試す", exact=False)),
+            if not force_mode_refresh:
+                try:
+                    if self._is_gpt5_mode_already_selected():
+                        skip_toggle = True
+                        gpt5_confirmed = True
+                        self._logger.debug("GPT-5 モードは既にアクティブのため切り替え探索をスキップします。")
+                        print("GPT-5 モードは既に有効なため、切り替え操作をスキップします。")
+                    else:
+                        self._logger.debug("GPT-5 モードは未選択または確認できなかったため切り替え探索を実行します。")
+                except Exception as detection_error:
+                    self._logger.debug("GPT-5 モードの状態確認に失敗したため通常の探索を実行します: %s", detection_error)
+
+            if not skip_toggle:
+                gpt5_button_factories = [
+                    ("button.fui-ToggleButton:has-text('GPT-5 を試す')", lambda: self.page.locator("button.fui-ToggleButton:has-text('GPT-5 を試す')")),
+                    ("button role GPT-5 を試す", lambda: self.page.get_by_role("button", name="GPT-5 を試す")),
+                    ("button role GPT-5 を試す (部分一致)", lambda: self.page.get_by_role("button", name="GPT-5 を試す", exact=False)),
+                    ("button role GPT-5 で質問", lambda: self.page.get_by_role("button", name="GPT-5 で質問")),
+                    ("button role GPT-5 を使用", lambda: self.page.get_by_role("button", name="GPT-5 を使用")),
+                    ("button role GPT-5", lambda: self.page.get_by_role("button", name="GPT-5")),
+                    ("button role Copilot GPT-5", lambda: self.page.get_by_role("button", name="Copilot GPT-5")),
+                    ("button role regex GPT-5", lambda: self.page.get_by_role("button", name=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
+                    ("menuitem regex GPT-5", lambda: self.page.get_by_role("menuitem", name=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
+                    ("button:has-text GPT-5", lambda: self.page.locator("button", has_text=re.compile(r"GPT[-\s]?5", re.IGNORECASE))),
+                    ("aria-label=GPT-5 を試す", lambda: self.page.locator('[aria-label="GPT-5 を試す" i]')),
+                    ("aria-label contains GPT-5", lambda: self.page.locator('[aria-label*="GPT-5"]')),
+                    ("data-testid=gpt5Button", lambda: self.page.locator('[data-testid="gpt5Button"]')),
+                    ("data-testid=GPT5Button", lambda: self.page.locator('[data-testid="GPT5Button"]')),
                     ("text=GPT-5 を試す", lambda: self.page.get_by_text("GPT-5 を試す", exact=False)),
                     ("text=Try GPT-5", lambda: self.page.get_by_text("Try GPT-5", exact=False)),
                 ]
-                for description, factory in fallback_factories:
-                    try:
-                        candidate = factory()
-                        candidate.wait_for(state="visible", timeout=5000)
-                        gpt5_button = candidate.first
-                        print(f"GPT-5 モードボタンのフォールバック ({description}) に成功しました。")
-                        break
-                    except Exception as fallback_error:
-                        print(f"GPT-5 モードボタンのフォールバック ({description}) は失敗しました: {fallback_error}")
-            if gpt5_button:
-                print("GPT-5 モードボタンをクリックします...")
+
+                gpt5_button = None
                 try:
-                    gpt5_button.scroll_into_view_if_needed()
-                except Exception:
-                    pass
-                click_attempts = [
-                    ("通常クリック", lambda: gpt5_button.click(timeout=5000)),
-                    ("force オプション", lambda: gpt5_button.click(force=True, timeout=5000)),
-                    ("evaluate click", lambda: gpt5_button.evaluate("el => el.click()")),
-                ]
-                for attempt_label, click_action in click_attempts:
+                    gpt5_button = self._wait_for_first_visible(
+                        "GPT-5 モード切り替えボタン",
+                        gpt5_button_factories,
+                        timeout=20000,
+                    )
+                except RuntimeError as gpt5_error:
+                    print("GPT-5 モードボタンが見つからなかったため、フォールバック探索を行います。")
+                    print(gpt5_error)
+                    fallback_factories = [
+                        ("role=button GPT-5 を試す (再探索)", lambda: self.page.get_by_role("button", name="GPT-5 を試す", exact=False)),
+                        ("text=GPT-5 を試す", lambda: self.page.get_by_text("GPT-5 を試す", exact=False)),
+                        ("text=Try GPT-5", lambda: self.page.get_by_text("Try GPT-5", exact=False)),
+                    ]
+                    for description, factory in fallback_factories:
+                        try:
+                            candidate = factory()
+                            candidate.wait_for(state="visible", timeout=5000)
+                            gpt5_button = candidate.first
+                            print(f"GPT-5 モードボタンのフォールバック ({description}) に成功しました。")
+                            break
+                        except Exception as fallback_error:
+                            print(f"GPT-5 モードボタンのフォールバック ({description}) は失敗しました: {fallback_error}")
+
+                if gpt5_button:
                     try:
-                        click_action()
-                        self.page.wait_for_timeout(800)
-                        break
-                    except Exception as click_error:
-                        print(f"GPT-5 モードボタンのクリック ({attempt_label}) に失敗しました: {click_error}")
+                        gpt5_button.scroll_into_view_if_needed()
+                    except Exception:
+                        pass
+
+                    if self._is_toggle_selected(gpt5_button):
+                        print("GPT-5 モードボタンは既に選択済みのためクリックをスキップします。")
+                        gpt5_confirmed = True
+                    else:
+                        click_attempts = [
+                            ("通常クリック", lambda: gpt5_button.click(timeout=5000)),
+                            ("force オプション", lambda: gpt5_button.click(force=True, timeout=5000)),
+                            ("evaluate click", lambda: gpt5_button.evaluate("el => el.click()")),
+                        ]
+                        for attempt_label, click_action in click_attempts:
+                            try:
+                                print("GPT-5 モードボタンをクリックします...")
+                                click_action()
+                                try:
+                                    self.page.wait_for_timeout(800)
+                                except Exception:
+                                    time.sleep(0.8)
+                                gpt5_confirmed = True
+                                break
+                            except Exception as click_error:
+                                print(f"GPT-5 モードボタンのクリック ({attempt_label}) に失敗しました: {click_error}")
+                        else:
+                            print("GPT-5 モードボタンのクリックに失敗しました。直近のエラーをご確認ください。")
                 else:
-                    print("GPT-5 モードボタンのクリックに失敗しました。直近のエラーをご確認ください。")
+                    print("GPT-5 モードボタンが見つからなかったため、既定のモードで続行します。")
             else:
-                print("GPT-5 モードボタンが見つからなかったため、既定のモードで続行します。")
+                gpt5_button = None
+
+            if gpt5_confirmed:
+                self._active_copilot_mode = "gpt-5"
+                try:
+                    self._last_gpt_mode_confirmed_at = time.monotonic()
+                except Exception:
+                    self._last_gpt_mode_confirmed_at = time.time()
 
             print("チャット入力欄の読み込みを待機しています。サインインが求められる場合はブラウザで完了してください。")
             try:
@@ -1612,13 +1743,28 @@ class BrowserCopilotManager:
 
         try:
             gpt_button = self.page.get_by_role("button", name="GPT-5 を試す")
-            if gpt_button.count() == 0:
+            count = gpt_button.count()
+            if count == 0:
                 raise RuntimeError("GPT-5 ボタンが見つかりませんでした。")
-            gpt_button.first.click(timeout=5000)
+            target_button = gpt_button.first
+            if self._is_toggle_selected(target_button):
+                self._logger.debug("GPT-5 ボタンは既に選択済みだったためクリックをスキップします。")
+                self._active_copilot_mode = "gpt-5"
+                try:
+                    self._last_gpt_mode_confirmed_at = time.monotonic()
+                except Exception:
+                    self._last_gpt_mode_confirmed_at = time.time()
+            else:
+                target_button.click(timeout=5000)
+                self._active_copilot_mode = "gpt-5"
+                try:
+                    self._last_gpt_mode_confirmed_at = time.monotonic()
+                except Exception:
+                    self._last_gpt_mode_confirmed_at = time.time()
         except Exception:
             self._logger.debug("GPT-5 ボタンのクリックに失敗したため既存の初期化処理を利用します。", exc_info=True)
             try:
-                self._initialize_copilot_mode()
+                self._initialize_copilot_mode(force_mode_refresh=True)
             except Exception as init_error:
                 self._logger.warning("GPT-5 モードの再設定に失敗しました: %s", init_error)
                 return False
@@ -1655,6 +1801,8 @@ class BrowserCopilotManager:
         self.playwright = None
         self._focus_suppressed_once = False
         self._chat_sessions_started = 0
+        self._active_copilot_mode = None
+        self._last_gpt_mode_confirmed_at = None
 
     def _ensure_browser_visible(self):
         if self.headless or not self.page:
