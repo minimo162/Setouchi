@@ -1668,7 +1668,7 @@ def translate_range_contents(
                 "6. source_reference_urls(JSON) が与えられる場合は、そのURLだけを参照し、外部検索や別ページは利用しないでください。",
                 "",
                 "出力形式:",
-                "JSON のみを返してください。例: [{"context_id": 0, "source_sentences": ["..."]}]. 同じ順序で context_id を並べてください。",
+                "JSON のみを返してください。例: [{\"context_id\": 0, \"source_sentences\": [\"...\"]}]. 同じ順序で context_id を並べてください。",
                 "source_sentences には文字列リストだけを入れ、追加のキーやテキストは不要です。",
                 "",
                 "items(JSON):",
