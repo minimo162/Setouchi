@@ -88,17 +88,18 @@ _REVIEW_SYSTEM_PROMPT = """
 - `status_output_range`、`issue_output_range`、`highlight_output_range` は更新対象の行と形状を一致させ、列構成を揃えること。修正文用の追加列は要求しないこと。
 - 出力は元のデータ形状と整合させること。
 - 大規模なレビューは必要に応じて分割し、プロンプトの安定性を保つこと。
+- 元訳が意図的に意訳・ローカライズ・スタイル調整を行っている場合でも、原文の意味と利用者の方針に整合していれば尊重し、明確な誤訳・重大な齟齬・再発リスクがある場合のみ修正を提案すること。
 - 指摘の理由・推奨対応・優先度など、レビューに必要な情報を漏れなく記載し、利用者が迅速に修正できるよう配慮すること。
 
 応答フォーマット
 - ツールは呼び出しごとに 1 件のレビュー項目を返す。応答はオブジェクト 1 件を含む JSON 配列にすること。
 - 各オブジェクトには `id`、`status`、`notes`、`corrected_text`、`highlighted_text` を必ず含める。追跡が必要な場合は `before_text`、`after_text`、`edits` を追加してよい。
-- 修正不要な場合のみ `status` に `OK` を用い、それ以外は `REVISE` とすること。
+- `status` は修正不要または原文意図を十分に伝えている意訳と判断できる場合に `OK` を用い、それ以外は `REVISE` とすること。
 - `notes` は日本語で `Issue: ... / Suggestion: ...` の形式に従うこと。
   * `Issue` には誤訳・不自然さ・用語ミス・スタイル逸脱など、修正が必要な理由を具体的に記載すること。
   * `Suggestion` には利用者がそのまま適用できる修正方針や再利用すべき表現を簡潔に示し、複数ある場合も整理して記載すること。
 - `corrected_text` には修正後の英語全文（`OK` の場合は元の文）を記載すること。
-- `highlighted_text` には現行訳との差分をインラインで示し、削除部分を `[DEL]削除テキスト[DEL]`、追加部分を `[ADD]追加テキスト[ADD]` で囲むこと。`OK` の場合は空文字にする。
+- `highlighted_text` には現行訳との差分をインラインで示し、削除部分を `[DEL]削除テキスト[DEL]`、追加部分を `[ADD]追加テキスト[ADD]` で囲むこと。`OK` の場合は変更がないため空文字にし、軽微な表現差のみの見直しでは変更点だけを提示する。
 - `edits` 配列を返す場合は、各要素に `type`（`delete` / `add` / `replace`）、対象 `text`、日本語の簡潔な `reason` を含めること。
 - JSON をコードフェンスで囲んだり、配列の外に説明文を置いたりしないこと。
 
@@ -115,6 +116,7 @@ _REVIEW_ACTION_STAGE_PROMPT = """
 Thought: 次の行動方針を一文で示してください。
 Action: {tool_list} を 1 回だけ JSON 形式 `{ "tool_name": "...", "arguments": { ... } }` で呼び出してください。JSON には解説や余分なキーを混ぜないでください。
 - 引数には `source_range`、`translated_range`、`status_output_range`、`issue_output_range` を必ず含め、必要に応じて `highlight_output_range` や `corrected_output_range` を追加します。
+- 元訳の意図や利用者のスタイルポリシーを考慮するため、Observation の前提情報を Thought で簡潔に整理してください。
 - まだ Observation が無い段階では `Final Answer:` を出力しないでください。
 - ツールの Observation を受け取ったら、新しい Thought で結果の変化を整理する準備をしてください。
 """.strip()
@@ -123,7 +125,7 @@ Action: {tool_list} を 1 回だけ JSON 形式 `{ "tool_name": "...", "argument
 _REVIEW_FINAL_STAGE_PROMPT = """
 Thought: 最新の Observation を整理し、残タスクの有無を判断してください。
 Final Answer: 完了したら冒頭でレビュー結果の概要（全体評価、指摘数、追跡が必要な項目の有無など）を日本語で簡潔にまとめ、その後に `REVISE` を返したセルや列を `B列: 用語の不統一 / 推奨対応: ○○` のように列挙してください。追加タスクの提案やフォローアップの確認は行わず、この応答でセッションを終了します。
-未完了の場合は新たな Thought と Action で作業を続けてください。
+意訳を尊重した結果 `OK` と判断したセルについては追加説明は不要ですが、原文との整合性を確認済みである旨を Thought で触れてください。未完了の場合は新たな Thought と Action で作業を続けてください。
 """.strip()
 
 
