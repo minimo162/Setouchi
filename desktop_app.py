@@ -46,6 +46,7 @@ CHAT_PANEL_BASE_HEIGHT = 600
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 DEFAULT_FONT_PATH = ASSETS_DIR / "fonts" / "NotoSansCJKjp-Regular.otf"
+DEFAULT_FONT_RELATIVE_PATH = Path("fonts") / DEFAULT_FONT_PATH.name
 PRIMARY_FONT_FAMILY = "NotoSansJP"
 
 DEFAULT_AUTOTEST_TIMEOUT_SECONDS = 180.0  # 3-minute auto-test timeout
@@ -233,10 +234,15 @@ class CopilotApp:
         font_path = DEFAULT_FONT_PATH
         if font_path.is_file():
             existing_fonts = dict(getattr(self.page, "fonts", {}) or {})
-            existing_fonts[font_family] = str(font_path)
+            existing_fonts[font_family] = DEFAULT_FONT_RELATIVE_PATH.as_posix()
             self.page.fonts = existing_fonts
         else:
             font_family = "Yu Gothic UI"
+            logging.warning(
+                "Custom font was not found at %s; falling back to system font '%s'.",
+                font_path,
+                font_family,
+            )
         self._primary_font_family = font_family
         self.page.theme = ft.Theme(
             color_scheme_seed=palette["primary"],
@@ -1894,6 +1900,7 @@ def _parse_cli_args():
 if __name__ == "__main__":
     args = _parse_cli_args()
     app_kwargs = dict(target=main)
+    app_kwargs["assets_dir"] = str(ASSETS_DIR)
     if args.host:
         app_kwargs["host"] = args.host
     if args.port:
