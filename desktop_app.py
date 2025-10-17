@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import flet as ft
 
@@ -72,6 +72,159 @@ MODE_PLACEHOLDERS = {
     CopilotMode.REVIEW: "翻訳チェックの指示を入力してください。例: 原文(B列)、翻訳(C列)、レビュー結果をD:F列に書き込んでください。",
 }
 
+MODE_LABELS = {
+    CopilotMode.TRANSLATION: "翻訳（通常）",
+    CopilotMode.TRANSLATION_WITH_REFERENCES: "翻訳（参照あり）",
+    CopilotMode.REVIEW: "翻訳チェック",
+}
+
+FORM_TOOL_NAMES = {
+    CopilotMode.TRANSLATION: "translate_range_without_references",
+    CopilotMode.TRANSLATION_WITH_REFERENCES: "translate_range_with_references",
+    CopilotMode.REVIEW: "check_translation_quality",
+}
+
+FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
+    CopilotMode.TRANSLATION: [
+        {
+            "name": "cell_range",
+            "label": "ソース範囲",
+            "argument": "cell_range",
+            "required": True,
+            "placeholder": "例: A2:A20",
+        },
+        {
+            "name": "translation_output_range",
+            "label": "出力範囲",
+            "argument": "translation_output_range",
+            "required": True,
+            "placeholder": "例: B2:B20",
+        },
+        {
+            "name": "target_language",
+            "label": "ターゲット言語",
+            "argument": "target_language",
+            "default": "English",
+            "placeholder": "例: English",
+        },
+        {
+            "name": "rows_per_batch",
+            "label": "バッチ行数",
+            "argument": "rows_per_batch",
+            "type": "int",
+            "min": 1,
+            "placeholder": "例: 10",
+        },
+    ],
+    CopilotMode.TRANSLATION_WITH_REFERENCES: [
+        {
+            "name": "cell_range",
+            "label": "ソース範囲",
+            "argument": "cell_range",
+            "required": True,
+            "placeholder": "例: A2:A20",
+        },
+        {
+            "name": "translation_output_range",
+            "label": "出力範囲（翻訳・メモ・参照ペアの開始列）",
+            "argument": "translation_output_range",
+            "required": True,
+            "placeholder": "例: B2:D20",
+        },
+        {
+            "name": "target_language",
+            "label": "ターゲット言語",
+            "argument": "target_language",
+            "default": "English",
+            "placeholder": "例: English",
+        },
+        {
+            "name": "source_reference_urls",
+            "label": "参照URL / ファイル（原文側）",
+            "argument": "source_reference_urls",
+            "type": "list",
+            "multiline": True,
+            "min_lines": 3,
+            "placeholder": "1行に1件ずつ入力してください。ローカルファイルも可。",
+        },
+        {
+            "name": "target_reference_urls",
+            "label": "参照URL / ファイル（翻訳側）",
+            "argument": "target_reference_urls",
+            "type": "list",
+            "multiline": True,
+            "min_lines": 3,
+            "placeholder": "1行に1件ずつ入力してください。",
+        },
+        {
+            "name": "reference_urls",
+            "label": "共通参照URL / ファイル",
+            "argument": "reference_urls",
+            "type": "list",
+            "multiline": True,
+            "min_lines": 3,
+            "placeholder": "追加の参照資料があれば入力してください。",
+        },
+        {
+            "name": "citation_output_range",
+            "label": "引用出力範囲",
+            "argument": "citation_output_range",
+            "placeholder": "例: E2:E20",
+        },
+        {
+            "name": "rows_per_batch",
+            "label": "バッチ行数",
+            "argument": "rows_per_batch",
+            "type": "int",
+            "min": 1,
+            "placeholder": "例: 10",
+        },
+    ],
+    CopilotMode.REVIEW: [
+        {
+            "name": "source_range",
+            "label": "原文範囲",
+            "argument": "source_range",
+            "required": True,
+            "placeholder": "例: B2:B20",
+        },
+        {
+            "name": "translated_range",
+            "label": "翻訳範囲",
+            "argument": "translated_range",
+            "required": True,
+            "placeholder": "例: C2:C20",
+        },
+        {
+            "name": "status_output_range",
+            "label": "ステータス列",
+            "argument": "status_output_range",
+            "required": True,
+            "placeholder": "例: D2:D20",
+        },
+        {
+            "name": "issue_output_range",
+            "label": "指摘列",
+            "argument": "issue_output_range",
+            "required": True,
+            "placeholder": "例: E2:E20",
+        },
+        {
+            "name": "highlight_output_range",
+            "label": "ハイライト列",
+            "argument": "highlight_output_range",
+            "required": True,
+            "placeholder": "例: F2:F20",
+        },
+        {
+            "name": "corrected_output_range",
+            "label": "修正文列（任意）",
+            "argument": "corrected_output_range",
+            "placeholder": "例: G2:G20",
+        },
+    ],
+}
+
 
 def _is_truthy_env(value: Optional[str]) -> bool:
     if value is None:
@@ -116,6 +269,11 @@ class CopilotApp:
         self.workbook_refresh_button: Optional[ft.TextButton] = None
         self.new_chat_button: Optional[ft.TextButton] = None
         self.mode_card_row: Optional[ft.ResponsiveRow] = None
+        self.form_controls: Dict[str, ft.TextField] = {}
+        self.form_error_text: Optional[ft.Text] = None
+        self._form_submit_button: Optional[ft.Control] = None
+        self._form_body_column: Optional[ft.Column] = None
+        self._form_panel: Optional[ft.Container] = None
         self._mode_card_map: dict[str, ft.Container] = {}
         self._context_panel: Optional[ft.Container] = None
         self._context_actions: Optional[ft.ResponsiveRow] = None
@@ -498,6 +656,8 @@ class CopilotApp:
             ),
         )
 
+        self._form_panel = self._build_form_panel()
+
         self.action_button.margin = ft.margin.only(top=4)
 
         self._user_input_wrapper = ft.Container(
@@ -552,7 +712,7 @@ class CopilotApp:
         )
 
         self._main_column = ft.Column(
-            controls=[self._chat_panel, self._composer_panel, self._mode_panel_container],
+            controls=[self._chat_panel, self._form_panel, self._composer_panel, self._mode_panel_container],
             expand=True,
             spacing=24,
         )
@@ -592,6 +752,239 @@ class CopilotApp:
         self._apply_responsive_layout(current_width, current_height)
 
         self.page.add(self._content_container)
+
+    def _build_form_panel(self) -> ft.Container:
+        palette = EXPRESSIVE_PALETTE
+        can_interact = self.app_state in {AppState.READY, AppState.ERROR}
+        form_controls = self._create_form_controls_for_mode(self.mode)
+
+        self.form_error_text = ft.Text(
+            "",
+            color=palette["error"],
+            size=12,
+            visible=False,
+            font_family=self._hint_font_family,
+        )
+
+        self._form_submit_button = ft.FilledButton(
+            "フォームを送信",
+            icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
+            on_click=self._submit_form,
+            disabled=not can_interact,
+        )
+
+        self._form_body_column = ft.Column(form_controls, spacing=12, tight=True)
+
+        header = ft.Text(
+            "フォーム入力",
+            size=16,
+            weight=ft.FontWeight.W_600,
+            color=palette["primary"],
+            font_family=self._primary_font_family,
+        )
+
+        actions_row = ft.Row(
+            controls=[self._form_submit_button],
+            alignment=ft.MainAxisAlignment.END,
+        )
+
+        content = ft.Column(
+            controls=[header, self._form_body_column, self.form_error_text, actions_row],
+            spacing=16,
+            tight=True,
+        )
+
+        return ft.Container(
+            content=content,
+            bgcolor=palette["surface_high"],
+            border_radius=24,
+            padding=ft.Padding(28, 32, 28, 32),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=18,
+                color=ft.Colors.with_opacity(0.06, "#0F172A"),
+                offset=ft.Offset(0, 10),
+            ),
+            clip_behavior=ft.ClipBehavior.NONE,
+        )
+
+    def _create_form_controls_for_mode(
+        self,
+        mode: CopilotMode,
+        initial_values: Optional[Dict[str, str]] = None,
+    ) -> List[ft.Control]:
+        definitions = FORM_FIELD_DEFINITIONS.get(mode, [])
+        preserved = initial_values or {}
+        controls: List[ft.Control] = []
+        new_controls: Dict[str, ft.TextField] = {}
+
+        for field in definitions:
+            name = field["name"]
+            value = preserved.get(name, field.get("default", "")) or ""
+            multiline = bool(field.get("multiline"))
+
+            text_field = ft.TextField(
+                label=field["label"],
+                hint_text=field.get("placeholder", ""),
+                value=value,
+                expand=True,
+                multiline=multiline,
+                border_radius=18,
+                filled=True,
+                fill_color=EXPRESSIVE_PALETTE["surface_variant"],
+                border_color=EXPRESSIVE_PALETTE["outline_variant"],
+                focused_border_color=EXPRESSIVE_PALETTE["primary"],
+                cursor_color=EXPRESSIVE_PALETTE["primary"],
+                selection_color=ft.Colors.with_opacity(0.2, EXPRESSIVE_PALETTE["primary"]),
+                text_style=ft.TextStyle(font_family=self._primary_font_family, size=13),
+            )
+            if multiline and field.get("min_lines"):
+                text_field.min_lines = field["min_lines"]
+            if multiline and field.get("max_lines"):
+                text_field.max_lines = field["max_lines"]
+            if field.get("type") == "int":
+                text_field.keyboard_type = ft.KeyboardType.NUMBER
+            text_field.on_submit = self._submit_form
+            new_controls[name] = text_field
+            controls.append(text_field)
+
+        self.form_controls = new_controls
+        return controls
+
+    def _refresh_form_panel(self) -> None:
+        if not self._form_body_column:
+            return
+        preserved_values = {name: ctrl.value for name, ctrl in self.form_controls.items()}
+        new_controls = self._create_form_controls_for_mode(self.mode, preserved_values)
+        self._form_body_column.controls = new_controls
+        self._set_form_error("")
+        if self._form_submit_button:
+            self._form_submit_button.disabled = self.app_state not in {AppState.READY, AppState.ERROR}
+        self._update_ui()
+
+    def _set_form_error(self, message: str) -> None:
+        if not self.form_error_text:
+            return
+        self.form_error_text.value = message
+        self.form_error_text.visible = bool(message)
+
+    def _split_list_values(self, raw_text: str) -> List[str]:
+        tokens: List[str] = []
+        for chunk in raw_text.replace(",", "\n").splitlines():
+            item = chunk.strip()
+            if item:
+                tokens.append(item)
+        return tokens
+
+    def _collect_form_payload(self) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, Any]]]:
+        definitions = FORM_FIELD_DEFINITIONS.get(self.mode, [])
+        arguments: Dict[str, Any] = {}
+        errors: List[str] = []
+
+        for field in definitions:
+            name = field["name"]
+            ctrl = self.form_controls.get(name)
+            raw_value = ""
+            if ctrl and isinstance(ctrl.value, str):
+                raw_value = ctrl.value.strip()
+            if not raw_value and field.get("default"):
+                raw_value = str(field["default"])
+                if ctrl:
+                    ctrl.value = raw_value
+
+            if field.get("required") and not raw_value:
+                errors.append(f"{field['label']}を入力してください。")
+                continue
+
+            if not raw_value:
+                continue
+
+            field_type = field.get("type", "str")
+            argument_key = field["argument"]
+
+            if field_type == "int":
+                try:
+                    value = int(raw_value)
+                except ValueError:
+                    errors.append(f"{field['label']}は整数で指定してください。")
+                    continue
+                if field.get("min") and value < field["min"]:
+                    errors.append(f"{field['label']}は{field['min']}以上で指定してください。")
+                    continue
+                arguments[argument_key] = value
+            elif field_type == "list":
+                items = self._split_list_values(raw_value)
+                if field.get("required") and not items:
+                    errors.append(f"{field['label']}を入力してください。")
+                    continue
+                if items:
+                    arguments[argument_key] = items
+            else:
+                arguments[argument_key] = raw_value
+
+        if errors:
+            return None, "\n".join(errors), None
+
+        tool_name = FORM_TOOL_NAMES.get(self.mode)
+        if not tool_name:
+            return None, "現在のモードで使用できるツールが見つかりません。", None
+
+        if self.mode in {CopilotMode.TRANSLATION, CopilotMode.TRANSLATION_WITH_REFERENCES}:
+            arguments.setdefault("target_language", "English")
+
+        if tool_name == "translate_range_with_references":
+            has_reference = any(
+                arguments.get(key) for key in ("source_reference_urls", "target_reference_urls", "reference_urls")
+            )
+            if not has_reference:
+                return None, "参照URLまたはファイルを1件以上入力してください。", None
+
+        payload: Dict[str, Any] = {
+            "mode": self.mode.value,
+            "tool_name": tool_name,
+            "arguments": arguments,
+        }
+        if self.current_workbook_name:
+            payload["workbook_name"] = self.current_workbook_name
+        if self.current_sheet_name:
+            payload["sheet_name"] = self.current_sheet_name
+
+        return payload, None, arguments
+
+    def _format_form_summary(self, arguments: Dict[str, Any]) -> str:
+        mode_label = MODE_LABELS.get(self.mode, self.mode.value)
+        lines = [f"フォーム送信 ({mode_label})"]
+        for field in FORM_FIELD_DEFINITIONS.get(self.mode, []):
+            key = field["argument"]
+            value = arguments.get(key)
+            if value is None or value == "":
+                continue
+            if isinstance(value, list):
+                display_value = ", ".join(value)
+            else:
+                display_value = str(value)
+            lines.append(f"- {field['label']}: {display_value}")
+        return "\n".join(lines)
+
+    def _submit_form(self, e: Optional[ft.ControlEvent]):
+        if self.app_state not in {AppState.READY, AppState.ERROR}:
+            return
+
+        payload, error_message, arguments = self._collect_form_payload()
+        if error_message:
+            self._set_form_error(error_message)
+            self._update_ui()
+            return
+
+        assert payload is not None and arguments is not None
+        self._set_form_error("")
+        summary_message = self._format_form_summary(arguments)
+
+        self._set_state(AppState.TASK_IN_PROGRESS)
+        self._add_message("user", summary_message)
+        self.request_queue.put(RequestMessage(RequestType.USER_INPUT, payload))
+        self._update_ui()
 
     def _register_window_handlers(self):
         self.page.window.on_event = self._on_window_event
@@ -872,6 +1265,7 @@ class CopilotApp:
         if self.mode_selector:
             self.mode_selector.value = self.mode.value
         self._refresh_mode_cards()
+        self._refresh_form_panel()
         if self.request_queue:
             self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
         self._update_ui()
@@ -925,6 +1319,11 @@ class CopilotApp:
 
         if self.user_input:
             self.user_input.disabled = not can_interact
+        if self.form_controls:
+            for control in self.form_controls.values():
+                control.disabled = not can_interact
+        if self._form_submit_button:
+            self._form_submit_button.disabled = not can_interact
         if self.mode_selector:
             self.mode_selector.disabled = not can_interact
         if self.workbook_selector:
@@ -1482,7 +1881,14 @@ class CopilotApp:
         self._set_state(AppState.TASK_IN_PROGRESS)
         self._add_message("user", user_text)
         self.user_input.value = ""
-        self.request_queue.put(RequestMessage(RequestType.USER_INPUT, user_text))
+        payload: Union[str, Dict[str, Any]] = user_text
+        try:
+            parsed_payload = json.loads(user_text)
+        except json.JSONDecodeError:
+            parsed_payload = None
+        if isinstance(parsed_payload, dict):
+            payload = parsed_payload
+        self.request_queue.put(RequestMessage(RequestType.USER_INPUT, payload))
         self._update_ui()
 
     def _stop_task(self, e: Optional[ft.ControlEvent]):

@@ -1,159 +1,107 @@
-# Excel Copilot Translation System
+# Excel Copilot 翻訳システム仕様書
 
-This document explains how the Excel-based translation assistant works so that newcomers can understand the moving pieces without having to read the entire code base.
+本書は Excel 上で動作する翻訳アシスタントの構成と挙動を新規参加者向けに説明します。コード全体を読まなくても主要コンポーネントの関係が把握できるようにしています。
 
-## Purpose and Capabilities
+## 目的と機能
 
-- Automate Japanese-to-English translation (and other target languages) of spreadsheet content directly inside Excel.
-- Enrich translations by consulting bilingual reference materials so that terminology follows approved phrasing.
-- Review existing translations for accuracy and style, flagging issues and suggesting fixes.
-- Produce annotated outputs that include process notes, aligned reference pairs, and optional citation tables.
+- Excel のセル範囲を日本語から英語（他言語にも拡張可能）へ自動翻訳する。  
+- 参照資料（用語集やバイリンガルドキュメント）を活用し、統一された訳語を維持する。  
+- 既存訳の品質レビューを実施し、指摘・修正文・ハイライト情報を返す。  
+- プロセスメモや引用情報などの補足列を整えた状態で Excel に書き戻す。  
 
-## High-Level Architecture
+## アーキテクチャ概要
 
-| Layer | Responsibilities | Key Modules |
+| レイヤー | 役割 | 主なモジュール |
 | --- | --- | --- |
-| Desktop UI (Flet) | Presents chat-style interface, collects user input, displays agent thoughts/action logs, streams progress, and keeps track of workbook/sheet context. | `desktop_app.py`, `excel_copilot/ui/chat.py`, `excel_copilot/ui/theme.py` |
-| Worker Thread | Handles blocking operations: launches Playwright, builds the ReAct agent, loads Excel tool functions, executes user requests, and emits structured responses back to the UI. | `excel_copilot/ui/worker.py`, `excel_copilot/ui/messages.py` |
-| Agent Layer | Maintains the ReAct conversation with the large language model (LLM), injects system prompts, and turns high-level instructions into tool calls. | `excel_copilot/agent/react_agent.py`, `excel_copilot/agent/prompts.py` |
-| Tool Layer | Implements the concrete Excel automation tasks (translation with/without references, translation quality review, diff highlighting, shape operations, etc.). | `excel_copilot/tools/excel_tools.py`, `excel_copilot/tools/actions.py` |
-| Core Services | Provide connectivity to Excel (via xlwings) and to the Microsoft 365 Copilot chat interface (via Playwright). Custom exceptions and configuration live here. | `excel_copilot/core/excel_manager.py`, `excel_copilot/core/browser_copilot_manager.py`, `excel_copilot/core/exceptions.py`, `excel_copilot/config.py` |
+| デスクトップ UI (Flet) | チャットパネルとフォーム UI を提供する。ユーザー入力を収集し、進捗や最終結果を表示する。 | `desktop_app.py`, `excel_copilot/ui/chat.py`, `excel_copilot/ui/theme.py` |
+| フォームコンポーネント | モード別の入力欄（セル範囲、出力列、参照 URL など）を持ち、送信時に内部で JSON ペイロードを構築する。 | `desktop_app.py`（UI 定義部分）, `excel_copilot/ui/forms.py` *（追加予定）* |
+| ワーカースレッド | Playwright を起動し、Copilot セッションを維持する。モードに応じたツール関数を直接呼び出し、結果をレスポンスキューへ送る。 | `excel_copilot/ui/worker.py`, `excel_copilot/ui/messages.py` |
+| エージェント層（軽量） | 共通のシステムプロンプトや最終メッセージ整形が必要な場合に利用する。ReAct ループは後方互換モードとして残るのみ。 | `excel_copilot/agent/prompts.py` |
+| ツール層 | 翻訳／レビューなどの実処理を実装。ExcelActions 経由で Excel を操作し、Copilot へ送るプロンプトを構築する。 | `excel_copilot/tools/excel_tools.py`, `excel_copilot/tools/actions.py` |
+| コアサービス | Excel 接続（xlwings）と Copilot ブラウザ自動化（Playwright）を提供。例外処理や設定もここに集約。 | `excel_copilot/core/excel_manager.py`, `excel_copilot/core/browser_copilot_manager.py`, `excel_copilot/core/exceptions.py`, `excel_copilot/config.py` |
 
-The translation tools rely on a shared `BrowserCopilotManager` instance to submit prompts to M365 Copilot and on `ExcelActions` to read/write spreadsheet data safely.
+翻訳ツールは共通の `BrowserCopilotManager` を通じて Microsoft 365 Copilot にプロンプトを送信し、Excel 操作は `ExcelActions` が担当します。
 
-## Runtime Control Flow
+## 実行フロー
 
-1. **App startup (`desktop_app.py`)**  
-   The Flet frontend boots, creates request/response queues, and launches `CopilotWorker` on a background thread. UI state transitions (`AppState`) keep the chat controls enabled/disabled appropriately.
+1. **アプリ起動（`desktop_app.py`）**  
+   - Flet アプリを初期化し、キューを生成して `CopilotWorker` をバックグラウンドで起動。  
+   - モードカードと入力フォームを描画し、フォーム入力とチャット入力の双方を受け付ける。  
 
-2. **Worker initialization (`CopilotWorker._initialize`)**  
-   - Spins up Playwright using paths/configuration from `excel_copilot/config.py`.  
-   - Opens a persistent browser context and navigates to the Copilot web app (`BrowserCopilotManager.start`).  
-   - Loads the allowed tool functions for the current mode and generates JSON schemas for the LLM (`create_tool_schema`).  
-   - Builds the ReAct agent with the correct system prompt (`build_system_prompt`) and signals the UI that the worker is ready.
+2. **ワーカー初期化（`CopilotWorker._initialize`）**  
+   - `BrowserCopilotManager` を立ち上げ、Copilot チャットページへ接続。  
+   - 現在のモードで利用可能なツール関数を読み込み、事前計算が必要なプロンプト断片を準備。  
+   - フォームが送信されても即座に処理できるよう、状態を UI へ通知。  
 
-3. **Request loop (`CopilotWorker._main_loop`)**  
-   The worker consumes `RequestMessage` objects from the queue:
-   - `USER_INPUT` → formats the user instruction, dispatches it to the agent, and streams back `Thought`, `Action`, `Observation`, and `Final Answer` messages.
-   - `STOP` → sets a cancellation event so long-running operations can halt gracefully.
-   - `RESET_BROWSER` / `UPDATE_CONTEXT` / `QUIT` → adjust internal state or tear down resources.
+3. **リクエスト処理（`CopilotWorker._main_loop`）**  
+   - `USER_INPUT` リクエストは JSON ペイロードとして受け取り、モードに対応するツールを直接呼び出す。  
+   - フォームが未設定の場合や自由形式入力の場合は、必要に応じてレガシー ReAct フローへ切り替える。  
+   - `STOP`／`RESET_BROWSER`／`UPDATE_CONTEXT` は従来通りキャンセルや再接続を担当。  
 
-4. **Agent execution (`ReActAgent._run`)**  
-   The agent keeps a history of system/user/assistant messages, follows the Thought→Action→Observation loop, and dispatches tool calls by name. Observations are appended to the chat log and the cycle repeats until completion.
+4. **ツール実行（`excel_copilot/tools/*.py`）**  
+   - Excel からデータを取得し、Copilot へ送信するプロンプトを組み立てる。  
+   - 応答の JSON を検証し、Excel に書き戻す。  
+   - 人が読める要約を返し、ワーカーが最終メッセージとして UI に転送。  
 
-5. **Tool call handlers (`excel_copilot/tools/excel_tools.py`)**  
-   Tool functions receive an `ExcelActions` instance plus the shared browser manager. They:
-   - Read data from Excel ranges.
-   - Build structured prompts for Copilot (ensuring cancellations and retries are respected).
-  - Parse JSON responses, validate shapes, and write outputs back to Excel.
-  - Return human-readable summaries that the agent reports in its final answer.
+5. **UI 表示**  
+   - 進捗や警告はステータスメッセージとしてチャット欄に表示。  
+   - 最終メッセージはフォーム送信時の設定とともに一覧で確認できる。  
 
-6. **UI rendering**  
-   Messages returned by the worker are wrapped in `ChatMessage` components which apply consistent styling for thoughts, actions, observations, and final answers.
+## 対応モードとフォーム項目
 
-## Supported Modes
+### 翻訳（参照なし）
 
-### 1. Translation (No References)
+| 項目 | 説明 |
+| --- | --- |
+| ソース範囲 | 翻訳元セル範囲（例: `A2:A20`） |
+| 出力範囲 | 翻訳結果を書き込む列（例: `B2:B20`） |
+| ターゲット言語 | 既定は English。必要に応じて変更可能。 |
+| バッチ行数 | 大きな範囲を複数回に分割する場合に指定。 |
 
-- Enabled when `CopilotMode.TRANSLATION` is selected.
-- Agent system prompt restricts tool usage to `translate_range_without_references`, and enforces one translation column per source column (`excel_copilot/agent/prompts.py`).
-- `translate_range_without_references` (wrapper around `translate_range_contents`) batches rows, submits a plain translation prompt, and writes only the translated text to the specified output range.
+### 翻訳（参照あり）
 
-### 2. Translation with References
+| 項目 | 説明 |
+| --- | --- |
+| ソース範囲 | 翻訳元セル範囲 |
+| 出力範囲 | 翻訳結果／プロセスメモ／参照ペアなどの開始列 |
+| 参照 URL / ファイル | 原文／訳文の参照リスト。複数可。フォームでは行追加で入力できる。 |
+| 引用出力範囲 | 引用情報を書き込むセル範囲（任意）。 |
+| ターゲット言語 / バッチ設定 | 上記に同じ。 |
 
-- Default mode (`CopilotMode.TRANSLATION_WITH_REFERENCES`).
-- Requires at least one of `source_reference_urls` or `target_reference_urls`.
-- `translate_range_with_references` enforces row-by-row batching (one item per request) so reference evidence can be captured precisely.
-- Core pipeline inside `translate_range_contents`:
-  1. **Reference ingestion**  
-     - Combines URLs passed via `reference_urls`, `source_reference_urls`, and `target_reference_urls`.  
-     - Normalizes entries by stripping quotes, resolving local file paths, and deduplicating. Invalid tokens generate warnings surfaced to the user.  
-     - Reference directories are looked up in `_REFERENCE_FALLBACK_ROOTS`, which include the current working directory, the user’s Downloads folder, and any extra directories supplied through `COPILOT_REFERENCE_DIRS`.
-  2. **Source sentence extraction**  
-     - When references are available, sends a fully Japanese instruction that asks Copilot to collect up to ten quotations per `context_id`, emphasizing variety while staying on the same topic. Non-body content (navigation, references) is still excluded, and the prompt itself guides the model to avoid unrelated passages without post-filtering.
-  3. **Target pair extraction**  
-     - Using the extracted Japanese sentences and the target-language URLs, requests aligned sentence pairs. Each pair must reuse the exact wording from the reference documents.
-  4. **Translation prompt**  
-     - For each row, builds a rich prompt instructing the LLM to translate the source while prioritizing terminology and phrasing found in `reference_pairs`.  
-     - The prompt (updated in `excel_copilot/tools/excel_tools.py:1439`) tells the model to use reference sentences as the primary guide, borrowing wording when the meanings match, and documenting how references influenced the translation.
-  5. **Response validation**  
-     - Ensures every item contains `translated_text`, `process_notes_jp`, and `reference_pairs` arrays. Missing `process_notes_jp` entries are backfilled with a stock explanation when references were expected.  
-     - Rejects outputs that remain Japanese when an English translation is requested.
-  6. **Excel write-back**  
-     - Writes translations, Japanese process notes, and formatted reference pairs into column blocks of width `_MIN_CONTEXT_BLOCK_WIDTH` (default 12 columns: translation, process notes, and up to ten reference-pair slots).  
-     - Optionally mirrors translations back to the source cells when `overwrite_source` is true.  
-     - Handles citation output ranges when provided, supporting single-column, per-cell, paired-column, or triplet layouts.
-  7. **Progress & messaging**  
-     - Logs per-row progress (cell previews) and aggregates warnings (e.g., truncated reference slots) that are returned to the agent.
+### 翻訳レビュー
 
-### 3. Translation Quality Review
+| 項目 | 説明 |
+| --- | --- |
+| 原文範囲 | 日本語原文の列 |
+| 翻訳範囲 | レビュー対象の英語列 |
+| ステータス列 | `OK/REVISE` を書き込む列 |
+| 指摘列 | Issue/Suggestion を書き込む列 |
+| ハイライト列 | 差分ハイライトを出力する列 |
+| 修正列 | （任意）修正文を別列に出したい場合の列 |
 
-- Activated with `CopilotMode.REVIEW`.
-- Tool: `check_translation_quality`.  
-  - Reads Japanese source and translated ranges, builds review prompts, and expects a JSON array with status (`OK`/`REVISE`), notes, corrected text, and highlight markup.  
-  - Writes results into status/issue/highlight columns (optionally corrected text).  
-  - Enforces Japanese issue descriptions with the `Issue: ... / Suggestion: ...` format.  
-  - Uses inline diff markers (`[DEL]...`, `[ADD]...`) in the highlighted text.
+フォーム送信時、これらの値から JSON ペイロードを自動生成し、ワーカーへ渡します。ユーザーがチャット欄に自由入力した場合でも引き続き利用可能です。
 
-## Excel Automation (`ExcelActions`)
+## フォーム送信からツール実行までの詳細
 
-- Wraps `xlwings` to read/write ranges, adjust column widths, apply diff highlighting, and insert shapes (`excel_copilot/tools/actions.py`).  
-- Provides utilities for normalized matrix dimensions, safe cell addressing, and logging progress back to the UI via a callback.
-- Ensures Excel remains visible and responsive by keeping screen updating enabled and respecting Excel’s cell size limits (e.g., `32766` character maximum).
+1. ユーザーがフォームに値を入力し「送信」を押す。  
+2. UI がモード別のバリデーションを行い、不足項目があれば即座にエラー表示。  
+3. 問題なければ、フォーム値を JSON オブジェクトへ整形し、`RequestMessage(USER_INPUT)` に添付。  
+4. ワーカーが JSON を受け取り、モードに対応するツール関数を選択。  
+5. 既定で `ExcelActions`、`browser_manager`、`sheet_name`、`stop_event` が引数に注入される。  
+6. ツールが Copilot とやり取りし、結果を Excel に書き戻す。進捗メッセージは `progress_callback` で UI にストリーミング。  
+7. 最終結果またはエラーを `ResponseMessage` として UI へ返却。  
 
-## Browser Automation (`BrowserCopilotManager`)
+## エラー処理とキャンセル
 
-- Uses Playwright to drive the Microsoft 365 Copilot chat experience (`excel_copilot/core/browser_copilot_manager.py`). Key behaviours:
-  - Launches a persistent profile (Edge/Chrome) with configurable headless/slow-motion options.
-  - Navigates to `https://m365.cloud.microsoft/chat/` and ensures the page is ready before accepting prompts.
-  - Manages prompt submission, copy-button detection, and output retrieval. Handles retries when the chat input fails to capture the full prompt text.
-  - Supports session resets and cancellation by monitoring a `stop_event` and issuing UI-level stops if the user interrupts execution.
-  - Copies the response text via clipboard or page DOM extraction, then returns plain text to the caller.
+- 形式エラー（セル範囲未指定など）はフォーム側でブロックし、メッセージを表示。  
+- ツール実行中の例外は `ToolExecutionError` として UI に通知。必要に応じてフォーム値を修正して再送できる。  
+- ユーザーがキャンセルした場合は `stop_event` がセットされ、ツール側でも早期終了しブラウザセッションをリセットする。  
 
-## Messaging Model
+## 貢献者向けメモ
 
-- **Requests** (`excel_copilot/ui/messages.py`) originate from the UI: user text, context updates (workbook name, sheet name, mode), stop/quit commands, and browser resets.
-- **Responses** include status updates, agent thoughts/actions, Playwright logs, errors, and final summaries. The UI maps response categories to visual styles (`excel_copilot/ui/chat.py`).
-- The worker serializes everything through queues to avoid thread-safety issues with Flet widgets.
+- `desktop_app.py` でフォーム定義を行う予定。共通バリデーションロジックは `ui/forms.py` に切り出す。  
+- フォームのバリデーションルールはモードごとにテストを書き、必須項目が欠けた際のエラーメッセージが明確か確認する。  
+- 既存チャット入力との併用時に齟齬が出ないよう、ワーカー側の後方互換コードを暫定的に維持する。  
+- 実装後は翻訳／参照付き翻訳／レビューのフォーム送信と、自由入力によるレガシーフローの両方で動作確認を行う。  
 
-## Configuration
-
-`excel_copilot/config.py` centralizes environment-driven settings:
-
-- Agent loop limits (`COPILOT_MAX_ITERATIONS`, `COPILOT_HISTORY_MAX_MESSAGES`).
-- Playwright options (user data directory, channel preferences, headless mode, slow-mo delay, page timeouts, focus suppression offsets).
-- Downloadable reference directories through `COPILOT_REFERENCE_DIRS`.
-- Rich-text diff tuning via environment variables consumed in `excel_copilot/tools/actions.py`.
-
-Most defaults focus on reliable desktop automation; they can be overridden via environment variables without code changes.
-
-## Supporting Scripts
-
-- `desktop_app.py` – Entry point that launches the Flet UI. Also contains an optional “autotest” scenario driven by environment variables.
-- `move_any_translation.py` – One-off maintenance script that adjusts code blocks inside `excel_tools.py`.
-- `update_prompt.py` – Patch script that updates the reference translation prompt section.
-
-## Error Handling and Cancellation
-
-- Tool functions raise `ToolExecutionError` when validation fails (e.g., mismatched output shapes, missing JSON keys), which propagate back to the agent for corrective action.
-- Long-running loops check `_ensure_not_stopped()` helpers that watch the shared cancellation event, so STOP requests halt both Excel writes and Copilot prompts.
-- The agent inspects tool observations and can issue retries with adjusted parameters before producing a final answer.
-
-## Typical Translation-with-References Workflow
-
-1. User enters an instruction identifying the source range, output columns, and reference URLs.
-2. Agent converts the request into a `translate_range_with_references` call.
-3. Tool loads source text from Excel, normalizes references, and extracts aligned quotations from the reference URLs.
-4. Reference pairs are fed into the translation prompt, with explicit emphasis on reusing approved phrasing.
-5. Copilot returns JSON containing translation, process notes (in Japanese, documenting how references guided choices), and the subset of reference pairs actually cited.
-6. Tool writes translations, notes, and references into the output block, logging progress into the UI.
-7. Final message lists any warnings (e.g., unused reference columns, coercions of local files) and confirms completion.
-
-## Getting Started for New Contributors
-
-- Run `desktop_app.py` to launch the UI and connect to Excel. Ensure Excel is open with the target workbook.
-- Use the mode selector to switch between plain translation, reference-assisted translation, and review.
-- Place reference documents either as HTTP(S) URLs or as files inside the working directory/Downloads folder. Local paths are auto-resolved to `file://` URIs.
-- Monitor the UI’s Thought/Action/Observation stream to diagnose tool parameter issues; errors include detailed instructions for corrective action.
-
-This architecture allows the AI agent to stay focused on orchestration while the deterministic Python layer guarantees that Excel edits remain well-structured and traceable.
+この設計により、ユーザーは JSON を直接記述する必要がなく、フォーム入力のみで確実に必要項目を揃えたリクエストを実行できます。一方で特殊なケースでは引き続き自由入力からの ReAct フローも利用できるため柔軟性も確保しています。
