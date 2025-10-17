@@ -776,7 +776,6 @@ class CopilotApp:
             controls=[self._chat_panel, self._form_panel, self._mode_panel_container],
             expand=True,
             spacing=24,
-            scroll=ft.ScrollMode.AUTO,
         )
 
         self._layout = ft.ResponsiveRow(
