@@ -99,12 +99,12 @@ class ChatMessage(ft.ResponsiveRow):
             },
             "error": {
                 "icon": ft.Icons.ERROR_OUTLINE_ROUNDED,
-                "icon_color": palette["on_error"],
-                "bgcolor": palette["error"],
-                "icon_bgcolor": ft.Colors.with_opacity(0.2, palette["error"]),
-                "text_style": {"color": palette["on_error"], "size": 13},
+                "icon_color": palette["error"],
+                "bgcolor": palette["error_container"],
+                "icon_bgcolor": ft.Colors.with_opacity(0.18, palette["error"]),
+                "text_style": {"color": palette["on_error_container"], "size": 13},
                 "title": "Error",
-                "border_color": ft.Colors.with_opacity(0.22, palette["on_error"]),
+                "border_color": ft.Colors.with_opacity(0.22, palette["error"]),
             },
         }
 

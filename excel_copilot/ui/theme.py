@@ -31,6 +31,8 @@ EXPRESSIVE_PALETTE: dict[str, str] = {
     "inverse_on_surface": "#F8FAFC",
     "error": "#DC2626",
     "on_error": "#FFFFFF",
+    "error_container": "#FEE2E2",
+    "on_error_container": "#7F1D1D",
     "success": "#047857",
     "warning": "#F59E0B",
 }

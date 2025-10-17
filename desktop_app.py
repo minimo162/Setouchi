@@ -31,7 +31,7 @@ from excel_copilot.ui.messages import (
     ResponseMessage,
     ResponseType,
 )
-from excel_copilot.ui.theme import EXPRESSIVE_PALETTE
+from excel_copilot.ui.theme import EXPRESSIVE_PALETTE, elevated_surface_gradient
 from excel_copilot.ui.worker import CopilotWorker
 
 if not logging.getLogger().handlers:
@@ -304,6 +304,7 @@ class CopilotApp:
         self._chat_filter_dropdown: Optional[ft.Dropdown] = None
         self._chat_filter_value: str = "all"
         self._chat_scroll_button: Optional[ft.TextButton] = None
+        self._chat_header_subtitle: Optional[ft.Text] = None
 
         self.chat_history: list[Dict[str, Any]] = []
         self.history_lock = threading.Lock()
@@ -447,8 +448,8 @@ class CopilotApp:
             font_family=font_family,
         )
         self.page.theme_mode = ft.ThemeMode.LIGHT
-        self.page.bgcolor = palette["background"]
-        self.page.window.bgcolor = palette["background"]
+        self.page.bgcolor = palette["surface_dim"]
+        self.page.window.bgcolor = palette["surface_dim"]
         self.page.padding = ft.Padding(0, 0, 0, 0)
         self.page.scroll = ft.ScrollMode.AUTO
         self.page.window.center()
@@ -619,16 +620,10 @@ class CopilotApp:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        actions_card = ft.Container(
-            content=self._context_actions,
-            bgcolor=ft.Colors.with_opacity(0.45, palette["surface_variant"]),
-            border_radius=18,
-            padding=ft.Padding(18, 16, 18, 16),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.05, palette["outline_variant"])),
-        )
+        actions_divider = ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.1, palette["outline"]))
 
         context_column = ft.Column(
-            controls=[status_card, selector_card, actions_card],
+            controls=[status_card, selector_card, actions_divider, self._context_actions],
             spacing=16,
             tight=True,
         )
@@ -647,7 +642,6 @@ class CopilotApp:
             content=context_column,
         )
 
-        filter_label = ft.Text("チャットログ", size=14, weight=ft.FontWeight.W_600, color=palette["on_surface"], font_family=self._primary_font_family)
         self._chat_filter_dropdown = ft.Dropdown(
             value=self._chat_filter_value,
             options=[
@@ -665,51 +659,73 @@ class CopilotApp:
             hint_text="表示を絞り込む",
             dense=True,
         )
-        filter_row = ft.Row(
-            controls=[filter_label, self._chat_filter_dropdown],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
         self._chat_scroll_button = ft.TextButton(
             text="最新の結果へ",
             icon=ft.Icons.ARROW_DOWNWARD,
             on_click=self._scroll_chat_to_latest,
             disabled=True,
         )
+        chat_header_title = ft.Text(
+            "チャットタイムライン",
+            size=15,
+            weight=ft.FontWeight.W_600,
+            color=palette["on_surface"],
+            font_family=self._primary_font_family,
+        )
+        self._chat_header_subtitle = ft.Text(
+            "処理ログと結果が最新順に表示されます。",
+            size=12,
+            color=palette["on_surface_variant"],
+            font_family=self._hint_font_family,
+        )
+        header_column = ft.Column(
+            [chat_header_title, self._chat_header_subtitle],
+            spacing=4,
+            tight=True,
+        )
+        header_actions = ft.Row(
+            [self._chat_filter_dropdown, self._chat_scroll_button],
+            spacing=12,
+            alignment=ft.MainAxisAlignment.END,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        chat_header_section = ft.Column(
+            controls=[
+                ft.Row(
+                    [header_column, header_actions],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+                ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.05, palette["outline"])),
+            ],
+            spacing=14,
+        )
+
         self._chat_empty_state = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("まだメッセージがありません。", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
                     ft.Text(
-                        "フォームを送信すると処理状況と結果がここに表示されます。参考: モードを切り替えて必要な項目を入力してください。",
+                        "まだメッセージがありません。",
+                        size=13,
+                        color=palette["on_surface"],
+                        font_family=self._primary_font_family,
+                        weight=ft.FontWeight.W_500,
+                    ),
+                    ft.Text(
+                        "フォームを送信すると処理状況と結果がここに表示されます。",
                         size=12,
                         color=palette["on_surface_variant"],
                         font_family=self._hint_font_family,
                     ),
-                    ft.Row(
-                        [
-                            ft.Chip(label=ft.Text("1. フォーム入力"), disabled=True),
-                            ft.Chip(label=ft.Text("2. 送信"), disabled=True),
-                            ft.Chip(label=ft.Text("3. 結果を確認"), disabled=True),
-                        ],
-                        spacing=8,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        wrap=True,
-                    ),
-                    ft.Row(
-                        [self._chat_scroll_button],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    ),
                 ],
-                spacing=12,
+                spacing=6,
                 tight=True,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            bgcolor=ft.Colors.with_opacity(0.4, palette["surface_variant"]),
-            border_radius=18,
-            padding=ft.Padding(24, 20, 24, 24),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.05, palette["outline_variant"])),
+            padding=ft.Padding(28, 24, 28, 24),
+            border_radius=16,
+            border=ft.border.all(1, ft.Colors.with_opacity(0.06, palette["outline_variant"])),
+            bgcolor=ft.Colors.with_opacity(0.18, palette["surface_variant"]),
             visible=True,
         )
 
@@ -725,6 +741,7 @@ class CopilotApp:
         self._chat_panel = ft.Container(
             expand=True,
             bgcolor=palette["surface_high"],
+            gradient=elevated_surface_gradient(),
             border_radius=24,
             padding=ft.Padding(28, 32, 28, 32),
             border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
@@ -736,7 +753,7 @@ class CopilotApp:
             ),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
-                controls=[filter_row, self._chat_empty_state, self.chat_list],
+                controls=[chat_header_section, self._chat_empty_state, self.chat_list],
                 spacing=24,
                 expand=True,
             ),
@@ -782,6 +799,8 @@ class CopilotApp:
             ],
             spacing=32,
             run_spacing=32,
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.START,
             expand=True,
         )
 
@@ -794,7 +813,8 @@ class CopilotApp:
         self._content_container = ft.Container(
             content=page_body,
             expand=True,
-            padding=ft.Padding(40, 48, 40, 48),
+            padding=ft.Padding(28, 36, 28, 36),
+            alignment=ft.alignment.top_center,
         )
 
         self._update_context_summary()
@@ -813,13 +833,12 @@ class CopilotApp:
         tabs_control, controls_map = self._create_form_controls_for_mode(self.mode)
         self.form_controls = controls_map
         self._form_tabs = tabs_control
+        self._form_tabs.expand = True
         self._form_body_column = ft.Container(
             content=self._form_tabs,
             height=420,
             expand=False,
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            border_radius=18,
-            bgcolor=ft.Colors.with_opacity(0.02, palette["surface_variant"]),
+            padding=ft.Padding(4, 0, 4, 0),
         )
 
         self.form_error_text = ft.Text(
@@ -877,16 +896,17 @@ class CopilotApp:
             alignment=ft.MainAxisAlignment.END,
             spacing=12,
         )
-        action_bar = ft.Container(
-            content=ft.Row(
-                controls=[progress_cluster, action_buttons],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=ft.Padding(20, 12, 20, 12),
-            bgcolor=ft.Colors.with_opacity(0.32, palette["surface_variant"]),
-            border_radius=18,
-            border=ft.border.only(top=ft.BorderSide(1, ft.Colors.with_opacity(0.1, palette["outline"]))),
+        action_bar = ft.Column(
+            controls=[
+                ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.08, palette["outline"])),
+                ft.Row(
+                    controls=[progress_cluster, action_buttons],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ],
+            spacing=12,
+            tight=True,
         )
 
         header = ft.Text(
@@ -1468,10 +1488,10 @@ class CopilotApp:
                 font_family=self._primary_font_family,
             )
             card_body = ft.Container(
-                bgcolor=palette["surface"],
-                border_radius=18,
-                padding=ft.Padding(18, 16, 18, 16),
-                border=ft.border.all(1, ft.Colors.with_opacity(0.1, palette["outline_variant"])),
+                bgcolor=ft.Colors.with_opacity(0.1, palette["surface_variant"]),
+                border_radius=12,
+                padding=ft.Padding(16, 14, 16, 14),
+                border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline_variant"])),
                 content=ft.Column(
                     [
                         ft.Row(
@@ -1509,22 +1529,10 @@ class CopilotApp:
             font_family=self._hint_font_family,
         )
 
-        return ft.Container(
-            content=ft.Column(
-                [instruction, mode_row],
-                spacing=10,
-                tight=True,
-            ),
-            bgcolor=palette["surface_high"],
-            border_radius=24,
-            padding=ft.Padding(24, 24, 24, 20),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=16,
-                color=ft.Colors.with_opacity(0.06, "#0F172A"),
-                offset=ft.Offset(0, 8),
-            ),
+        return ft.Column(
+            [instruction, mode_row],
+            spacing=10,
+            tight=True,
         )
 
     def _refresh_mode_cards(self):
@@ -1535,7 +1543,11 @@ class CopilotApp:
                 2 if is_selected else 1,
                 ft.Colors.with_opacity(0.9, palette["primary"]) if is_selected else ft.Colors.with_opacity(0.1, palette["outline_variant"]),
             )
-            card.bgcolor = ft.Colors.with_opacity(0.14, palette["primary"]) if is_selected else palette["surface"]
+            card.bgcolor = (
+                ft.Colors.with_opacity(0.18, palette["primary"])
+                if is_selected
+                else ft.Colors.with_opacity(0.1, palette["surface_variant"])
+            )
 
     def _handle_mode_card_select(self, new_mode: CopilotMode):
         if self.app_state not in {AppState.READY, AppState.ERROR}:
@@ -1716,12 +1728,18 @@ class CopilotApp:
             pass
 
     def _update_context_summary(self) -> None:
+        workbook = self.current_workbook_name or "未選択"
+        sheet = self.current_sheet_name or "未選択"
         if self._context_summary_text:
-            workbook = self.current_workbook_name or "未選択"
-            sheet = self.current_sheet_name or "未選択"
             self._context_summary_text.value = f"選択中: {workbook} / {sheet}"
             try:
                 self._context_summary_text.update()
+            except Exception:
+                pass
+        if self._chat_header_subtitle:
+            self._chat_header_subtitle.value = f"{workbook} / {sheet} のアクティビティを表示中"
+            try:
+                self._chat_header_subtitle.update()
             except Exception:
                 pass
         if self._sync_status_text:
@@ -2074,23 +2092,50 @@ class CopilotApp:
                     workbook_names = manager.list_workbook_names()
                     if not workbook_names:
                         raise ExcelConnectionError("開いている Excel ブックが見つかりません。")
-                    if (
+
+                    active_workbook: Optional[str] = None
+                    active_sheet: Optional[str] = None
+
+                    def _fetch_active_context() -> Tuple[Optional[str], Optional[str]]:
+                        try:
+                            context = manager.get_active_workbook_and_sheet()
+                        except ExcelConnectionError as context_err:
+                            print(f"Failed to obtain active workbook and sheet: {context_err}")
+                            return None, None
+                        return (
+                            context.get("workbook_name"),
+                            context.get("sheet_name"),
+                        )
+
+                    should_activate_target = (
                         target_workbook
                         and target_workbook in workbook_names
                         and not auto_triggered
-                    ):
+                    )
+
+                    if should_activate_target:
                         try:
-                            manager.activate_workbook(target_workbook)
-                        except Exception as activate_err:
-                            print(
-                                f"前回選択したシート '{preferred_sheet}' の復元に失敗しました: {activate_err}"
-                            )
+                            active_workbook = manager.activate_workbook(target_workbook)
+                        except ExcelConnectionError as activate_err:
+                            print(f"Failed to activate requested workbook '{target_workbook}': {activate_err}")
                             self._add_message(
                                 ResponseType.INFO,
-                                f"保存済みシート『{preferred_sheet}』を開けませんでした: {activate_err}"
+                                f"ブック『{target_workbook}』をアクティブにできませんでした: {activate_err}",
                             )
+                            active_workbook, active_sheet = _fetch_active_context()
+                        else:
+                            active_workbook, active_sheet = _fetch_active_context()
+                    else:
+                        active_workbook, active_sheet = _fetch_active_context()
 
-                    sheet_names = manager.list_sheet_names()
+                    if not active_workbook and workbook_names:
+                        active_workbook = workbook_names[0]
+
+                    try:
+                        sheet_names = manager.list_sheet_names()
+                    except ExcelConnectionError as sheet_err:
+                        print(f"Failed to fetch sheet names: {sheet_err}")
+                        sheet_names = []
 
                     preferred_sheet = self._load_last_sheet_preference(active_workbook)
                     if (
@@ -2101,14 +2146,21 @@ class CopilotApp:
                     ):
                         try:
                             active_sheet = manager.activate_sheet(preferred_sheet)
-                        except Exception as activate_err:
-                            print(
-                                f"前回選択したシート '{preferred_sheet}' の復元に失敗しました: {activate_err}"
-                            )
+                        except ExcelConnectionError as activate_err:
+                            print(f"保存済みシート '{preferred_sheet}' の復元に失敗しました: {activate_err}")
                             self._add_message(
                                 ResponseType.INFO,
-                                f"保存済みシート『{preferred_sheet}』を開けませんでした: {activate_err}"
+                                f"保存済みシート『{preferred_sheet}』を開けませんでした: {activate_err}",
                             )
+                        else:
+                            try:
+                                sheet_names = manager.list_sheet_names()
+                            except ExcelConnectionError as sheet_err:
+                                print(f"Failed to fetch sheet names after activation: {sheet_err}")
+                                sheet_names = []
+
+                    if not active_sheet and sheet_names:
+                        active_sheet = sheet_names[0]
 
                 snapshot = {
                     "workbooks": tuple(workbook_names),
@@ -2216,7 +2268,7 @@ class CopilotApp:
                 return active_sheet
 
             except Exception as ex:
-                error_message = f"Excel縺ｮ諠・ｱ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆: {ex}"
+                error_message = f"Excel の状態更新中にエラーが発生しました: {ex}"
                 if self._auto_test_enabled:
                     print(f"AUTOTEST: excel context error - {error_message}", flush=True)
                 self.sheet_selection_updating = True
