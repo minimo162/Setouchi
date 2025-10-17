@@ -121,7 +121,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
         {
             "control": "section",
             "label": "参照資料",
-            "description": "URL の追加／削除ボタンで 1 行ずつ入力を管理できます。HTTP(S) で取得できるリモート参照のみを登録してください。",
+            "description": "必要に応じて HTTP(S) で取得できる参照 URL を記入してください（1 件まで）。",
             "group": "references",
             "expanded": False,
             "children": [
@@ -131,7 +131,8 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
                     "argument": "source_reference_urls",
                     "type": "list",
                     "multiline": True,
-                    "min_lines": 2,
+                    "min_lines": 1,
+                    "max_lines": 3,
                     "placeholder": "例: https://example.com/source-guideline",
                     "group": "references",
                 },
@@ -141,7 +142,8 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
                     "argument": "target_reference_urls",
                     "type": "list",
                     "multiline": True,
-                    "min_lines": 2,
+                    "min_lines": 1,
+                    "max_lines": 3,
                     "placeholder": "例: https://example.com/english-reference",
                     "group": "references",
                 },
@@ -159,7 +161,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
         },
         {
             "name": "translated_range",
-            "label": "翻訳範囲",
+            "label": "訳文範囲",
             "argument": "translated_range",
             "required": True,
             "placeholder": "例: C2:C20",
@@ -198,15 +200,15 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
         },
     ],
 }
-
 FORM_GROUP_LABELS: Dict[str, str] = {
+    "mode": "モード",
     "scope": "対象範囲",
     "output": "出力設定",
     "references": "参考資料",
     "options": "オプション",
 }
 
-FORM_GROUP_ORDER: List[str] = ["scope", "output", "references", "options"]
+FORM_GROUP_ORDER: List[str] = ["mode", "scope", "output", "references", "options"]
 
 
 def _flatten_field_definitions(definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -733,8 +735,6 @@ class CopilotApp:
             adaptive=True,
         )
 
-        self.mode_card_row = self._build_mode_cards()
-
         self._chat_panel = ft.Container(
             expand=True,
             bgcolor=palette["surface_high"],
@@ -757,23 +757,25 @@ class CopilotApp:
 
         self._form_panel = self._build_form_panel()
 
-        self._mode_panel_container = ft.Container(
-            content=self.mode_card_row,
-            bgcolor=palette["surface_variant"],
-            border_radius=20,
-            padding=ft.Padding(18, 16, 18, 16),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=12,
-                color=ft.Colors.with_opacity(0.04, "#0F172A"),
-                offset=ft.Offset(0, 6),
-            ),
-            margin=ft.margin.only(top=4),
+        form_and_chat_row = ft.ResponsiveRow(
+            controls=[
+                ft.Container(
+                    content=self._form_panel,
+                    col={"xs": 12, "md": 12, "lg": 6},
+                    expand=True,
+                ),
+                ft.Container(
+                    content=self._chat_panel,
+                    col={"xs": 12, "md": 12, "lg": 6},
+                    expand=True,
+                ),
+            ],
+            spacing=24,
+            run_spacing=24,
         )
 
         self._main_column = ft.Column(
-            controls=[self._chat_panel, self._form_panel, self._mode_panel_container],
+            controls=[form_and_chat_row],
             expand=True,
             spacing=24,
         )
@@ -824,7 +826,14 @@ class CopilotApp:
         tabs_control, controls_map = self._create_form_controls_for_mode(self.mode)
         self.form_controls = controls_map
         self._form_tabs = tabs_control
-        self._form_body_column = ft.Container(content=self._form_tabs, expand=True)
+        self._form_body_column = ft.Container(
+            content=self._form_tabs,
+            height=420,
+            expand=False,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            border_radius=18,
+            bgcolor=ft.Colors.with_opacity(0.02, palette["surface_variant"]),
+        )
 
         self.form_error_text = ft.Text(
             "",
@@ -911,7 +920,7 @@ class CopilotApp:
             content=content,
             bgcolor=palette["surface_high"],
             border_radius=24,
-            padding=ft.Padding(28, 32, 28, 32),
+            padding=ft.Padding(22, 24, 22, 24),
             border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
             shadow=ft.BoxShadow(
                 spread_radius=0,
@@ -938,6 +947,8 @@ class CopilotApp:
         new_controls: Dict[str, ft.TextField] = {}
         self._field_groups = {}
         self._group_summary_labels = {}
+
+        grouped_controls.setdefault("mode", []).append(self._build_mode_selection_control())
 
         def _build_required_badge() -> ft.Container:
             return ft.Container(
@@ -981,32 +992,7 @@ class CopilotApp:
             self._field_groups[name] = group
             return text_field
 
-        def _wrap_reference_field(field_name: str, text_field: ft.TextField) -> ft.Control:
-            add_button = ft.IconButton(
-                icon=ft.Icons.ADD,
-                tooltip="空行を追加",
-                on_click=lambda e, name=field_name: self._append_reference_row(name),
-                icon_size=18,
-            )
-            remove_button = ft.IconButton(
-                icon=ft.Icons.REMOVE,
-                tooltip="末尾の行を削除",
-                on_click=lambda e, name=field_name: self._remove_reference_row(name),
-                icon_size=18,
-            )
-            paste_button = ft.IconButton(
-                icon=ft.Icons.CONTENT_PASTE,
-                tooltip="クリップボードから貼り付け",
-                on_click=lambda e, name=field_name: self._paste_reference_from_clipboard(name),
-                icon_size=18,
-            )
-            button_row = ft.Row(
-                controls=[paste_button, add_button, remove_button],
-                alignment=ft.MainAxisAlignment.END,
-                spacing=6,
-            )
-            return ft.Column([text_field, button_row], spacing=8, tight=True)
-
+        
         for field in definitions:
             group_key = field.get("group", "scope")
             if field.get("control") == "section":
@@ -1014,10 +1000,7 @@ class CopilotApp:
                 for child_definition in field.get("children", []):
                     child_group = child_definition.get("group", group_key)
                     child_field = _build_text_field(child_definition, child_group)
-                    if child_group == "references":
-                        child_controls.append(_wrap_reference_field(child_definition["name"], child_field))
-                    else:
-                        child_controls.append(child_field)
+                    child_controls.append(child_field)
                 if not child_controls:
                     continue
                 section_elements: List[ft.Control] = [
@@ -1154,6 +1137,8 @@ class CopilotApp:
             pass
 
     def _compute_group_summary(self, group_key: str) -> str:
+        if group_key == "mode":
+            return MODE_LABELS.get(self.mode, self.mode.value)
         if group_key == "references":
             total_urls = 0
             for name, assigned_group in self._field_groups.items():
@@ -1189,73 +1174,6 @@ class CopilotApp:
         if group_key == "options" and len(values) > 1:
             return f"{values[0]} 他 {len(values) - 1}"
         return values[0]
-
-    def _append_reference_row(self, field_name: str) -> None:
-        control = self.form_controls.get(field_name)
-        if not control:
-            return
-        current = (control.value or "").replace("\r\n", "\n")
-        lines = current.split("\n") if current else []
-        lines.append("")
-        control.value = "\n".join(lines)
-        try:
-            control.focus()
-            control.update()
-        except Exception:
-            pass
-        self._handle_form_value_change(field_name)
-
-    def _remove_reference_row(self, field_name: str) -> None:
-        control = self.form_controls.get(field_name)
-        if not control:
-            return
-        current = (control.value or "").replace("\r\n", "\n")
-        lines = current.split("\n") if current else []
-        if not lines:
-            return
-        lines = lines[:-1]
-        control.value = "\n".join(lines).rstrip()
-        try:
-            control.update()
-        except Exception:
-            pass
-        self._handle_form_value_change(field_name)
-
-    def _paste_reference_from_clipboard(self, field_name: str) -> None:
-        control = self.form_controls.get(field_name)
-        if not control:
-            return
-        clipboard_text = ""
-        get_clipboard = getattr(self.page, "get_clipboard", None)
-        if callable(get_clipboard):
-            try:
-                clipboard_text = get_clipboard() or ""
-            except Exception as clip_err:
-                print(f"クリップボードの取得に失敗しました: {clip_err}")
-        if not clipboard_text:
-            self._add_message(ResponseType.INFO, "クリップボードに貼り付け可能なURLが見つかりませんでした。")
-            return
-        urls = [
-            line.strip()
-            for line in clipboard_text.replace("\r\n", "\n").split("\n")
-            if line.strip()
-        ]
-        if not urls:
-            self._add_message(ResponseType.INFO, "貼り付け可能なURLが見つかりませんでした。")
-            return
-        existing = [
-            line.strip()
-            for line in (control.value or "").replace("\r\n", "\n").split("\n")
-            if line.strip()
-        ]
-        merged = existing + urls
-        control.value = "\n".join(merged)
-        try:
-            control.focus()
-            control.update()
-        except Exception:
-            pass
-        self._handle_form_value_change(field_name)
 
     def _split_list_values(self, raw_text: str) -> List[str]:
         tokens: List[str] = []
@@ -1574,6 +1492,37 @@ class CopilotApp:
         row = ft.ResponsiveRow(controls=cards, spacing=18, run_spacing=18)
         self._refresh_mode_cards()
         return row
+
+    def _build_mode_selection_control(self) -> ft.Container:
+        palette = EXPRESSIVE_PALETTE
+        mode_row = self._build_mode_cards()
+        self.mode_card_row = mode_row
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "モード選択",
+                        size=14,
+                        weight=ft.FontWeight.W_600,
+                        color=palette["on_surface_variant"],
+                        font_family=self._primary_font_family,
+                    ),
+                    mode_row,
+                ],
+                spacing=12,
+                tight=True,
+            ),
+            bgcolor=palette["surface_high"],
+            border_radius=24,
+            padding=ft.Padding(24, 24, 24, 20),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=16,
+                color=ft.Colors.with_opacity(0.06, "#0F172A"),
+                offset=ft.Offset(0, 8),
+            ),
+        )
 
     def _refresh_mode_cards(self):
         palette = EXPRESSIVE_PALETTE
