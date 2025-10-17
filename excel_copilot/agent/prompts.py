@@ -32,8 +32,7 @@ _TRANSLATION_NO_REF_SYSTEM_PROMPT = """
 - `cell_range` と `translation_output_range` を正しく指定し、セル範囲の形状を一致させること。
 - ユーザーが明示的に許可しない限り `overwrite_source` は `false` のままにし、`false` の場合は翻訳結果を `translation_output_range` に書き込むこと。
 - 各ツール呼び出しでは観測結果を確認し、必要ならトラブルシュートしてから次のステップへ進むこと。
-- 大きな範囲は `rows_per_batch` を使って分割し、必要に応じて複数回に分けて処理すること。
-- このモードでは `reference_ranges`、`reference_urls`、`citation_output_range` を指定しないこと。
+- このモードでは参照資料に関する追加引数（URL や引用範囲）は指定しないこと。
 
 エラー対応
 - エラーメッセージを読み、同じ引数で繰り返さずに調整して再試行すること。
@@ -61,10 +60,9 @@ ReAct ループ
 
 追加の制約
 - `cell_range`、`sheet_name`（必要に応じて）、`target_language`、`translation_output_range` を必ず指定すること。
-- 参照する範囲や URL は `source_reference_urls`、`target_reference_urls`、`reference_ranges` を使って指定し、URL の正規化や余分な空白を避けること。
+- 参照資料は `source_reference_urls`、`target_reference_urls` で指定し、URL の正規化や余分な空白を避けること。
 - `overwrite_source` はユーザーが明示的に許可しない限り `false` にしておき、`false` の場合は翻訳結果を別セルに出力すること。
-- `rows_per_batch` を活用し、ユーザーが求める単位で処理を分割すること。
-- `citation_output_range` は引用情報を出力する場合のみ指定すること。
+- 引用の詳細は翻訳出力列に内包されるため、専用の引用出力範囲は指定しないこと。
 
 エラー対応
 - エラーメッセージを読んで原因に合わせて引数を修正し、同じ失敗を繰り返さないこと。

@@ -89,14 +89,6 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "default": "English",
             "placeholder": "例: English",
         },
-        {
-            "name": "rows_per_batch",
-            "label": "バッチ行数",
-            "argument": "rows_per_batch",
-            "type": "int",
-            "min": 1,
-            "placeholder": "例: 10",
-        },
     ],
     CopilotMode.TRANSLATION_WITH_REFERENCES: [
         {
@@ -121,45 +113,30 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "placeholder": "例: English",
         },
         {
-            "name": "source_reference_urls",
-            "label": "参照URL / ファイル（原文側）",
-            "argument": "source_reference_urls",
-            "type": "list",
-            "multiline": True,
-            "min_lines": 3,
-            "placeholder": "1行に1件ずつ入力してください（ローカルファイル可）",
-        },
-        {
-            "name": "target_reference_urls",
-            "label": "参照URL / ファイル（翻訳側）",
-            "argument": "target_reference_urls",
-            "type": "list",
-            "multiline": True,
-            "min_lines": 3,
-            "placeholder": "1行に1件ずつ入力してください",
-        },
-        {
-            "name": "reference_urls",
-            "label": "共通参照URL / ファイル",
-            "argument": "reference_urls",
-            "type": "list",
-            "multiline": True,
-            "min_lines": 3,
-            "placeholder": "追加の参照があれば入力してください",
-        },
-        {
-            "name": "citation_output_range",
-            "label": "引用出力範囲",
-            "argument": "citation_output_range",
-            "placeholder": "例: E2:E20",
-        },
-        {
-            "name": "rows_per_batch",
-            "label": "バッチ行数",
-            "argument": "rows_per_batch",
-            "type": "int",
-            "min": 1,
-            "placeholder": "例: 10",
+            "control": "section",
+            "label": "参照資料",
+            "description": "原文・翻訳の対訳候補を探すための資料 URL やファイルパスを必要に応じて入力します。",
+            "expanded": False,
+            "children": [
+                {
+                    "name": "source_reference_urls",
+                    "label": "参照URL / ファイル（原文側）",
+                    "argument": "source_reference_urls",
+                    "type": "list",
+                    "multiline": True,
+                    "min_lines": 2,
+                    "placeholder": "1行に1件ずつ入力してください（ローカルファイル可）",
+                },
+                {
+                    "name": "target_reference_urls",
+                    "label": "参照URL / ファイル（翻訳側）",
+                    "argument": "target_reference_urls",
+                    "type": "list",
+                    "multiline": True,
+                    "min_lines": 2,
+                    "placeholder": "1行に1件ずつ入力してください",
+                },
+            ],
         },
     ],
     CopilotMode.REVIEW: [
@@ -207,12 +184,25 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
     ],
 }
 
+
+def _flatten_field_definitions(definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    flat: List[Dict[str, Any]] = []
+    for field in definitions:
+        if field.get("control") == "section":
+            flat.extend(field.get("children", []))
+        else:
+            flat.append(field)
+    return flat
+
+
+def _iter_mode_field_definitions(mode: CopilotMode) -> List[Dict[str, Any]]:
+    return _flatten_field_definitions(FORM_FIELD_DEFINITIONS.get(mode, []))
+
 def _default_autotest_payload(source_url: Optional[str], target_url: Optional[str]) -> str:
     arguments: Dict[str, Any] = {
         "cell_range": "A2:A20",
         "translation_output_range": "B2:D20",
         "target_language": "English",
-        "rows_per_batch": 10,
     }
     if source_url:
         arguments["source_reference_urls"] = [source_url]
@@ -742,14 +732,14 @@ class CopilotApp:
         controls: List[ft.Control] = []
         new_controls: Dict[str, ft.TextField] = {}
 
-        for field in definitions:
-            name = field["name"]
-            value = preserved.get(name, field.get("default", "")) or ""
-            multiline = bool(field.get("multiline"))
+        def _build_text_field(definition: Dict[str, Any]) -> ft.TextField:
+            name = definition["name"]
+            value = preserved.get(name, definition.get("default", "")) or ""
+            multiline = bool(definition.get("multiline"))
 
             text_field = ft.TextField(
-                label=field["label"],
-                hint_text=field.get("placeholder", ""),
+                label=definition["label"],
+                hint_text=definition.get("placeholder", ""),
                 value=value,
                 expand=True,
                 multiline=multiline,
@@ -762,15 +752,54 @@ class CopilotApp:
                 selection_color=ft.Colors.with_opacity(0.2, EXPRESSIVE_PALETTE["primary"]),
                 text_style=ft.TextStyle(font_family=self._primary_font_family, size=13),
             )
-            if multiline and field.get("min_lines"):
-                text_field.min_lines = field["min_lines"]
-            if multiline and field.get("max_lines"):
-                text_field.max_lines = field["max_lines"]
-            if field.get("type") == "int":
+            if multiline and definition.get("min_lines"):
+                text_field.min_lines = definition["min_lines"]
+            if multiline and definition.get("max_lines"):
+                text_field.max_lines = definition["max_lines"]
+            if definition.get("type") == "int":
                 text_field.keyboard_type = ft.KeyboardType.NUMBER
             text_field.on_submit = self._submit_form
             new_controls[name] = text_field
-            controls.append(text_field)
+            return text_field
+
+        for field in definitions:
+            if field.get("control") == "section":
+                child_controls = [
+                    _build_text_field(child_definition)
+                    for child_definition in field.get("children", [])
+                ]
+                if not child_controls:
+                    continue
+                section_elements: List[ft.Control] = [
+                    ft.Text(
+                        field.get("label", ""),
+                        size=14,
+                        weight=ft.FontWeight.W_500,
+                        color=EXPRESSIVE_PALETTE["primary"],
+                        font_family=self._primary_font_family,
+                    )
+                ]
+                description_text = field.get("description")
+                if description_text:
+                    section_elements.append(
+                        ft.Text(
+                            description_text,
+                            size=12,
+                            color=EXPRESSIVE_PALETTE["on_surface_variant"],
+                            font_family=self._hint_font_family,
+                        )
+                    )
+                section_elements.extend(child_controls)
+                controls.append(
+                    ft.Container(
+                        content=ft.Column(section_elements, spacing=12, tight=True),
+                        padding=ft.Padding(20, 18, 20, 20),
+                        border_radius=18,
+                        bgcolor=ft.Colors.with_opacity(0.08, EXPRESSIVE_PALETTE["surface_variant"]),
+                    )
+                )
+            else:
+                controls.append(_build_text_field(field))
 
         self.form_controls = new_controls
         return controls
@@ -801,7 +830,7 @@ class CopilotApp:
         return tokens
 
     def _collect_form_payload(self) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, Any]]]:
-        definitions = FORM_FIELD_DEFINITIONS.get(self.mode, [])
+        definitions = _iter_mode_field_definitions(self.mode)
         arguments: Dict[str, Any] = {}
         errors: List[str] = []
 
@@ -857,9 +886,7 @@ class CopilotApp:
             arguments.setdefault("target_language", "English")
 
         if tool_name == "translate_range_with_references":
-            has_reference = any(
-                arguments.get(key) for key in ("source_reference_urls", "target_reference_urls", "reference_urls")
-            )
+            has_reference = any(arguments.get(key) for key in ("source_reference_urls", "target_reference_urls"))
             if not has_reference:
                 return None, "参照URLまたはファイルを1件以上入力してください。", None
 
@@ -878,7 +905,7 @@ class CopilotApp:
     def _format_form_summary(self, arguments: Dict[str, Any]) -> str:
         mode_label = MODE_LABELS.get(self.mode, self.mode.value)
         lines = [f"繝輔か繝ｼ繝騾∽ｿ｡ ({mode_label})"]
-        for field in FORM_FIELD_DEFINITIONS.get(self.mode, []):
+        for field in _iter_mode_field_definitions(self.mode):
             key = field["argument"]
             value = arguments.get(key)
             if value is None or value == "":
@@ -2022,12 +2049,12 @@ class CopilotApp:
 
     def _build_autotest_form_values(self, override_payload: Optional[Dict[str, Any]]) -> Dict[str, str]:
         definitions = FORM_FIELD_DEFINITIONS.get(self.mode, [])
+        flat_definitions = _flatten_field_definitions(definitions)
         defaults_by_mode: Dict[CopilotMode, Dict[str, Any]] = {
             CopilotMode.TRANSLATION_WITH_REFERENCES: {
                 "cell_range": "A2:A20",
                 "translation_output_range": "B2:D20",
                 "target_language": "English",
-                "rows_per_batch": 10,
                 "source_reference_urls": [self._auto_test_source_url] if self._auto_test_source_url else [],
                 "target_reference_urls": [self._auto_test_target_url] if self._auto_test_target_url else [],
             },
@@ -2035,7 +2062,6 @@ class CopilotApp:
                 "cell_range": "A2:A20",
                 "translation_output_range": "B2:B20",
                 "target_language": "English",
-                "rows_per_batch": 10,
             },
             CopilotMode.REVIEW: {
                 "source_range": "B2:B20",
@@ -2055,7 +2081,7 @@ class CopilotApp:
                 override_candidates.insert(0, arguments_override)
 
         values: Dict[str, str] = {}
-        for field in definitions:
+        for field in flat_definitions:
             name = field["name"]
             argument_key = field["argument"]
             field_type = field.get("type", "str")
