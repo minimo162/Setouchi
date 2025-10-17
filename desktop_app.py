@@ -700,9 +700,9 @@ class CopilotApp:
                     ),
                     ft.Row(
                         [
-                            ft.Chip(label="1. フォーム入力", disabled=True),
-                            ft.Chip(label="2. 送信", disabled=True),
-                            ft.Chip(label="3. 結果を確認", disabled=True),
+                            ft.Chip(label=ft.Text("1. フォーム入力"), disabled=True),
+                            ft.Chip(label=ft.Text("2. 送信"), disabled=True),
+                            ft.Chip(label=ft.Text("3. 結果を確認"), disabled=True),
                         ],
                         spacing=8,
                         alignment=ft.MainAxisAlignment.CENTER,
