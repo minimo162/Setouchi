@@ -1,4 +1,4 @@
-# desktop_app.py
+﻿# desktop_app.py
 
 import argparse
 import json
@@ -59,29 +59,11 @@ DEFAULT_AUTOTEST_TARGET_REFERENCE_URL = (
     "https://ralleti-my.sharepoint.com/:b:/g/personal/yuukikod_ralleti_onmicrosoft_com/"
     "EdJ586XuxedLsaSArCCve9kB1K79F0BvGqxzuZBhfWWS-w?e=wjR4C2"
 )
-DEFAULT_AUTOTEST_PROMPT_TEMPLATE = (
-    "A1セルを日本語参照: {source_url} 英語参照: {target_url} を使って英訳してください。"
-    "B列から連続する列に結果を並べ、B列=翻訳、C列=process_notes_jp、D列以降=参照文ペアとしてください。"
-    "参照文は直前に抽出したキーフレーズに関連する文を引用し、citation_output_range は指定しないでください。"
-)
-
-
-MODE_PLACEHOLDERS = {
-    CopilotMode.TRANSLATION: "翻訳（通常）用の指示を入力してください。例: B列を翻訳し、結果をC列に書き込んでください。",
-    CopilotMode.TRANSLATION_WITH_REFERENCES: "翻訳（参照あり）用の指示を入力してください。例: B列を翻訳し、指定した参照URLを使ってC:E列に翻訳・引用・解説を書き込んでください。",
-    CopilotMode.REVIEW: "翻訳チェックの指示を入力してください。例: 原文(B列)、翻訳(C列)、レビュー結果をD:F列に書き込んでください。",
-}
 
 MODE_LABELS = {
     CopilotMode.TRANSLATION: "翻訳（通常）",
     CopilotMode.TRANSLATION_WITH_REFERENCES: "翻訳（参照あり）",
     CopilotMode.REVIEW: "翻訳チェック",
-}
-
-FORM_TOOL_NAMES = {
-    CopilotMode.TRANSLATION: "translate_range_without_references",
-    CopilotMode.TRANSLATION_WITH_REFERENCES: "translate_range_with_references",
-    CopilotMode.REVIEW: "check_translation_quality",
 }
 
 FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
@@ -126,7 +108,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
         },
         {
             "name": "translation_output_range",
-            "label": "出力範囲（翻訳・メモ・参照ペアの開始列）",
+            "label": "出力範囲（翻訳・メモ・参照ペア）",
             "argument": "translation_output_range",
             "required": True,
             "placeholder": "例: B2:D20",
@@ -145,7 +127,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "type": "list",
             "multiline": True,
             "min_lines": 3,
-            "placeholder": "1行に1件ずつ入力してください。ローカルファイルも可。",
+            "placeholder": "1行に1件ずつ入力してください（ローカルファイル可）",
         },
         {
             "name": "target_reference_urls",
@@ -154,7 +136,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "type": "list",
             "multiline": True,
             "min_lines": 3,
-            "placeholder": "1行に1件ずつ入力してください。",
+            "placeholder": "1行に1件ずつ入力してください",
         },
         {
             "name": "reference_urls",
@@ -163,7 +145,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "type": "list",
             "multiline": True,
             "min_lines": 3,
-            "placeholder": "追加の参照資料があれば入力してください。",
+            "placeholder": "追加の参照があれば入力してください",
         },
         {
             "name": "citation_output_range",
@@ -218,12 +200,29 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
         },
         {
             "name": "corrected_output_range",
-            "label": "修正文列（任意）",
+            "label": "修正案列（任意）",
             "argument": "corrected_output_range",
             "placeholder": "例: G2:G20",
         },
     ],
 }
+
+def _default_autotest_payload(source_url: Optional[str], target_url: Optional[str]) -> str:
+    arguments: Dict[str, Any] = {
+        "cell_range": "A2:A20",
+        "translation_output_range": "B2:D20",
+        "target_language": "English",
+        "rows_per_batch": 10,
+    }
+    if source_url:
+        arguments["source_reference_urls"] = [source_url]
+    if target_url:
+        arguments["target_reference_urls"] = [target_url]
+    payload = {
+        "mode": CopilotMode.TRANSLATION_WITH_REFERENCES.value,
+        "arguments": arguments,
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _is_truthy_env(value: Optional[str]) -> bool:
@@ -263,8 +262,6 @@ class CopilotApp:
         self.workbook_selector: Optional[ft.Dropdown] = None
         self.sheet_selector: Optional[ft.Dropdown] = None
         self.chat_list: Optional[ft.ListView] = None
-        self.user_input: Optional[ft.TextField] = None
-        self.action_button: Optional[ft.Container] = None
         self.save_log_button: Optional[ft.TextButton] = None
         self.workbook_refresh_button: Optional[ft.TextButton] = None
         self.new_chat_button: Optional[ft.TextButton] = None
@@ -272,17 +269,14 @@ class CopilotApp:
         self.form_controls: Dict[str, ft.TextField] = {}
         self.form_error_text: Optional[ft.Text] = None
         self._form_submit_button: Optional[ft.Control] = None
+        self._form_cancel_button: Optional[ft.Control] = None
         self._form_body_column: Optional[ft.Column] = None
         self._form_panel: Optional[ft.Container] = None
         self._mode_card_map: dict[str, ft.Container] = {}
         self._context_panel: Optional[ft.Container] = None
         self._context_actions: Optional[ft.ResponsiveRow] = None
         self._chat_panel: Optional[ft.Container] = None
-        self._composer_panel: Optional[ft.Container] = None
         self._mode_panel_container: Optional[ft.Container] = None
-        self._composer_row: Optional[ft.ResponsiveRow] = None
-        self._user_input_wrapper: Optional[ft.Container] = None
-        self._action_button_wrapper: Optional[ft.Container] = None
         self._content_container: Optional[ft.Container] = None
         self._layout: Optional[ft.ResponsiveRow] = None
         self._main_column: Optional[ft.Column] = None
@@ -320,9 +314,9 @@ class CopilotApp:
         if auto_test_prompt_override:
             self._auto_test_prompt = auto_test_prompt_override
         elif _is_truthy_env(auto_test_enabled_flag):
-            self._auto_test_prompt = DEFAULT_AUTOTEST_PROMPT_TEMPLATE.format(
-                source_url=self._auto_test_source_url,
-                target_url=self._auto_test_target_url,
+            self._auto_test_prompt = _default_autotest_payload(
+                self._auto_test_source_url,
+                self._auto_test_target_url,
             )
         else:
             self._auto_test_prompt = None
@@ -438,14 +432,14 @@ class CopilotApp:
             if callable(bring_fn):
                 bring_fn()
         except Exception as focus_err:
-            print(f"アプリウィンドウの前面表示に失敗しました: {focus_err}")
+            print(f"繧｢繝励Μ繧ｦ繧｣繝ｳ繝峨え縺ｮ蜑埼擇陦ｨ遉ｺ縺ｫ螟ｱ謨励＠縺ｾ縺励◆: {focus_err}")
 
     def _focus_excel_window(self):
         try:
             with ExcelManager(self.current_workbook_name) as manager:
                 manager.focus_application_window()
         except Exception as focus_err:
-            print(f"Excelウィンドウの前面表示に失敗しました: {focus_err}")
+            print(f"Excel繧ｦ繧｣繝ｳ繝峨え縺ｮ蜑埼擇陦ｨ遉ｺ縺ｫ螟ｱ謨励＠縺ｾ縺励◆: {focus_err}")
 
     def _build_layout(self):
         palette = EXPRESSIVE_PALETTE
@@ -593,48 +587,7 @@ class CopilotApp:
             adaptive=True,
         )
 
-        self.user_input = ft.TextField(
-            hint_text=self._get_input_placeholder(self.mode),
-            expand=True,
-            multiline=True,
-            min_lines=3,
-            max_lines=5,
-            on_submit=self._run_copilot,
-            border_radius=18,
-            border_color=palette["outline_variant"],
-            focused_border_color=palette["primary"],
-            cursor_color=palette["primary"],
-            selection_color=ft.Colors.with_opacity(0.3, palette["primary"]),
-            filled=True,
-            fill_color=palette["surface_variant"],
-            text_style=ft.TextStyle(color=palette["on_surface"], font_family=self._primary_font_family),
-            hint_style=ft.TextStyle(color=palette["on_surface_variant"], font_family=self._hint_font_family),
-            content_padding=ft.Padding(18, 16, 18, 16),
-        )
-        self._apply_mode_to_input_placeholder()
-
         self.mode_card_row = self._build_mode_cards()
-
-        action_button_content = self._make_send_button()
-        self.action_button = ft.Container(
-            content=action_button_content,
-            width=48,
-            height=48,
-            bgcolor=palette["primary"],
-            border_radius=24,
-            alignment=ft.alignment.center,
-            ink=True,
-            on_hover=self._handle_button_hover,
-            animate_scale=100,
-            scale=1,
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=16,
-                color=ft.Colors.with_opacity(0.18, palette["primary"]),
-                offset=ft.Offset(0, 8),
-            ),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.1, palette["on_primary"])),
-        )
 
         self._chat_panel = ft.Container(
             expand=True,
@@ -658,44 +611,6 @@ class CopilotApp:
 
         self._form_panel = self._build_form_panel()
 
-        self.action_button.margin = ft.margin.only(top=4)
-
-        self._user_input_wrapper = ft.Container(
-            content=self.user_input,
-            col={"xs": 12, "sm": 9, "md": 10, "lg": 11},
-        )
-
-        self._action_button_wrapper = ft.Container(
-            content=self.action_button,
-            col={"xs": 12, "sm": 3, "md": 2, "lg": 1},
-            alignment=ft.alignment.center_right,
-        )
-
-        self._composer_row = ft.ResponsiveRow(
-            controls=[self._user_input_wrapper, self._action_button_wrapper],
-            spacing=18,
-            run_spacing=12,
-            vertical_alignment=ft.CrossAxisAlignment.END,
-        )
-
-        self._composer_panel = ft.Container(
-            bgcolor=palette["surface_high"],
-            border_radius=24,
-            padding=ft.Padding(28, 32, 28, 32),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=18,
-                color=ft.Colors.with_opacity(0.06, "#0F172A"),
-                offset=ft.Offset(0, 10),
-            ),
-            clip_behavior=ft.ClipBehavior.NONE,
-            content=ft.Column(
-                [self._composer_row],
-                spacing=24,
-            ),
-        )
-
         self._mode_panel_container = ft.Container(
             content=self.mode_card_row,
             bgcolor=palette["surface_variant"],
@@ -712,7 +627,7 @@ class CopilotApp:
         )
 
         self._main_column = ft.Column(
-            controls=[self._chat_panel, self._form_panel, self._composer_panel, self._mode_panel_container],
+            controls=[self._chat_panel, self._form_panel, self._mode_panel_container],
             expand=True,
             spacing=24,
         )
@@ -773,6 +688,13 @@ class CopilotApp:
             disabled=not can_interact,
         )
 
+        self._form_cancel_button = ft.OutlinedButton(
+            "停止",
+            icon=ft.Icons.STOP_CIRCLE_OUTLINED,
+            on_click=self._stop_task,
+            disabled=True,
+            visible=False,
+        )
         self._form_body_column = ft.Column(form_controls, spacing=12, tight=True)
 
         header = ft.Text(
@@ -784,8 +706,9 @@ class CopilotApp:
         )
 
         actions_row = ft.Row(
-            controls=[self._form_submit_button],
+            controls=[self._form_cancel_button, self._form_submit_button],
             alignment=ft.MainAxisAlignment.END,
+            spacing=12,
         )
 
         content = ft.Column(
@@ -907,10 +830,10 @@ class CopilotApp:
                 try:
                     value = int(raw_value)
                 except ValueError:
-                    errors.append(f"{field['label']}は整数で指定してください。")
+                    errors.append(f"{field['label']}は整数で入力してください。")
                     continue
                 if field.get("min") and value < field["min"]:
-                    errors.append(f"{field['label']}は{field['min']}以上で指定してください。")
+                    errors.append(f"{field['label']}は{field['min']}以上で入力してください。")
                     continue
                 arguments[argument_key] = value
             elif field_type == "list":
@@ -954,7 +877,7 @@ class CopilotApp:
 
     def _format_form_summary(self, arguments: Dict[str, Any]) -> str:
         mode_label = MODE_LABELS.get(self.mode, self.mode.value)
-        lines = [f"フォーム送信 ({mode_label})"]
+        lines = [f"繝輔か繝ｼ繝騾∽ｿ｡ ({mode_label})"]
         for field in FORM_FIELD_DEFINITIONS.get(self.mode, []):
             key = field["argument"]
             value = arguments.get(key)
@@ -1056,7 +979,7 @@ class CopilotApp:
         if self._content_container:
             self._content_container.padding = content_padding
 
-        for panel in (self._context_panel, self._chat_panel, self._composer_panel):
+        for panel in (self._context_panel, self._chat_panel):
             if panel:
                 panel.padding = panel_padding
 
@@ -1085,10 +1008,6 @@ class CopilotApp:
             self.mode_card_row.spacing = mode_spacing
             self.mode_card_row.run_spacing = mode_spacing
 
-        if self._composer_row:
-            self._composer_row.spacing = composer_spacing
-            self._composer_row.run_spacing = 12 if layout_key == "compact" else 16
-
         if self._context_actions:
             self._context_actions.alignment = context_alignment
 
@@ -1116,60 +1035,6 @@ class CopilotApp:
             else:
                 chat_height = preferred_chat_height
             self._chat_panel.height = chat_height
-
-        if self._action_button_wrapper:
-            self._action_button_wrapper.alignment = action_alignment
-            self._action_button_wrapper.margin = action_margin
-
-        if self.action_button:
-            button_size = 52 if layout_key == "compact" else 48
-            self.action_button.width = button_size
-            self.action_button.height = button_size
-
-        if self.user_input:
-            if layout_key == "compact":
-                self.user_input.min_lines = 4
-                self.user_input.max_lines = 6
-            else:
-                self.user_input.min_lines = 3
-                self.user_input.max_lines = 5
-
-    def _make_send_button(self) -> ft.IconButton:
-        palette = EXPRESSIVE_PALETTE
-        return ft.IconButton(
-            icon=ft.Icons.SEND_ROUNDED,
-            icon_color=palette["on_primary"],
-            icon_size=24,
-            tooltip="\u9001\u4fe1",
-            on_click=self._run_copilot,
-            style=ft.ButtonStyle(
-                shape=ft.CircleBorder(),
-                padding=ft.Padding(0, 0, 0, 0),
-                overlay_color=ft.Colors.with_opacity(0.14, palette["on_primary"]),
-            ),
-        )
-
-    def _make_stop_button(self) -> ft.IconButton:
-        palette = EXPRESSIVE_PALETTE
-        return ft.IconButton(
-            icon=ft.Icons.STOP_ROUNDED,
-            icon_color=palette["on_error"],
-            icon_size=24,
-            tooltip="\u51e6\u7406\u3092\u505c\u6b62",
-            on_click=self._stop_task,
-            style=ft.ButtonStyle(
-                shape=ft.CircleBorder(),
-                padding=ft.Padding(0, 0, 0, 0),
-                overlay_color=ft.Colors.with_opacity(0.18, palette["error"]),
-            ),
-        )
-
-    def _handle_button_hover(self, e: ft.ControlEvent):
-        if e.data == "true":
-            e.control.scale = 1.02
-        else:
-            e.control.scale = 1
-        e.control.update()
 
     def _build_mode_cards(self) -> ft.ResponsiveRow:
         palette = EXPRESSIVE_PALETTE
@@ -1261,7 +1126,6 @@ class CopilotApp:
         if new_mode == self.mode:
             return
         self.mode = new_mode
-        self._apply_mode_to_input_placeholder()
         if self.mode_selector:
             self.mode_selector.value = self.mode.value
         self._refresh_mode_cards()
@@ -1269,17 +1133,6 @@ class CopilotApp:
         if self.request_queue:
             self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
         self._update_ui()
-
-    def _get_input_placeholder(self, mode: CopilotMode) -> str:
-        try:
-            return MODE_PLACEHOLDERS[mode]
-        except KeyError:
-            return MODE_PLACEHOLDERS[CopilotMode.TRANSLATION_WITH_REFERENCES]
-
-    def _apply_mode_to_input_placeholder(self):
-        if not self.user_input:
-            return
-        self.user_input.hint_text = self._get_input_placeholder(self.mode)
 
     def _on_mode_change(self, e: Optional[ft.ControlEvent]):
         control = getattr(e, "control", None) if e else None
@@ -1317,13 +1170,21 @@ class CopilotApp:
             "info": EXPRESSIVE_PALETTE["on_surface_variant"],
         }
 
-        if self.user_input:
-            self.user_input.disabled = not can_interact
         if self.form_controls:
             for control in self.form_controls.values():
                 control.disabled = not can_interact
         if self._form_submit_button:
             self._form_submit_button.disabled = not can_interact
+        if self._form_cancel_button:
+            if is_task_in_progress:
+                self._form_cancel_button.visible = True
+                self._form_cancel_button.disabled = False
+            elif is_stopping:
+                self._form_cancel_button.visible = True
+                self._form_cancel_button.disabled = True
+            else:
+                self._form_cancel_button.visible = False
+                self._form_cancel_button.disabled = True
         if self.mode_selector:
             self.mode_selector.disabled = not can_interact
         if self.workbook_selector:
@@ -1370,29 +1231,22 @@ class CopilotApp:
                 self._status_color_override = None
                 self.status_label.value = "\u30a8\u30e9\u30fc"
                 self.status_label.color = status_palette["error"]
+            elif is_task_in_progress:
+                self._status_message_override = None
+                self._status_color_override = None
+                self.status_label.value = "\u51e6\u7406\u3092\u5b9f\u884c\u4e2d..."
+                self.status_label.color = status_palette["busy"]
+                self.status_label.opacity = 0.5
+                self.status_label.scale = 0.95
+            elif is_stopping:
+                self._status_message_override = None
+                self._status_color_override = None
+                self.status_label.value = "\u51e6\u7406\u3092\u505c\u6b62\u3057\u3066\u3044\u307e\u3059..."
+                self.status_label.color = status_palette["stopping"]
             else:
                 self._status_message_override = None
                 self._status_color_override = None
                 self.status_label.color = status_palette["base"]
-
-        if self.action_button:
-            if is_task_in_progress:
-                if self.status_label:
-                    self.status_label.value = "\u51e6\u7406\u3092\u5b9f\u884c\u4e2d..."
-                    self.status_label.color = status_palette["busy"]
-                    self.status_label.opacity = 0.5
-                    self.status_label.scale = 0.95
-                self.action_button.content = self._make_stop_button()
-                self.action_button.disabled = False
-            elif is_stopping:
-                if self.status_label:
-                    self.status_label.value = "\u51e6\u7406\u3092\u505c\u6b62\u3057\u3066\u3044\u307e\u3059..."
-                    self.status_label.color = status_palette["stopping"]
-                self.action_button.content = ft.ProgressRing(width=18, height=18, stroke_width=2)
-                self.action_button.disabled = True
-            else:
-                self.action_button.content = self._make_send_button()
-                self.action_button.disabled = not can_interact
 
         self._update_ui()
 
@@ -1650,8 +1504,7 @@ class CopilotApp:
                 with ExcelManager(target_workbook) as manager:
                     workbook_names = manager.list_workbook_names()
                     if not workbook_names:
-                        raise ExcelConnectionError("開いているExcelブックが見つかりません。")
-
+                        raise ExcelConnectionError("開いている Excel ブックが見つかりません。")
                     if (
                         target_workbook
                         and target_workbook in workbook_names
@@ -1660,11 +1513,13 @@ class CopilotApp:
                         try:
                             manager.activate_workbook(target_workbook)
                         except Exception as activate_err:
-                            print(f"対象ブック '{target_workbook}' の選択に失敗しました: {activate_err}")
-
-                    info_dict = manager.get_active_workbook_and_sheet()
-                    active_workbook = info_dict["workbook_name"]
-                    active_sheet = info_dict["sheet_name"]
+                            print(
+                                f"前回選択したシート '{preferred_sheet}' の復元に失敗しました: {activate_err}"
+                            )
+                            self._add_message(
+                                ResponseType.INFO,
+                                f"保存済みシート『{preferred_sheet}』を開けませんでした: {activate_err}"
+                            )
 
                     sheet_names = manager.list_sheet_names()
 
@@ -1790,7 +1645,7 @@ class CopilotApp:
                 return active_sheet
 
             except Exception as ex:
-                error_message = f"Excelの情報取得に失敗しました: {ex}"
+                error_message = f"Excel縺ｮ諠・ｱ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆: {ex}"
                 if self._auto_test_enabled:
                     print(f"AUTOTEST: excel context error - {error_message}", flush=True)
                 self.sheet_selection_updating = True
@@ -1871,26 +1726,6 @@ class CopilotApp:
         # Excel list updates are manual; background refresh triggers are disabled.
         return
 
-    def _run_copilot(self, e: Optional[ft.ControlEvent]):
-        if not self.user_input:
-            return
-        user_text = self.user_input.value
-        if not user_text or self.app_state not in {AppState.READY, AppState.ERROR}:
-            return
-
-        self._set_state(AppState.TASK_IN_PROGRESS)
-        self._add_message("user", user_text)
-        self.user_input.value = ""
-        payload: Union[str, Dict[str, Any]] = user_text
-        try:
-            parsed_payload = json.loads(user_text)
-        except json.JSONDecodeError:
-            parsed_payload = None
-        if isinstance(parsed_payload, dict):
-            payload = parsed_payload
-        self.request_queue.put(RequestMessage(RequestType.USER_INPUT, payload))
-        self._update_ui()
-
     def _stop_task(self, e: Optional[ft.ControlEvent]):
         if self.app_state is not AppState.TASK_IN_PROGRESS:
             return
@@ -1909,11 +1744,6 @@ class CopilotApp:
             return
         self._save_last_workbook_preference(selected_workbook)
         self._refresh_excel_context(desired_workbook=selected_workbook)
-        if self.user_input and not self.user_input.disabled:
-            try:
-                self.user_input.focus()
-            except Exception:
-                pass
 
     def _refresh_excel_context_before_dropdown(self):
         # Excel list updates are manual; skip automatic refresh on dropdown events.
@@ -1964,11 +1794,6 @@ class CopilotApp:
             self._save_last_sheet_preference(self.current_workbook_name, selected_sheet)
             self._save_last_workbook_preference(self.current_workbook_name)
         self._update_ui()
-        if self.user_input and not self.user_input.disabled:
-            try:
-                self.user_input.focus()
-            except Exception:
-                pass
 
     def _on_sheet_dropdown_focus(self, e: Optional[ft.ControlEvent]):
         if not self.sheet_selector or self.sheet_selector.disabled:
@@ -2167,10 +1992,10 @@ class CopilotApp:
                         )
                 except Exception:
                     pass
-            try:
-                self.page.run_thread(_timeout_watch)
-            except Exception:
-                threading.Thread(target=_timeout_watch, daemon=True).start()
+        try:
+            self.page.run_thread(_timeout_watch)
+        except Exception:
+            threading.Thread(target=_timeout_watch, daemon=True).start()
 
         def _runner():
             try:
@@ -2184,6 +2009,81 @@ class CopilotApp:
             self.page.run_thread(_runner)
         except Exception:
             _runner()
+
+    def _load_autotest_override(self) -> Dict[str, Any]:
+        prompt_text = (self._auto_test_prompt or "").strip()
+        if not prompt_text:
+            return {}
+        try:
+            parsed = json.loads(prompt_text)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _build_autotest_form_values(self, override_payload: Optional[Dict[str, Any]]) -> Dict[str, str]:
+        definitions = FORM_FIELD_DEFINITIONS.get(self.mode, [])
+        defaults_by_mode: Dict[CopilotMode, Dict[str, Any]] = {
+            CopilotMode.TRANSLATION_WITH_REFERENCES: {
+                "cell_range": "A2:A20",
+                "translation_output_range": "B2:D20",
+                "target_language": "English",
+                "rows_per_batch": 10,
+                "source_reference_urls": [self._auto_test_source_url] if self._auto_test_source_url else [],
+                "target_reference_urls": [self._auto_test_target_url] if self._auto_test_target_url else [],
+            },
+            CopilotMode.TRANSLATION: {
+                "cell_range": "A2:A20",
+                "translation_output_range": "B2:B20",
+                "target_language": "English",
+                "rows_per_batch": 10,
+            },
+            CopilotMode.REVIEW: {
+                "source_range": "B2:B20",
+                "translated_range": "C2:C20",
+                "status_output_range": "D2:D20",
+                "issue_output_range": "E2:E20",
+                "highlight_output_range": "F2:F20",
+            },
+        }
+        defaults = defaults_by_mode.get(self.mode, {})
+
+        override_candidates: List[Dict[str, Any]] = []
+        if isinstance(override_payload, dict):
+            override_candidates.append(override_payload)
+            arguments_override = override_payload.get("arguments")
+            if isinstance(arguments_override, dict):
+                override_candidates.insert(0, arguments_override)
+
+        values: Dict[str, str] = {}
+        for field in definitions:
+            name = field["name"]
+            argument_key = field["argument"]
+            field_type = field.get("type", "str")
+
+            raw_value: Any = None
+            for candidate in override_candidates:
+                if name in candidate:
+                    raw_value = candidate[name]
+                    break
+                if argument_key in candidate:
+                    raw_value = candidate[argument_key]
+                    break
+            if raw_value is None and name in defaults:
+                raw_value = defaults[name]
+            if raw_value is None:
+                continue
+
+            if field_type == "list":
+                if isinstance(raw_value, str):
+                    text_value = raw_value
+                elif isinstance(raw_value, list):
+                    text_value = "\n".join(str(item) for item in raw_value if str(item).strip())
+                else:
+                    text_value = str(raw_value)
+            else:
+                text_value = str(raw_value)
+            values[name] = text_value
+        return values
 
     def _execute_auto_test(self) -> None:
         if self.app_state not in {AppState.READY, AppState.ERROR}:
@@ -2204,24 +2104,59 @@ class CopilotApp:
             except Exception:
                 pass
 
+        override_payload = self._load_autotest_override()
+
+        desired_mode = CopilotMode.TRANSLATION_WITH_REFERENCES
+        if isinstance(override_payload, dict):
+            override_mode_value = override_payload.get("mode")
+            if isinstance(override_mode_value, str):
+                try:
+                    desired_mode = CopilotMode(override_mode_value)
+                except ValueError:
+                    pass
+            else:
+                tool_name = override_payload.get("tool_name")
+                if isinstance(tool_name, str):
+                    for mode_candidate, tool_identifier in FORM_TOOL_NAMES.items():
+                        if tool_name == tool_identifier:
+                            desired_mode = mode_candidate
+                            break
+
+        if self.mode != desired_mode:
+            self._set_mode(desired_mode)
+
         _select_option(self.workbook_selector, self._auto_test_workbook, "workbook_selection_updating")
         _select_option(self.sheet_selector, self._auto_test_sheet, "sheet_selection_updating")
 
         print(
-            "AUTOTEST: dispatching prompt",
+            "AUTOTEST: dispatching form submission",
             {
                 "workbook": self.workbook_selector.value if self.workbook_selector else None,
                 "sheet": self.sheet_selector.value if self.sheet_selector else None,
+                "mode": self.mode.value,
             },
             flush=True,
         )
 
-        if self.user_input:
-            self.user_input.value = self._auto_test_prompt
-            self.user_input.update()
+        form_values = self._build_autotest_form_values(override_payload)
+        if not form_values:
+            print("AUTOTEST: no form values produced; skipping submission", flush=True)
+            return
+
+        for name, text_value in form_values.items():
+            control = self.form_controls.get(name)
+            if not control:
+                continue
+            control.value = text_value
+            try:
+                control.update()
+            except Exception:
+                pass
+
+        self._set_form_error("")
         self._update_ui()
-        self._run_copilot(None)
-        print("AUTOTEST: prompt submitted", flush=True)
+        self._submit_form(None)
+        print("AUTOTEST: form submitted", flush=True)
 
     def _force_exit(self, reason: str = ""):
         if self.shutdown_requested:

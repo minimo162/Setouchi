@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import inspect
-import json
 import queue
 import threading
 import traceback
 from typing import Any, Dict, List, Optional, Union
 
 from excel_copilot.agent.prompts import CopilotMode
-from excel_copilot.agent.react_agent import ReActAgent
 from excel_copilot.config import (
     COPILOT_BROWSER_CHANNELS,
     COPILOT_HEADLESS,
@@ -23,7 +21,6 @@ from excel_copilot.core.exceptions import UserStopRequested
 from excel_copilot.core.excel_manager import ExcelConnectionError, ExcelManager
 from excel_copilot.tools import excel_tools
 from excel_copilot.tools.actions import ExcelActions
-from excel_copilot.tools.schema_builder import create_tool_schema
 
 from .messages import RequestMessage, RequestType, ResponseMessage, ResponseType
 
@@ -39,15 +36,12 @@ class CopilotWorker:
         self.request_queue = request_q
         self.response_queue = response_q
         self.browser_manager: Optional[BrowserCopilotManager] = None
-        self.agent: Optional[ReActAgent] = None
         self.stop_event = threading.Event()
         self.sheet_name = sheet_name
         self.workbook_name = workbook_name
         self.mode = CopilotMode.TRANSLATION_WITH_REFERENCES
         self.tool_functions: List[callable] = []
-        self.tool_schemas: List[Dict[str, Any]] = []
         self.current_tool: Optional[callable] = None
-        self._legacy_notice_emitted = False
 
     def run(self):
         try:
@@ -67,54 +61,7 @@ class CopilotWorker:
         except Exception as err:
             print(f"Failed to enqueue response: {err}")
 
-    def _build_agent(self):
-        if not self.browser_manager or not self.tool_functions or not self.tool_schemas:
-            return
-        self.agent = ReActAgent(
-            tools=self.tool_functions,
-            tool_schemas=self.tool_schemas,
-            browser_manager=self.browser_manager,
-            sheet_name=self.sheet_name,
-            workbook_name=self.workbook_name,
-            mode=self.mode,
-            progress_callback=lambda msg: self._emit_response(ResponseMessage(ResponseType.OBSERVATION, msg)),
-        )
-
-    def _format_user_prompt(self, user_input: str) -> str:
-        trimmed_input = (user_input or "").strip()
-        if self.mode is CopilotMode.TRANSLATION:
-            prefix_lines = [
-                "[Translation (No References) Mode Request]",
-                "- Solve this by calling `translate_range_without_references` with explicit source and output ranges.",
-                "- Keep the translation column aligned with the specified output range (one column per source column).",
-                "- Do not request workbook uploads; Excel is already connected.",
-                "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
-            ]
-        elif self.mode is CopilotMode.TRANSLATION_WITH_REFERENCES:
-            prefix_lines = [
-                "[Translation (With References) Mode Request]",
-                "- Solve this by calling `translate_range_with_references` and pass the user's `source_reference_urls` (原文側) and `target_reference_urls` (翻訳先側) or the provided reference ranges.",
-                "- Translate the entire requested range in one call and rely on the tool's batching; only adjust `rows_per_batch` when necessary for very large jobs.",
-                "- Provide citation output when evidence is expected and reserve columns for: translated text, translation process explanation, and one reference pair per column starting from the specified output column (e.g., \"XX列以降\").",
-                "- Do not request workbook uploads; Excel is already connected.",
-                "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
-            ]
-        else:
-            prefix_lines = [
-                "[Translation Review Mode Request]",
-                "- Use `check_translation_quality` with ranges for status, issues, and highlight only (three columns total).",
-                "- Clearly identify which range contains the Japanese source text and which range contains the English translation under review.",
-                "- Keep outputs aligned with the ranges specified in the instructions.",
-                "- Do not request workbook uploads; Excel is already connected.",
-                "- Treat this as a single-run request and avoid proposing follow-up tasks once you finish.",
-            ]
-        prefix = "\n".join(prefix_lines)
-        if not trimmed_input:
-            return prefix
-        return f"{prefix}\n\nUser instruction:\n{trimmed_input}"
-
-
-    def _load_tools(self, mode: Optional[CopilotMode] = None):
+    def _load_tools(self, mode: Optional[CopilotMode] = None) -> None:
         target_mode = mode or self.mode
         allowed_by_mode: Dict[CopilotMode, List[str]] = {
             CopilotMode.TRANSLATION: ["translate_range_without_references"],
@@ -123,21 +70,17 @@ class CopilotWorker:
         }
         allowed_tool_names = allowed_by_mode.get(target_mode, [])
 
-        selected = []
+        selected: List[callable] = []
         for name in allowed_tool_names:
             func = getattr(excel_tools, name, None)
-            if inspect.isfunction(func):
+            if callable(func):
                 selected.append(func)
 
         if not selected:
             raise RuntimeError(f"No tools available for mode '{target_mode.value}'.")
 
         self.tool_functions = selected
-        self.tool_schemas = [create_tool_schema(func) for func in self.tool_functions]
-        self.current_tool = self.tool_functions[0]
-        # reset legacy agent; it will be rebuilt on demand if legacy flow is used.
-        self.agent = None
-        self._legacy_notice_emitted = False
+        self.current_tool = selected[0]
 
     def _restart_browser_session(self) -> bool:
         if not self.browser_manager:
@@ -154,11 +97,11 @@ class CopilotWorker:
             return False
 
         if not reset_ok:
-            self._emit_response(ResponseMessage(ResponseType.STATUS, "Copilot セッションのリセットに失敗したためブラウザを再初期化しています..."))
+            self._emit_response(ResponseMessage(ResponseType.STATUS, "セッション再利用に失敗したためブラウザを再起動します。"))
             try:
                 self.browser_manager.restart()
             except Exception as e:
-                error_message = f"ブラウザの再初期化に失敗しました: {e}"
+                error_message = f"ブラウザの再起動に失敗しました: {e}"
                 print(error_message)
                 traceback.print_exc()
                 try:
@@ -166,26 +109,11 @@ class CopilotWorker:
                 except Exception:
                     pass
                 self.browser_manager = None
-                self.agent = None
                 self.tool_functions = []
-                self.tool_schemas = []
+                self.current_tool = None
                 self._emit_response(ResponseMessage(ResponseType.ERROR, error_message))
                 return False
 
-
-        if self.agent:
-            try:
-                self.agent.reset()
-            except Exception as reset_err:
-                print(f"エージェントのリセットに失敗しましたが続行します: {reset_err}")
-
-        self._emit_response(
-            ResponseMessage(
-                ResponseType.STATUS,
-                "ブラウザの初期化が完了しました。\nCopilot セッションの準備が整いました。",
-                metadata={"browser_ready": True},
-            )
-        )
         return True
 
     def _initialize(self):
@@ -202,10 +130,9 @@ class CopilotWorker:
             self.browser_manager.start()
             print("BrowserManager \u306e\u8d77\u52d5\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
 
-            self._emit_response(ResponseMessage(ResponseType.STATUS, "\u30c4\u30fc\u30eb\u3092\u521d\u671f\u5316\u3057\u3066\u3044\u307e\u3059..."))
+            self._emit_response(ResponseMessage(ResponseType.STATUS, "\u30d5\u30a9\u30fc\u30e0\u7528\u30c4\u30fc\u30eb\u3092\u521d\u671f\u5316\u3057\u3066\u3044\u307e\u3059..."))
             self._load_tools(self.mode)
-            # Legacy ReAct agent is built lazily when needed for backward compatibility.
-            print("AI\u30a8\u30fc\u30b8\u30a7\u30f3\u30c8\u306e\u6e96\u5099\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
+            print("\u69cb\u9020\u5316\u3055\u308c\u305f\u30c4\u30fc\u30eb\u306e\u6e96\u5099\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
 
             self._emit_response(ResponseMessage(ResponseType.INITIALIZATION_COMPLETE, "\u521d\u671f\u5316\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002\u6307\u793a\u3092\u3069\u3046\u305e\u3002"))
             print("Worker\u306e\u521d\u671f\u5316\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
@@ -254,8 +181,6 @@ class CopilotWorker:
             normalized_workbook = new_workbook_name.strip()
             if normalized_workbook != self.workbook_name:
                 self.workbook_name = normalized_workbook
-                if self.agent:
-                    self.agent.set_workbook(normalized_workbook)
                 self._emit_response(
                     ResponseMessage(
                         ResponseType.INFO,
@@ -264,38 +189,42 @@ class CopilotWorker:
                 )
 
         new_sheet_name = payload.get("sheet_name")
-        if new_sheet_name:
-            self.sheet_name = new_sheet_name
-            if self.agent:
-                self.agent.sheet_name = new_sheet_name
-            sheet_label = new_sheet_name or "\u672a\u9078\u629e"
-            self._emit_response(ResponseMessage(ResponseType.INFO, f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30b7\u30fc\u30c8\u3092\u300c{sheet_label}\u300d\u306b\u5909\u66f4\u3057\u307e\u3057\u305f\u3002"))
+        if isinstance(new_sheet_name, str) and new_sheet_name.strip():
+            sheet_label = new_sheet_name.strip()
+            if sheet_label != self.sheet_name:
+                self.sheet_name = sheet_label
+                self._emit_response(
+                    ResponseMessage(ResponseType.INFO, f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30b7\u30fc\u30c8\u3092\u300c{sheet_label}\u300d\u306b\u5909\u66f4\u3057\u307e\u3057\u305f\u3002")
+                )
 
         mode_value = payload.get("mode")
-        if mode_value is not None:
-            try:
-                new_mode = CopilotMode(mode_value)
-            except ValueError:
-                self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u30e2\u30fc\u30c9\u5024\u304c\u4e0d\u6b63\u3067\u3059: {mode_value}"))
-            else:
-                if new_mode != self.mode:
-                    self.mode = new_mode
-                    try:
-                        self._load_tools(new_mode)
-                    except Exception as tool_err:
-                        self.tool_functions = []
-                        self.tool_schemas = []
-                        self.agent = None
-                        self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u5229\u7528\u53ef\u80fd\u306a\u30c4\u30fc\u30eb\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093: {tool_err}"))
-                        return
-                    self.agent = None
-                    mode_label_map = {
-                        CopilotMode.TRANSLATION: "\u7ffb\u8a33\uff08\u901a\u5e38\uff09",
-                        CopilotMode.TRANSLATION_WITH_REFERENCES: "\u7ffb\u8a33\uff08\u53c2\u7167\u3042\u308a\uff09",
-                        CopilotMode.REVIEW: "\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af",
-                    }
-                    mode_label = mode_label_map.get(new_mode, new_mode.value)
-                    self._emit_response(ResponseMessage(ResponseType.INFO, f"\u30e2\u30fc\u30c9\u3092{mode_label}\u306b\u5207\u308a\u66ff\u3048\u307e\u3057\u305f\u3002"))
+        if mode_value is None:
+            return
+        try:
+            new_mode = CopilotMode(mode_value)
+        except ValueError:
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u30e2\u30fc\u30c9\u5024\u304c\u4e0d\u6b63\u3067\u3059: {mode_value}"))
+            return
+
+        if new_mode == self.mode:
+            return
+
+        self.mode = new_mode
+        try:
+            self._load_tools(new_mode)
+        except Exception as tool_err:
+            self.tool_functions = []
+            self.current_tool = None
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u5229\u7528\u53ef\u80fd\u306a\u30c4\u30fc\u30eb\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093: {tool_err}"))
+            return
+
+        mode_label_map = {
+            CopilotMode.TRANSLATION: "\u7ffb\u8a33\uff08\u901a\u5e38\uff09",
+            CopilotMode.TRANSLATION_WITH_REFERENCES: "\u7ffb\u8a33\uff08\u53c2\u7167\u3042\u308a\uff09",
+            CopilotMode.REVIEW: "\u7ffb\u8a33\u30c1\u30a7\u30c3\u30af",
+        }
+        mode_label = mode_label_map.get(new_mode, new_mode.value)
+        self._emit_response(ResponseMessage(ResponseType.INFO, f"\u30e2\u30fc\u30c9\u3092{mode_label}\u306b\u5207\u308a\u66ff\u3048\u307e\u3057\u305f\u3002"))
 
 
 
@@ -303,49 +232,15 @@ class CopilotWorker:
     def _execute_task(self, payload: Any):
         self.stop_event.clear()
 
-        structured_payload: Optional[Dict[str, Any]] = None
-        legacy_text: Optional[str] = None
-
-        if isinstance(payload, dict):
-            structured_payload = payload
-        elif isinstance(payload, str):
-            stripped = payload.strip()
-            if not stripped:
-                self._emit_response(
-                    ResponseMessage(ResponseType.ERROR, "指示が空です。")
-                )
-                self._finalize_task()
-                return
-            try:
-                parsed = json.loads(stripped)
-            except json.JSONDecodeError:
-                legacy_text = stripped
-            else:
-                if isinstance(parsed, dict):
-                    structured_payload = parsed
-                else:
-                    legacy_text = stripped
-        elif payload is None:
+        if not isinstance(payload, dict):
             self._emit_response(
-                ResponseMessage(ResponseType.ERROR, "指示が指定されていません。")
-            )
-            self._finalize_task()
-            return
-        else:
-            self._emit_response(
-                ResponseMessage(
-                    ResponseType.ERROR,
-                    f"未対応の入力形式です: {type(payload).__name__}",
-                )
+                ResponseMessage(ResponseType.ERROR, "フォーム入力が検出できませんでした。再度送信してください。")
             )
             self._finalize_task()
             return
 
         try:
-            if structured_payload is not None:
-                self._run_structured_task(structured_payload)
-            else:
-                self._execute_legacy_task(legacy_text or "")
+            self._run_structured_task(payload)
         finally:
             self._finalize_task()
 
@@ -357,7 +252,7 @@ class CopilotWorker:
             return
         if not self.browser_manager:
             self._emit_response(
-                ResponseMessage(ResponseType.ERROR, "Copilot セッションが初期化されていません。")
+                ResponseMessage(ResponseType.ERROR, "Copilot セッションが利用できません。")
             )
             return
         if not self.current_tool:
@@ -370,7 +265,7 @@ class CopilotWorker:
         tool_name = tool_function.__name__
 
         requested_tool = payload.get("tool_name")
-        if requested_tool and requested_tool != tool_name:
+        if isinstance(requested_tool, str) and requested_tool and requested_tool != tool_name:
             self._emit_response(
                 ResponseMessage(
                     ResponseType.ERROR,
@@ -384,7 +279,7 @@ class CopilotWorker:
             self._emit_response(
                 ResponseMessage(
                     ResponseType.ERROR,
-                    f"モード指定が一致しません (指定: {mode_hint}, 現在: {self.mode.value})。",
+                    f"モード指定が一致しません (要求: {mode_hint}, 現在: {self.mode.value})。",
                 )
             )
             return
@@ -399,7 +294,7 @@ class CopilotWorker:
 
         if not isinstance(arguments, dict):
             self._emit_response(
-                ResponseMessage(ResponseType.ERROR, "ツール引数は JSON オブジェクトで指定してください。")
+                ResponseMessage(ResponseType.ERROR, "ツール引数は JSON オブジェクト形式で指定してください。")
             )
             return
 
@@ -407,7 +302,7 @@ class CopilotWorker:
             self._emit_response(
                 ResponseMessage(
                     ResponseType.ERROR,
-                    "対象のブックが選択されていません。Excel で対象ブックを選び直してください。",
+                    "対象のブックが未選択です。Excel 側でブックをアクティブにしてください。",
                 )
             )
             return
@@ -416,6 +311,7 @@ class CopilotWorker:
         sheet_override = payload.get("sheet_name")
         if isinstance(sheet_override, str) and sheet_override.strip():
             arguments.setdefault("sheet_name", sheet_override.strip())
+
         self._emit_response(ResponseMessage(ResponseType.STATUS, f"{tool_name} を実行しています..."))
 
         excel_actions: Optional[ExcelActions] = None
@@ -480,35 +376,6 @@ class CopilotWorker:
         text = (message or "").strip()
         if text:
             self._emit_response(ResponseMessage(ResponseType.STATUS, text))
-
-    def _execute_legacy_task(self, user_input: str) -> None:
-        if not user_input:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, "指示が空です。"))
-            return
-
-        if not self.agent:
-            self._build_agent()
-        if not self.agent:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, "AIエージェントを初期化できませんでした。"))
-            return
-
-        if not self._legacy_notice_emitted:
-            self._emit_response(
-                ResponseMessage(
-                    ResponseType.INFO,
-                    "構造化入力が検出されなかったため、従来の ReAct フローで処理します。",
-                )
-            )
-            self._legacy_notice_emitted = True
-
-        try:
-            formatted_input = self._format_user_prompt(user_input)
-            for message_dict in self.agent.run(formatted_input, self.stop_event):
-                self._emit_response(message_dict)
-        except ExcelConnectionError as e:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, str(e)))
-        except Exception as e:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"タスク実行エラー: {e}"))
 
     def _finalize_task(self) -> None:
         stop_requested = self.stop_event.is_set()
