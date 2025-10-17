@@ -74,6 +74,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "cell_range",
             "required": True,
             "placeholder": "例: A2:A20",
+            "group": "scope",
         },
         {
             "name": "translation_output_range",
@@ -81,6 +82,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "translation_output_range",
             "required": True,
             "placeholder": "例: B2:B20",
+            "group": "output",
         },
         {
             "name": "target_language",
@@ -88,6 +90,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "target_language",
             "default": "English",
             "placeholder": "例: English",
+            "group": "options",
         },
     ],
     CopilotMode.TRANSLATION_WITH_REFERENCES: [
@@ -97,6 +100,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "cell_range",
             "required": True,
             "placeholder": "例: A2:A20",
+            "group": "scope",
         },
         {
             "name": "translation_output_range",
@@ -104,6 +108,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "translation_output_range",
             "required": True,
             "placeholder": "例: B2:D20",
+            "group": "output",
         },
         {
             "name": "target_language",
@@ -111,11 +116,13 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "target_language",
             "default": "English",
             "placeholder": "例: English",
+            "group": "options",
         },
         {
             "control": "section",
             "label": "参照資料",
-            "description": "HTTP(S) で取得できるリモート参照 URL を必要に応じて入力します。複数ある場合は1行に1件ずつ記入してください。",
+            "description": "URL の追加／削除ボタンで 1 行ずつ入力を管理できます。HTTP(S) で取得できるリモート参照のみを登録してください。",
+            "group": "references",
             "expanded": False,
             "children": [
                 {
@@ -126,6 +133,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
                     "multiline": True,
                     "min_lines": 2,
                     "placeholder": "例: https://example.com/source-guideline",
+                    "group": "references",
                 },
                 {
                     "name": "target_reference_urls",
@@ -135,6 +143,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
                     "multiline": True,
                     "min_lines": 2,
                     "placeholder": "例: https://example.com/english-reference",
+                    "group": "references",
                 },
             ],
         },
@@ -146,6 +155,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "source_range",
             "required": True,
             "placeholder": "例: B2:B20",
+            "group": "scope",
         },
         {
             "name": "translated_range",
@@ -153,6 +163,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "translated_range",
             "required": True,
             "placeholder": "例: C2:C20",
+            "group": "scope",
         },
         {
             "name": "status_output_range",
@@ -160,6 +171,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "status_output_range",
             "required": True,
             "placeholder": "例: D2:D20",
+            "group": "output",
         },
         {
             "name": "issue_output_range",
@@ -167,6 +179,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "issue_output_range",
             "required": True,
             "placeholder": "例: E2:E20",
+            "group": "output",
         },
         {
             "name": "highlight_output_range",
@@ -174,15 +187,26 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "argument": "highlight_output_range",
             "required": True,
             "placeholder": "例: F2:F20",
+            "group": "output",
         },
         {
             "name": "corrected_output_range",
             "label": "修正案列（任意）",
             "argument": "corrected_output_range",
             "placeholder": "例: G2:G20",
+            "group": "options",
         },
     ],
 }
+
+FORM_GROUP_LABELS: Dict[str, str] = {
+    "scope": "対象範囲",
+    "output": "出力設定",
+    "references": "参考資料",
+    "options": "オプション",
+}
+
+FORM_GROUP_ORDER: List[str] = ["scope", "output", "references", "options"]
 
 
 def _flatten_field_definitions(definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -260,7 +284,11 @@ class CopilotApp:
         self.form_error_text: Optional[ft.Text] = None
         self._form_submit_button: Optional[ft.Control] = None
         self._form_cancel_button: Optional[ft.Control] = None
-        self._form_body_column: Optional[ft.Column] = None
+        self._form_body_column: Optional[ft.Container] = None
+        self._form_tabs: Optional[ft.Tabs] = None
+        self._form_progress_indicator: Optional[ft.ProgressRing] = None
+        self._form_progress_text: Optional[ft.Text] = None
+        self._form_continue_button: Optional[ft.Control] = None
         self._form_panel: Optional[ft.Container] = None
         self._mode_card_map: dict[str, ft.Container] = {}
         self._context_panel: Optional[ft.Container] = None
@@ -270,8 +298,12 @@ class CopilotApp:
         self._content_container: Optional[ft.Container] = None
         self._layout: Optional[ft.ResponsiveRow] = None
         self._main_column: Optional[ft.Column] = None
+        self._chat_empty_state: Optional[ft.Container] = None
+        self._chat_filter_dropdown: Optional[ft.Dropdown] = None
+        self._chat_filter_value: str = "all"
+        self._chat_scroll_button: Optional[ft.TextButton] = None
 
-        self.chat_history: list[dict[str, str]] = []
+        self.chat_history: list[Dict[str, Any]] = []
         self.history_lock = threading.Lock()
         self.log_dir = Path(COPILOT_USER_DATA_DIR) / "setouchi_logs"
         self.preference_file = Path(COPILOT_USER_DATA_DIR) / "setouchi_state.json"
@@ -291,7 +323,14 @@ class CopilotApp:
         self._excel_poll_interval = 0.8
         self._browser_reset_in_progress = False
         self._manual_refresh_in_progress = False
-        self._workbook_refresh_button_default_text = "\u30d6\u30c3\u30af\u4e00\u89a7\u3092\u66f4\u65b0"
+        self._workbook_refresh_button_default_text = "ブック一覧を更新"
+        self._status_icon: Optional[ft.Icon] = None
+        self._sync_status_text: Optional[ft.Text] = None
+        self._context_summary_text: Optional[ft.Text] = None
+        self._last_context_refresh_at: Optional[datetime] = None
+        self._group_summary_labels: Dict[str, ft.Text] = {}
+        self._field_groups: Dict[str, str] = {}
+        self._task_recently_completed = False
 
         auto_test_prompt_override = os.getenv("COPILOT_AUTOTEST_PROMPT")
         auto_test_enabled_flag = os.getenv("COPILOT_AUTOTEST_ENABLED")
@@ -435,25 +474,34 @@ class CopilotApp:
         palette = EXPRESSIVE_PALETTE
 
         self.status_label = ft.Text(
-            "\u521d\u671f\u5316\u4e2d...",
+            "初期化中...",
             size=12,
             color=palette["on_surface_variant"],
             font_family=self._primary_font_family,
             animate_opacity=300,
             animate_scale=600,
         )
-        status_chip = ft.Container(
-            content=ft.Row(
-                [
-                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=18, color=palette["primary"]),
-                    self.status_label,
-                ],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        self._status_icon = ft.Icon(ft.Icons.CIRCLE, size=16, color=palette["primary"])
+        self._sync_status_text = ft.Text(
+            "最終同期: 未実行",
+            size=11,
+            color=palette["on_surface_variant"],
+            font_family=self._hint_font_family,
+        )
+        status_row = ft.Row(
+            controls=[self._status_icon, self.status_label],
+            spacing=10,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        status_card = ft.Container(
+            content=ft.Column(
+                [status_row, self._sync_status_text],
+                spacing=6,
+                tight=True,
             ),
-            bgcolor=palette["surface_variant"],
+            bgcolor=ft.Colors.with_opacity(0.6, palette["surface_variant"]),
             border_radius=18,
-            padding=ft.Padding(16, 12, 16, 12),
+            padding=ft.Padding(18, 14, 18, 16),
             border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
         )
 
@@ -461,7 +509,7 @@ class CopilotApp:
         button_overlay = ft.Colors.with_opacity(0.12, palette["primary"])
 
         self.new_chat_button = ft.FilledTonalButton(
-            text="\u65b0\u3057\u3044\u30c1\u30e3\u30c3\u30c8",
+            text="新しいチャット",
             icon=ft.Icons.CHAT_OUTLINED,
             on_click=self._handle_new_chat_click,
             disabled=True,
@@ -485,11 +533,18 @@ class CopilotApp:
             "suffix_icon": ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, color=palette["on_surface_variant"]),
         }
 
+        self._context_summary_text = ft.Text(
+            "選択中: ブック未選択 / シート未選択",
+            size=12,
+            color=palette["on_surface_variant"],
+            font_family=self._hint_font_family,
+        )
+
         self.workbook_selector = ft.Dropdown(
             options=[],
             on_change=self._on_workbook_change,
             on_focus=self._on_workbook_dropdown_focus,
-            hint_text="\u30d6\u30c3\u30af\u3092\u9078\u629e",
+            hint_text="ブックを選択",
             expand=True,
             **dropdown_style,
         )
@@ -504,7 +559,7 @@ class CopilotApp:
             options=[],
             on_change=self._on_sheet_change,
             on_focus=self._on_sheet_dropdown_focus,
-            hint_text="\u30b7\u30fc\u30c8\u3092\u9078\u629e",
+            hint_text="シートを選択",
             expand=True,
             **dropdown_style,
         )
@@ -527,10 +582,47 @@ class CopilotApp:
             ),
         )
 
+        self.save_log_button = ft.OutlinedButton(
+            text="チャットログを保存",
+            icon=ft.Icons.SAVE_OUTLINED,
+            on_click=self._handle_save_log_click,
+            disabled=True,
+            style=ft.ButtonStyle(
+                shape=button_shape,
+                padding=ft.Padding(16, 12, 16, 12),
+                overlay_color=ft.Colors.with_opacity(0.08, palette["primary"]),
+            ),
+        )
+
+        selector_card = ft.Container(
+            content=ft.Column(
+                [
+                    self._context_summary_text,
+                    ft.Column(
+                        [
+                            ft.Text("ブック", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
+                            self.workbook_selector_wrapper,
+                            ft.Text("シート", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
+                            self.sheet_selector_wrapper,
+                        ],
+                        spacing=14,
+                        tight=True,
+                    ),
+                ],
+                spacing=12,
+                tight=True,
+            ),
+            bgcolor=ft.Colors.with_opacity(0.55, palette["surface_variant"]),
+            border_radius=18,
+            padding=ft.Padding(18, 18, 18, 20),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
+        )
+
         self._context_actions = ft.ResponsiveRow(
             controls=[
                 ft.Container(content=self.workbook_refresh_button, col={"xs": 12, "sm": 6}),
-                ft.Container(content=self.new_chat_button, col={"xs": 12, "sm": 6}),
+                ft.Container(content=self.save_log_button, col={"xs": 12, "sm": 6}),
+                ft.Container(content=self.new_chat_button, col={"xs": 12, "sm": 12}),
             ],
             spacing=12,
             run_spacing=12,
@@ -538,10 +630,24 @@ class CopilotApp:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+        actions_card = ft.Container(
+            content=self._context_actions,
+            bgcolor=ft.Colors.with_opacity(0.45, palette["surface_variant"]),
+            border_radius=18,
+            padding=ft.Padding(18, 16, 18, 16),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.05, palette["outline_variant"])),
+        )
+
+        context_column = ft.Column(
+            controls=[status_card, selector_card, actions_card],
+            spacing=16,
+            tight=True,
+        )
+
         self._context_panel = ft.Container(
             bgcolor=palette["surface"],
             border_radius=24,
-            padding=ft.Padding(24, 32, 24, 32),
+            padding=ft.Padding(24, 28, 24, 28),
             border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
             shadow=ft.BoxShadow(
                 spread_radius=0,
@@ -549,23 +655,73 @@ class CopilotApp:
                 color=ft.Colors.with_opacity(0.06, "#0F172A"),
                 offset=ft.Offset(0, 8),
             ),
+            content=context_column,
+        )
+
+        filter_label = ft.Text("チャットログ", size=14, weight=ft.FontWeight.W_600, color=palette["on_surface"], font_family=self._primary_font_family)
+        self._chat_filter_dropdown = ft.Dropdown(
+            value=self._chat_filter_value,
+            options=[
+                ft.dropdown.Option("all", "すべて"),
+                ft.dropdown.Option("user", "ユーザー入力"),
+                ft.dropdown.Option("ai", "AI応答"),
+                ft.dropdown.Option("system", "通知・エラー"),
+            ],
+            on_change=self._on_chat_filter_change,
+            border_radius=18,
+            border_color=palette["outline_variant"],
+            focused_border_color=palette["primary"],
+            fill_color=palette["surface_variant"],
+            text_style=ft.TextStyle(color=palette["on_surface"], size=12, font_family=self._primary_font_family),
+            hint_text="表示を絞り込む",
+            dense=True,
+        )
+        filter_row = ft.Row(
+            controls=[filter_label, self._chat_filter_dropdown],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        self._chat_scroll_button = ft.TextButton(
+            text="最新の結果へ",
+            icon=ft.Icons.ARROW_DOWNWARD,
+            on_click=self._scroll_chat_to_latest,
+            disabled=True,
+        )
+        self._chat_empty_state = ft.Container(
             content=ft.Column(
                 [
-                    status_chip,
-                    ft.Column(
-                        [
-                            ft.Text("\u30d6\u30c3\u30af", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
-                            self.workbook_selector_wrapper,
-                            ft.Text("\u30b7\u30fc\u30c8", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
-                            self.sheet_selector_wrapper,
-                        ],
-                        spacing=14,
+                    ft.Text("まだメッセージがありません。", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
+                    ft.Text(
+                        "フォームを送信すると処理状況と結果がここに表示されます。参考: モードを切り替えて必要な項目を入力してください。",
+                        size=12,
+                        color=palette["on_surface_variant"],
+                        font_family=self._hint_font_family,
                     ),
-                    self._context_actions,
+                    ft.Row(
+                        [
+                            ft.Chip(label="1. フォーム入力", disabled=True),
+                            ft.Chip(label="2. 送信", disabled=True),
+                            ft.Chip(label="3. 結果を確認", disabled=True),
+                        ],
+                        spacing=8,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        wrap=True,
+                    ),
+                    ft.Row(
+                        [self._chat_scroll_button],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    ),
                 ],
-                spacing=28,
+                spacing=12,
                 tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
+            bgcolor=ft.Colors.with_opacity(0.4, palette["surface_variant"]),
+            border_radius=18,
+            padding=ft.Padding(24, 20, 24, 24),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.05, palette["outline_variant"])),
+            visible=True,
         )
 
         self.chat_list = ft.ListView(
@@ -593,8 +749,8 @@ class CopilotApp:
             ),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
-                controls=[self.chat_list],
-                spacing=0,
+                controls=[filter_row, self._chat_empty_state, self.chat_list],
+                spacing=24,
                 expand=True,
             ),
         )
@@ -620,6 +776,7 @@ class CopilotApp:
             controls=[self._chat_panel, self._form_panel, self._mode_panel_container],
             expand=True,
             spacing=24,
+            scroll=ft.ScrollMode.AUTO,
         )
 
         self._layout = ft.ResponsiveRow(
@@ -652,6 +809,9 @@ class CopilotApp:
             padding=ft.Padding(40, 48, 40, 48),
         )
 
+        self._update_context_summary()
+        self._update_chat_empty_state()
+
         current_width = getattr(self.page, "width", None) or getattr(self.page.window, "width", None)
         current_height = getattr(self.page, "height", None) or getattr(self.page.window, "height", None)
         self._apply_responsive_layout(current_width, current_height)
@@ -661,7 +821,11 @@ class CopilotApp:
     def _build_form_panel(self) -> ft.Container:
         palette = EXPRESSIVE_PALETTE
         can_interact = self.app_state in {AppState.READY, AppState.ERROR}
-        form_controls = self._create_form_controls_for_mode(self.mode)
+
+        tabs_control, controls_map = self._create_form_controls_for_mode(self.mode)
+        self.form_controls = controls_map
+        self._form_tabs = tabs_control
+        self._form_body_column = ft.Container(content=self._form_tabs, expand=True)
 
         self.form_error_text = ft.Text(
             "",
@@ -685,7 +849,50 @@ class CopilotApp:
             disabled=True,
             visible=False,
         )
-        self._form_body_column = ft.Column(form_controls, spacing=12, tight=True)
+
+        self._form_continue_button = ft.TextButton(
+            "続けて実行",
+            icon=ft.Icons.REPLAY_OUTLINED,
+            on_click=self._handle_form_continue_click,
+            visible=False,
+        )
+
+        self._form_progress_indicator = ft.ProgressRing(
+            width=20,
+            height=20,
+            stroke_width=2,
+            color=palette["primary"],
+            visible=False,
+        )
+        self._form_progress_text = ft.Text(
+            "",
+            size=12,
+            color=palette["on_surface_variant"],
+            font_family=self._hint_font_family,
+            visible=False,
+        )
+
+        progress_cluster = ft.Row(
+            controls=[self._form_progress_indicator, self._form_progress_text],
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        action_buttons = ft.Row(
+            controls=[self._form_continue_button, self._form_cancel_button, self._form_submit_button],
+            alignment=ft.MainAxisAlignment.END,
+            spacing=12,
+        )
+        action_bar = ft.Container(
+            content=ft.Row(
+                controls=[progress_cluster, action_buttons],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.Padding(20, 12, 20, 12),
+            bgcolor=ft.Colors.with_opacity(0.32, palette["surface_variant"]),
+            border_radius=18,
+            border=ft.border.only(top=ft.BorderSide(1, ft.Colors.with_opacity(0.1, palette["outline"]))),
+        )
 
         header = ft.Text(
             "フォーム入力",
@@ -695,19 +902,13 @@ class CopilotApp:
             font_family=self._primary_font_family,
         )
 
-        actions_row = ft.Row(
-            controls=[self._form_cancel_button, self._form_submit_button],
-            alignment=ft.MainAxisAlignment.END,
-            spacing=12,
-        )
-
         content = ft.Column(
-            controls=[header, self._form_body_column, self.form_error_text, actions_row],
-            spacing=16,
+            controls=[header, self._form_body_column, self.form_error_text, action_bar],
+            spacing=20,
             tight=True,
         )
 
-        return ft.Container(
+        panel = ft.Container(
             content=content,
             bgcolor=palette["surface_high"],
             border_radius=24,
@@ -722,17 +923,32 @@ class CopilotApp:
             clip_behavior=ft.ClipBehavior.NONE,
         )
 
+        self._update_all_group_summaries()
+        return panel
+
     def _create_form_controls_for_mode(
         self,
         mode: CopilotMode,
         initial_values: Optional[Dict[str, str]] = None,
-    ) -> List[ft.Control]:
+    ) -> Tuple[ft.Tabs, Dict[str, ft.TextField]]:
         definitions = FORM_FIELD_DEFINITIONS.get(mode, [])
         preserved = initial_values or {}
-        controls: List[ft.Control] = []
-        new_controls: Dict[str, ft.TextField] = {}
+        palette = EXPRESSIVE_PALETTE
 
-        def _build_text_field(definition: Dict[str, Any]) -> ft.TextField:
+        grouped_controls: Dict[str, List[ft.Control]] = {group: [] for group in FORM_GROUP_ORDER}
+        new_controls: Dict[str, ft.TextField] = {}
+        self._field_groups = {}
+        self._group_summary_labels = {}
+
+        def _build_required_badge() -> ft.Container:
+            return ft.Container(
+                ft.Text("Required", size=10, weight=ft.FontWeight.W_500, color=palette["primary"]),
+                padding=ft.Padding(8, 4, 8, 4),
+                bgcolor=ft.Colors.with_opacity(0.12, palette["primary"]),
+                border_radius=12,
+            )
+
+        def _build_text_field(definition: Dict[str, Any], group: str) -> ft.TextField:
             name = definition["name"]
             value = preserved.get(name, definition.get("default", "")) or ""
             multiline = bool(definition.get("multiline"))
@@ -745,11 +961,11 @@ class CopilotApp:
                 multiline=multiline,
                 border_radius=18,
                 filled=True,
-                fill_color=EXPRESSIVE_PALETTE["surface_variant"],
-                border_color=EXPRESSIVE_PALETTE["outline_variant"],
-                focused_border_color=EXPRESSIVE_PALETTE["primary"],
-                cursor_color=EXPRESSIVE_PALETTE["primary"],
-                selection_color=ft.Colors.with_opacity(0.2, EXPRESSIVE_PALETTE["primary"]),
+                fill_color=palette["surface_variant"],
+                border_color=palette["outline_variant"],
+                focused_border_color=palette["primary"],
+                cursor_color=palette["primary"],
+                selection_color=ft.Colors.with_opacity(0.2, palette["primary"]),
                 text_style=ft.TextStyle(font_family=self._primary_font_family, size=13),
             )
             if multiline and definition.get("min_lines"):
@@ -758,16 +974,51 @@ class CopilotApp:
                 text_field.max_lines = definition["max_lines"]
             if definition.get("type") == "int":
                 text_field.keyboard_type = ft.KeyboardType.NUMBER
+            if definition.get("required"):
+                text_field.suffix = _build_required_badge()
             text_field.on_submit = self._submit_form
+            text_field.on_change = lambda e, field_name=name: self._handle_form_value_change(field_name)
             new_controls[name] = text_field
+            self._field_groups[name] = group
             return text_field
 
+        def _wrap_reference_field(field_name: str, text_field: ft.TextField) -> ft.Control:
+            add_button = ft.IconButton(
+                icon=ft.Icons.ADD,
+                tooltip="空行を追加",
+                on_click=lambda e, name=field_name: self._append_reference_row(name),
+                icon_size=18,
+            )
+            remove_button = ft.IconButton(
+                icon=ft.Icons.REMOVE,
+                tooltip="末尾の行を削除",
+                on_click=lambda e, name=field_name: self._remove_reference_row(name),
+                icon_size=18,
+            )
+            paste_button = ft.IconButton(
+                icon=ft.Icons.CONTENT_PASTE,
+                tooltip="クリップボードから貼り付け",
+                on_click=lambda e, name=field_name: self._paste_reference_from_clipboard(name),
+                icon_size=18,
+            )
+            button_row = ft.Row(
+                controls=[paste_button, add_button, remove_button],
+                alignment=ft.MainAxisAlignment.END,
+                spacing=6,
+            )
+            return ft.Column([text_field, button_row], spacing=8, tight=True)
+
         for field in definitions:
+            group_key = field.get("group", "scope")
             if field.get("control") == "section":
-                child_controls = [
-                    _build_text_field(child_definition)
-                    for child_definition in field.get("children", [])
-                ]
+                child_controls: List[ft.Control] = []
+                for child_definition in field.get("children", []):
+                    child_group = child_definition.get("group", group_key)
+                    child_field = _build_text_field(child_definition, child_group)
+                    if child_group == "references":
+                        child_controls.append(_wrap_reference_field(child_definition["name"], child_field))
+                    else:
+                        child_controls.append(child_field)
                 if not child_controls:
                     continue
                 section_elements: List[ft.Control] = [
@@ -775,7 +1026,7 @@ class CopilotApp:
                         field.get("label", ""),
                         size=14,
                         weight=ft.FontWeight.W_500,
-                        color=EXPRESSIVE_PALETTE["primary"],
+                        color=palette["primary"],
                         font_family=self._primary_font_family,
                     )
                 ]
@@ -785,34 +1036,85 @@ class CopilotApp:
                         ft.Text(
                             description_text,
                             size=12,
-                            color=EXPRESSIVE_PALETTE["on_surface_variant"],
+                            color=palette["on_surface_variant"],
                             font_family=self._hint_font_family,
                         )
                     )
                 section_elements.extend(child_controls)
-                controls.append(
+                grouped_controls.setdefault(group_key, []).append(
                     ft.Container(
                         content=ft.Column(section_elements, spacing=12, tight=True),
                         padding=ft.Padding(20, 18, 20, 20),
                         border_radius=18,
-                        bgcolor=ft.Colors.with_opacity(0.08, EXPRESSIVE_PALETTE["surface_variant"]),
+                        bgcolor=ft.Colors.with_opacity(0.08, palette["surface_variant"]),
                     )
                 )
             else:
-                controls.append(_build_text_field(field))
+                text_field = _build_text_field(field, group_key)
+                grouped_controls.setdefault(group_key, []).append(text_field)
 
-        self.form_controls = new_controls
-        return controls
+        tabs: List[ft.Tab] = []
+        for group_key in FORM_GROUP_ORDER:
+            controls_for_group = grouped_controls.get(group_key) or []
+            if not controls_for_group:
+                continue
+            summary_label = ft.Text(
+                "未入力",
+                size=12,
+                color=palette["on_surface_variant"],
+                font_family=self._hint_font_family,
+            )
+            self._group_summary_labels[group_key] = summary_label
+            header_row = ft.Row(
+                controls=[
+                    ft.Text(
+                        FORM_GROUP_LABELS.get(group_key, group_key.title()),
+                        size=15,
+                        weight=ft.FontWeight.W_600,
+                        color=palette["primary"],
+                        font_family=self._primary_font_family,
+                    ),
+                    summary_label,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            tab_content = ft.Column(
+                controls=[header_row, ft.Column(controls_for_group, spacing=12, tight=True)],
+                spacing=16,
+                tight=True,
+            )
+            tabs.append(
+                ft.Tab(
+                    text=FORM_GROUP_LABELS.get(group_key, group_key.title()),
+                    content=ft.Container(tab_content, padding=ft.Padding(4, 6, 4, 6)),
+                )
+            )
+
+        tabs_control = ft.Tabs(
+            tabs=tabs,
+            animation_duration=200,
+            expand=True,
+            divider_color=ft.Colors.with_opacity(0.08, palette["outline"]),
+            indicator_color=palette["primary"],
+        )
+
+        return tabs_control, new_controls
 
     def _refresh_form_panel(self) -> None:
         if not self._form_body_column:
             return
         preserved_values = {name: ctrl.value for name, ctrl in self.form_controls.items()}
-        new_controls = self._create_form_controls_for_mode(self.mode, preserved_values)
-        self._form_body_column.controls = new_controls
+        tabs_control, controls_map = self._create_form_controls_for_mode(self.mode, preserved_values)
+        self.form_controls = controls_map
+        self._form_tabs = tabs_control
+        self._form_body_column.content = tabs_control
         self._set_form_error("")
         if self._form_submit_button:
             self._form_submit_button.disabled = self.app_state not in {AppState.READY, AppState.ERROR}
+        if self._form_continue_button:
+            self._form_continue_button.visible = False
+        self._update_all_group_summaries()
         self._update_ui()
 
     def _set_form_error(self, message: str) -> None:
@@ -820,6 +1122,141 @@ class CopilotApp:
             return
         self.form_error_text.value = message
         self.form_error_text.visible = bool(message)
+
+    def _handle_form_continue_click(self, e: Optional[ft.ControlEvent]) -> None:
+        if self._form_continue_button:
+            self._form_continue_button.visible = False
+        first_control = next(iter(self.form_controls.values()), None)
+        if first_control:
+            try:
+                first_control.focus()
+            except Exception:
+                pass
+        self._update_ui()
+
+    def _handle_form_value_change(self, field_name: str) -> None:
+        group_key = self._field_groups.get(field_name)
+        if not group_key:
+            return
+        self._update_group_summary(group_key)
+
+    def _update_all_group_summaries(self) -> None:
+        for group_key in FORM_GROUP_ORDER:
+            self._update_group_summary(group_key)
+
+    def _update_group_summary(self, group_key: str) -> None:
+        label = self._group_summary_labels.get(group_key)
+        if not label:
+            return
+        label.value = self._compute_group_summary(group_key)
+        try:
+            label.update()
+        except Exception:
+            pass
+
+    def _compute_group_summary(self, group_key: str) -> str:
+        if group_key == "references":
+            total_urls = 0
+            for name, assigned_group in self._field_groups.items():
+                if assigned_group != "references":
+                    continue
+                control = self.form_controls.get(name)
+                if not control:
+                    continue
+                lines = [
+                    line.strip()
+                    for line in (control.value or "").replace("\r\n", "\n").split("\n")
+                    if line.strip()
+                ]
+                total_urls += len(lines)
+            return f"{total_urls} 件のURL" if total_urls else "未登録"
+
+        values: List[str] = []
+        for definition in _iter_mode_field_definitions(self.mode):
+            name = definition["name"]
+            if self._field_groups.get(name) != group_key:
+                continue
+            control = self.form_controls.get(name)
+            if not control:
+                continue
+            value = (control.value or "").strip()
+            if not value:
+                continue
+            values.append(value)
+        if not values:
+            return "未入力"
+        if group_key == "output" and len(values) > 1:
+            return f"{values[0]} ほか{len(values) - 1}"
+        if group_key == "options" and len(values) > 1:
+            return f"{values[0]} 他 {len(values) - 1}"
+        return values[0]
+
+    def _append_reference_row(self, field_name: str) -> None:
+        control = self.form_controls.get(field_name)
+        if not control:
+            return
+        current = (control.value or "").replace("\r\n", "\n")
+        lines = current.split("\n") if current else []
+        lines.append("")
+        control.value = "\n".join(lines)
+        try:
+            control.focus()
+            control.update()
+        except Exception:
+            pass
+        self._handle_form_value_change(field_name)
+
+    def _remove_reference_row(self, field_name: str) -> None:
+        control = self.form_controls.get(field_name)
+        if not control:
+            return
+        current = (control.value or "").replace("\r\n", "\n")
+        lines = current.split("\n") if current else []
+        if not lines:
+            return
+        lines = lines[:-1]
+        control.value = "\n".join(lines).rstrip()
+        try:
+            control.update()
+        except Exception:
+            pass
+        self._handle_form_value_change(field_name)
+
+    def _paste_reference_from_clipboard(self, field_name: str) -> None:
+        control = self.form_controls.get(field_name)
+        if not control:
+            return
+        clipboard_text = ""
+        get_clipboard = getattr(self.page, "get_clipboard", None)
+        if callable(get_clipboard):
+            try:
+                clipboard_text = get_clipboard() or ""
+            except Exception as clip_err:
+                print(f"クリップボードの取得に失敗しました: {clip_err}")
+        if not clipboard_text:
+            self._add_message(ResponseType.INFO, "クリップボードに貼り付け可能なURLが見つかりませんでした。")
+            return
+        urls = [
+            line.strip()
+            for line in clipboard_text.replace("\r\n", "\n").split("\n")
+            if line.strip()
+        ]
+        if not urls:
+            self._add_message(ResponseType.INFO, "貼り付け可能なURLが見つかりませんでした。")
+            return
+        existing = [
+            line.strip()
+            for line in (control.value or "").replace("\r\n", "\n").split("\n")
+            if line.strip()
+        ]
+        merged = existing + urls
+        control.value = "\n".join(merged)
+        try:
+            control.focus()
+            control.update()
+        except Exception:
+            pass
+        self._handle_form_value_change(field_name)
 
     def _split_list_values(self, raw_text: str) -> List[str]:
         tokens: List[str] = []
@@ -930,9 +1367,16 @@ class CopilotApp:
         assert payload is not None and arguments is not None
         self._set_form_error("")
         summary_message = self._format_form_summary(arguments)
+        metadata: Dict[str, Any] = {"mode": self.mode.value, "mode_label": MODE_LABELS.get(self.mode, self.mode.value)}
+        if self.current_workbook_name:
+            metadata["workbook"] = self.current_workbook_name
+        if self.current_sheet_name:
+            metadata["sheet"] = self.current_sheet_name
+        if self._form_continue_button:
+            self._form_continue_button.visible = False
 
         self._set_state(AppState.TASK_IN_PROGRESS)
-        self._add_message("user", summary_message)
+        self._add_message("user", summary_message, metadata)
         self.request_queue.put(RequestMessage(RequestType.USER_INPUT, payload))
         self._update_ui()
 
@@ -1173,6 +1617,7 @@ class CopilotApp:
         self._set_mode(new_mode)
 
     def _set_state(self, new_state: AppState):
+        previous_state = self.app_state
         if self.app_state == new_state:
             return
 
@@ -1183,6 +1628,7 @@ class CopilotApp:
             self._pending_focus_deadline = None
             self._status_message_override = None
             self._status_color_override = None
+
         is_ready = new_state is AppState.READY
         is_task_in_progress = new_state is AppState.TASK_IN_PROGRESS
         is_stopping = new_state is AppState.STOPPING
@@ -1212,6 +1658,17 @@ class CopilotApp:
             else:
                 self._form_cancel_button.visible = False
                 self._form_cancel_button.disabled = True
+        if self._form_continue_button:
+            if new_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+                self._form_continue_button.visible = False
+                self._form_continue_button.disabled = True
+                self._task_recently_completed = False
+            elif is_ready and previous_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+                self._task_recently_completed = True
+                self._form_continue_button.visible = True
+                self._form_continue_button.disabled = False
+            elif is_error:
+                self._form_continue_button.visible = False
         if self.mode_selector:
             self.mode_selector.disabled = not can_interact
         if self.workbook_selector:
@@ -1238,44 +1695,94 @@ class CopilotApp:
             if not self._manual_refresh_in_progress and can_interact:
                 self.workbook_refresh_button.text = self._workbook_refresh_button_default_text
 
+        icon_config = {
+            AppState.READY: (ft.Icons.CHECK_CIRCLE_OUTLINE, status_palette["ready"]),
+            AppState.TASK_IN_PROGRESS: (ft.Icons.AUTORENEW, status_palette["busy"]),
+            AppState.STOPPING: (ft.Icons.PAUSE_CIRCLE_OUTLINE, status_palette["stopping"]),
+            AppState.ERROR: (ft.Icons.ERROR_OUTLINE, status_palette["error"]),
+            AppState.INITIALIZING: (ft.Icons.HOURGLASS_TOP, status_palette["base"]),
+        }
+        if self._status_icon:
+            icon_name, icon_color = icon_config.get(new_state, (ft.Icons.CIRCLE, status_palette["base"]))
+            self._status_icon.name = icon_name
+            self._status_icon.color = icon_color
+
         if self.status_label:
             self.status_label.opacity = 1
             self.status_label.scale = 1
             if new_state is AppState.INITIALIZING:
                 self._status_message_override = None
                 self._status_color_override = None
-                self.status_label.value = "\u521d\u671f\u5316\u4e2d..."
+                self.status_label.value = "初期化中..."
                 self.status_label.color = status_palette["base"]
             elif is_ready:
                 if self._status_message_override:
                     self.status_label.value = self._status_message_override
                     self.status_label.color = self._status_color_override or status_palette["ready"]
                 else:
-                    self.status_label.value = "\u5f85\u6a5f\u4e2d"
+                    self.status_label.value = "待機中"
                     self.status_label.color = status_palette["ready"]
             elif is_error:
                 self._status_message_override = None
                 self._status_color_override = None
-                self.status_label.value = "\u30a8\u30e9\u30fc"
+                self.status_label.value = "エラー"
                 self.status_label.color = status_palette["error"]
             elif is_task_in_progress:
                 self._status_message_override = None
                 self._status_color_override = None
-                self.status_label.value = "\u51e6\u7406\u3092\u5b9f\u884c\u4e2d..."
+                self.status_label.value = "処理を実行中..."
                 self.status_label.color = status_palette["busy"]
                 self.status_label.opacity = 0.5
                 self.status_label.scale = 0.95
             elif is_stopping:
                 self._status_message_override = None
                 self._status_color_override = None
-                self.status_label.value = "\u51e6\u7406\u3092\u505c\u6b62\u3057\u3066\u3044\u307e\u3059..."
+                self.status_label.value = "処理を停止しています..."
                 self.status_label.color = status_palette["stopping"]
             else:
                 self._status_message_override = None
                 self._status_color_override = None
                 self.status_label.color = status_palette["base"]
 
+        self._update_form_progress_message()
         self._update_ui()
+
+    def _update_form_progress_message(self, message: Optional[str] = None) -> None:
+        if not self._form_progress_indicator or not self._form_progress_text:
+            return
+        if self.app_state not in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
+            self._form_progress_indicator.visible = False
+            self._form_progress_text.visible = False
+            self._form_progress_text.value = ""
+            return
+        progress_text = message or (self.status_label.value if self.status_label else "処理を実行中...")
+        self._form_progress_indicator.visible = True
+        self._form_progress_text.visible = True
+        self._form_progress_text.value = progress_text
+        try:
+            self._form_progress_text.update()
+        except Exception:
+            pass
+
+    def _update_context_summary(self) -> None:
+        if self._context_summary_text:
+            workbook = self.current_workbook_name or "未選択"
+            sheet = self.current_sheet_name or "未選択"
+            self._context_summary_text.value = f"選択中: {workbook} / {sheet}"
+            try:
+                self._context_summary_text.update()
+            except Exception:
+                pass
+        if self._sync_status_text:
+            if self._last_context_refresh_at:
+                timestamp_str = self._last_context_refresh_at.strftime("%H:%M:%S")
+                self._sync_status_text.value = f"最終同期: {timestamp_str}"
+            else:
+                self._sync_status_text.value = "最終同期: 未実行"
+            try:
+                self._sync_status_text.update()
+            except Exception:
+                pass
 
     def _update_ui(self):
         try:
@@ -1283,28 +1790,42 @@ class CopilotApp:
         except Exception as e:
             print(f"UI\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {e}")
 
-    def _add_message(self, msg_type: Union[ResponseType, str], msg_content: str):
-        if not msg_content:
+    def _add_message(
+        self,
+        msg_type: Union[ResponseType, str],
+        msg_content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not msg_content and not metadata:
             return
 
+        timestamp = datetime.now()
         msg_type_value = msg_type.value if isinstance(msg_type, ResponseType) else str(msg_type)
-        self._append_history(msg_type_value, msg_content)
+        metadata_payload: Dict[str, Any] = dict(metadata or {})
+        metadata_payload.setdefault("timestamp", timestamp.isoformat(timespec="seconds"))
+        metadata_payload.setdefault("display_time", timestamp.strftime("%H:%M"))
+
+        self._append_history(msg_type_value, msg_content, metadata_payload)
         self._update_save_button_state()
 
-        if not self.chat_list:
+        should_display = self._should_display_message_type(msg_type_value)
+        if not should_display or not self.chat_list:
+            self._update_chat_empty_state()
             return
 
-        msg = ChatMessage(msg_type, msg_content)
+        msg = ChatMessage(msg_type, msg_content, metadata=metadata_payload)
         self.chat_list.controls.append(msg)
         self._update_ui()
         time.sleep(0.01)
         msg.appear()
+        self._update_chat_empty_state()
 
-    def _append_history(self, msg_type: str, msg_content: str):
+    def _append_history(self, msg_type: str, msg_content: str, metadata: Optional[Dict[str, Any]] = None):
         entry = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "type": msg_type,
-            "content": msg_content.replace("\r\n", "\n"),
+            "content": (msg_content or "").replace("\r\n", "\n"),
+            "metadata": dict(metadata or {}),
         }
         with self.history_lock:
             self.chat_history.append(entry)
@@ -1315,6 +1836,7 @@ class CopilotApp:
         with self.history_lock:
             has_history = bool(self.chat_history)
         self.save_log_button.disabled = not has_history
+        self._update_chat_empty_state()
 
     def _handle_save_log_click(self, e: Optional[ft.ControlEvent]):
         try:
@@ -1329,6 +1851,76 @@ class CopilotApp:
 
         self._add_message(ResponseType.INFO, f"\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f: {file_path}")
 
+    def _on_chat_filter_change(self, e: Optional[ft.ControlEvent]):
+        selected = (e.control.value if e and e.control else None) or "all"
+        self._chat_filter_value = selected
+        self._refresh_chat_view_from_history()
+
+    def _should_display_message_type(self, msg_type: str) -> bool:
+        filter_value = self._chat_filter_value or "all"
+        if filter_value == "all":
+            return True
+        ai_categories = {"final_answer", "observation", "thought", "action"}
+        system_categories = {"info", "status", "error"}
+        if filter_value == "user":
+            return msg_type == "user"
+        if filter_value == "ai":
+            return msg_type in ai_categories
+        if filter_value == "system":
+            return msg_type in system_categories
+        return True
+
+    def _refresh_chat_view_from_history(self):
+        if not self.chat_list:
+            return
+        self.chat_list.controls.clear()
+        with self.history_lock:
+            entries = list(self.chat_history)
+        for entry in entries:
+            if not self._should_display_message_type(entry["type"]):
+                continue
+            metadata = entry.get("metadata", {})
+            chat_msg = ChatMessage(entry["type"], entry["content"], metadata=metadata, animate=False)
+            chat_msg.opacity = 1
+            chat_msg.offset = ft.Offset(0, 0)
+            self.chat_list.controls.append(chat_msg)
+        self._update_chat_empty_state()
+        try:
+            self.chat_list.update()
+        except Exception:
+            pass
+
+    def _update_chat_empty_state(self):
+        has_visible_entries = False
+        with self.history_lock:
+            for entry in self.chat_history:
+                if self._should_display_message_type(entry["type"]):
+                    has_visible_entries = True
+                    break
+        if self._chat_empty_state:
+            self._chat_empty_state.visible = not has_visible_entries
+            try:
+                self._chat_empty_state.update()
+            except Exception:
+                pass
+        if self._chat_scroll_button:
+            with self.history_lock:
+                has_history = bool(self.chat_history)
+            self._chat_scroll_button.disabled = not has_history
+            try:
+                self._chat_scroll_button.update()
+            except Exception:
+                pass
+
+    def _scroll_chat_to_latest(self, e: Optional[ft.ControlEvent]):
+        if not self.chat_list or not self.chat_list.controls:
+            return
+        try:
+            self.chat_list.scroll_to(index=len(self.chat_list.controls) - 1, duration=300)
+        except Exception:
+            pass
+
+
     def _handle_new_chat_click(self, e: Optional[ft.ControlEvent]):
         if self._browser_reset_in_progress:
             return
@@ -1342,8 +1934,7 @@ class CopilotApp:
         with self.history_lock:
             self.chat_history.clear()
         self._update_save_button_state()
-        if self.chat_list:
-            self.chat_list.update()
+        self._refresh_chat_view_from_history()
 
         self._browser_reset_in_progress = True
         if self.new_chat_button:
@@ -1669,6 +2260,8 @@ class CopilotApp:
                 if context_changed or controls_changed or is_initial_start:
                     self._update_ui()
 
+                self._last_context_refresh_at = datetime.now()
+                self._update_context_summary()
                 return active_sheet
 
             except Exception as ex:
@@ -1688,8 +2281,10 @@ class CopilotApp:
                 self.workbook_selection_updating = False
 
                 self._last_excel_snapshot = {}
+                self._last_context_refresh_at = None
+                self._update_context_summary()
                 if not auto_triggered and not is_initial_start:
-                    self._add_message(ResponseType.ERROR, error_message)
+                    self._add_message(ResponseType.ERROR, error_message, {"source": "excel_refresh"})
                 self._update_ui()
                 return None
 
@@ -1820,6 +2415,7 @@ class CopilotApp:
         if self.current_workbook_name:
             self._save_last_sheet_preference(self.current_workbook_name, selected_sheet)
             self._save_last_workbook_preference(self.current_workbook_name)
+        self._update_context_summary()
         self._update_ui()
 
     def _on_sheet_dropdown_focus(self, e: Optional[ft.ControlEvent]):
@@ -1902,6 +2498,7 @@ class CopilotApp:
                     self.status_label.color = self._status_color_override or status_palette["info"]
             if self._auto_test_enabled and status_text:
                 print(f"AUTOTEST: status '{status_text}'", flush=True)
+            self._update_form_progress_message(status_text or None)
         elif response.type is ResponseType.ERROR:
             if self.app_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
                 if self.status_label:
@@ -1909,13 +2506,15 @@ class CopilotApp:
                     self.status_label.color = status_palette["error"]
                     self.status_label.opacity = 0.9
                 if response.content:
-                    self._add_message(response.type, response.content)
+                    self._add_message(response.type, response.content, response.metadata)
+                    self._update_form_progress_message(response.content)
                 if self._auto_test_triggered:
                     print(f"AUTOTEST: error '{response.content}'", flush=True)
             else:
                 self._set_state(AppState.ERROR)
                 if response.content:
-                    self._add_message(response.type, response.content)
+                    self._add_message(response.type, response.content, response.metadata)
+                    self._update_form_progress_message(response.content)
                     if self._auto_test_triggered:
                         print(f"AUTOTEST: error '{response.content}'", flush=True)
             if self._browser_reset_in_progress:
@@ -1949,10 +2548,10 @@ class CopilotApp:
                     if self.new_chat_button and self.app_state in {AppState.READY, AppState.ERROR}:
                         self.new_chat_button.disabled = False
             elif response.content:
-                self._add_message(type_value, response.content)
+                self._add_message(type_value, response.content, response.metadata)
         else:
             if response.content:
-                self._add_message(type_value, response.content)
+                self._add_message(type_value, response.content, response.metadata)
 
         if response.type is ResponseType.FINAL_ANSWER:
             if self._auto_test_triggered:
@@ -2174,6 +2773,7 @@ class CopilotApp:
             if not control:
                 continue
             control.value = text_value
+            self._handle_form_value_change(name)
             try:
                 control.update()
             except Exception:
