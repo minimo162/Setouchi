@@ -115,26 +115,26 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
         {
             "control": "section",
             "label": "参照資料",
-            "description": "原文・翻訳の対訳候補を探すための資料 URL やファイルパスを必要に応じて入力します。",
+            "description": "HTTP(S) で取得できるリモート参照 URL を必要に応じて入力します。複数ある場合は1行に1件ずつ記入してください。",
             "expanded": False,
             "children": [
                 {
                     "name": "source_reference_urls",
-                    "label": "参照URL / ファイル（原文側）",
+                    "label": "参照URL（原文側）",
                     "argument": "source_reference_urls",
                     "type": "list",
                     "multiline": True,
                     "min_lines": 2,
-                    "placeholder": "1行に1件ずつ入力してください（ローカルファイル可）",
+                    "placeholder": "例: https://example.com/source-guideline",
                 },
                 {
                     "name": "target_reference_urls",
-                    "label": "参照URL / ファイル（翻訳側）",
+                    "label": "参照URL（翻訳側）",
                     "argument": "target_reference_urls",
                     "type": "list",
                     "multiline": True,
                     "min_lines": 2,
-                    "placeholder": "1行に1件ずつ入力してください",
+                    "placeholder": "例: https://example.com/english-reference",
                 },
             ],
         },
@@ -888,7 +888,7 @@ class CopilotApp:
         if tool_name == "translate_range_with_references":
             has_reference = any(arguments.get(key) for key in ("source_reference_urls", "target_reference_urls"))
             if not has_reference:
-                return None, "参照URLまたはファイルを1件以上入力してください。", None
+                return None, "参照URLを1件以上入力してください。", None
 
         payload: Dict[str, Any] = {
             "mode": self.mode.value,

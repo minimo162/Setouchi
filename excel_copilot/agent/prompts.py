@@ -60,7 +60,7 @@ ReAct ループ
 
 追加の制約
 - `cell_range`、`sheet_name`（必要に応じて）、`target_language`、`translation_output_range` を必ず指定すること。
-- 参照資料は `source_reference_urls`、`target_reference_urls` で指定し、URL の正規化や余分な空白を避けること。
+- 参照資料は `source_reference_urls`、`target_reference_urls` で指定し、HTTP(S) でアクセスできる URL のみを渡すこと。余分な空白やローカルパスを含めないこと。
 - `overwrite_source` はユーザーが明示的に許可しない限り `false` にしておき、`false` の場合は翻訳結果を別セルに出力すること。
 - 引用の詳細は翻訳出力列に内包されるため、専用の引用出力範囲は指定しないこと。
 

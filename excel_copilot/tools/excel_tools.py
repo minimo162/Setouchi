@@ -8,7 +8,7 @@ import string
 from threading import Event
 from typing import List, Any, Optional, Dict, Tuple, Set
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 from excel_copilot.core.browser_copilot_manager import BrowserCopilotManager
 from excel_copilot.core.exceptions import ToolExecutionError, UserStopRequested
@@ -32,22 +32,6 @@ _NO_QUOTES_PLACEHOLDER = "引用なし"
 _HTML_ENTITY_PATTERN = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]{1,31}|#[0-9]{1,7}|#x[0-9A-Fa-f]{1,6});")
 DEFAULT_REFERENCE_PAIR_COLUMNS = 10
 _MIN_CONTEXT_BLOCK_WIDTH = 2 + DEFAULT_REFERENCE_PAIR_COLUMNS
-_REFERENCE_FALLBACK_ROOTS: List[Path] = []
-
-_REFERENCE_FALLBACK_ROOTS.append(Path.cwd())
-downloads_dir = Path.home() / "Downloads"
-if downloads_dir.is_dir():
-    _REFERENCE_FALLBACK_ROOTS.append(downloads_dir)
-extra_dirs = os.getenv("COPILOT_REFERENCE_DIRS", "")
-if extra_dirs:
-    for token in extra_dirs.split(os.pathsep):
-        token = token.strip()
-        if not token:
-            continue
-        candidate = Path(token).expanduser()
-        if candidate.is_dir():
-            _REFERENCE_FALLBACK_ROOTS.append(candidate)
-
 if _DIFF_DEBUG_ENABLED and not logging.getLogger().handlers:
     logging.basicConfig(level=logging.DEBUG)
 
@@ -1138,46 +1122,6 @@ def translate_range_contents(
             except Exception:
                 workbook_dir = None
 
-        def _resolve_local_reference_copy(url: str) -> Optional[Path]:
-            try:
-                parsed = urlparse(url)
-            except Exception:
-                return None
-            filename = unquote(Path(parsed.path).name)
-            if not filename:
-                return None
-            candidates: List[Path] = []
-            for root in _REFERENCE_FALLBACK_ROOTS:
-                candidates.append(root / filename)
-            # allow nested directories encoded in URL
-            if "/" in filename:
-                path_fragment = Path(filename)
-                for root in _REFERENCE_FALLBACK_ROOTS:
-                    candidates.append(root / path_fragment)
-            for candidate in candidates:
-                if candidate.exists():
-                    return candidate.resolve()
-            return None
-
-        def _resolve_file_reference(value: str) -> Optional[Path]:
-            candidate = value.strip()
-            if not candidate:
-                return None
-            path_value = Path(candidate).expanduser()
-            search_paths: List[Path] = []
-            if path_value.is_absolute():
-                search_paths.append(path_value)
-            else:
-                if workbook_dir:
-                    search_paths.append(workbook_dir / path_value)
-                search_paths.append(Path.cwd() / path_value)
-            for path_candidate in search_paths:
-                try:
-                    if path_candidate.exists():
-                        return path_candidate.resolve()
-                except Exception:
-                    continue
-            return None
         target_sheet, normalized_range = _split_sheet_and_range(cell_range, sheet_name)
         source_rows, source_cols = _parse_range_dimensions(normalized_range)
 
@@ -1273,7 +1217,6 @@ def translate_range_contents(
         def _collect_reference_entries(raw_values: Optional[List[Any]], label: str) -> Tuple[List[Dict[str, str]], List[str]]:
             entries: List[Dict[str, str]] = []
             invalid_tokens: List[str] = []
-            coerced_notes: List[str] = []
             seen_urls: Set[str] = set()
 
             if not raw_values:
@@ -1285,6 +1228,7 @@ def translate_range_contents(
                     continue
                 if not isinstance(raw_value, str):
                     raise ToolExecutionError(f"Each entry in {label} must be a string.")
+
                 original_value = raw_value
                 url = _strip_enclosing_quotes(raw_value)
                 if not url:
@@ -1292,59 +1236,37 @@ def translate_range_contents(
                 normalized_url = url.strip()
                 if not normalized_url:
                     continue
-                if _is_probable_url(normalized_url):
-                    resolved_url = normalized_url
-                    try:
-                        parsed = urlparse(normalized_url)
-                        scheme = (parsed.scheme or "").lower()
-                        has_remote_netloc = bool(parsed.netloc)
-                    except Exception:
-                        parsed = None
-                        scheme = ""
-                        has_remote_netloc = False
 
-                    local_copy: Optional[Path] = None
-                    # Only coerce to a local file when the reference is already a file-style URL
-                    # (e.g. file:// or relative paths encoded as URLs). Remote HTTP(S) URLs are
-                    # preserved exactly as entered so that the AI receives the original links.
-                    if scheme in {"file"} or not has_remote_netloc:
-                        local_copy = _resolve_local_reference_copy(normalized_url)
+                if not _is_probable_url(normalized_url):
+                    invalid_tokens.append(original_value or "(空文字列)")
+                    continue
 
-                    if local_copy is not None:
-                        resolved_url = local_copy.as_uri()
-                        coerced_notes.append(
-                            f"{label} の値 '{original_value}' をローカルファイル '{local_copy.name}' に置き換えて利用します。"
-                        )
-                    if resolved_url not in seen_urls:
-                        seen_urls.add(resolved_url)
-                        entries.append({
-                            "id": f"{label[:1].upper()}{len(entries) + 1}",
-                            "url": resolved_url,
-                        })
+                try:
+                    parsed = urlparse(normalized_url)
+                    scheme = (parsed.scheme or "").lower()
+                    has_remote_netloc = bool(parsed.netloc)
+                except Exception:
+                    scheme = ""
+                    has_remote_netloc = False
+
+                if scheme not in {"http", "https"} or not has_remote_netloc:
+                    invalid_tokens.append(original_value or "(空文字列)")
                     continue
-                resolved_path = _resolve_file_reference(normalized_url)
-                if resolved_path:
-                    coerced_notes.append(
-                        f"{label} の値 '{original_value}' をファイル '{resolved_path.name}' として利用しました。"
-                    )
-                    resolved_url = resolved_path.as_uri()
-                    if resolved_url not in seen_urls:
-                        seen_urls.add(resolved_url)
-                        entries.append({
-                            "id": f"{label[:1].upper()}{len(entries) + 1}",
-                            "url": resolved_url,
-                        })
-                    continue
-                invalid_tokens.append(original_value or "(空文字列)")
+
+                resolved_url = normalized_url
+                if resolved_url not in seen_urls:
+                    seen_urls.add(resolved_url)
+                    entries.append({
+                        "id": f"{label[:1].upper()}{len(entries) + 1}",
+                        "url": resolved_url,
+                    })
 
             warnings: List[str] = []
             if invalid_tokens:
                 invalid_urls = ", ".join(_dedupe_preserve_order(invalid_tokens))
                 warnings.append(
-                    f"{label} で指定された値 ({invalid_urls}) はURLや既存ファイルとして解釈できなかったため無視しました。"
+                    f"{label} で指定された値 ({invalid_urls}) はHTTP(S) URLとして解釈できなかったため無視しました。"
                 )
-            if coerced_notes:
-                warnings.extend(_dedupe_preserve_order(coerced_notes))
             return entries, warnings
 
         source_reference_inputs: List[Any] = []
