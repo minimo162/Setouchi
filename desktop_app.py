@@ -584,18 +584,6 @@ class CopilotApp:
             ),
         )
 
-        self.save_log_button = ft.OutlinedButton(
-            text="チャットログを保存",
-            icon=ft.Icons.SAVE_OUTLINED,
-            on_click=self._handle_save_log_click,
-            disabled=True,
-            style=ft.ButtonStyle(
-                shape=button_shape,
-                padding=ft.Padding(16, 12, 16, 12),
-                overlay_color=ft.Colors.with_opacity(0.08, palette["primary"]),
-            ),
-        )
-
         selector_card = ft.Container(
             content=ft.Column(
                 [
@@ -623,8 +611,7 @@ class CopilotApp:
         self._context_actions = ft.ResponsiveRow(
             controls=[
                 ft.Container(content=self.workbook_refresh_button, col={"xs": 12, "sm": 6}),
-                ft.Container(content=self.save_log_button, col={"xs": 12, "sm": 6}),
-                ft.Container(content=self.new_chat_button, col={"xs": 12, "sm": 12}),
+                ft.Container(content=self.new_chat_button, col={"xs": 12, "sm": 6}),
             ],
             spacing=12,
             run_spacing=12,
@@ -1047,23 +1034,37 @@ class CopilotApp:
                 font_family=self._hint_font_family,
             )
             self._group_summary_labels[group_key] = summary_label
-            header_row = ft.Row(
-                controls=[
-                    ft.Text(
-                        FORM_GROUP_LABELS.get(group_key, group_key.title()),
-                        size=15,
-                        weight=ft.FontWeight.W_600,
-                        color=palette["primary"],
-                        font_family=self._primary_font_family,
-                    ),
-                    summary_label,
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            )
+
+            if group_key == "mode":
+                summary_label.value = f"現在: {MODE_LABELS.get(self.mode, self.mode.value)}"
+                header_row = ft.Row(
+                    controls=[summary_label],
+                    alignment=ft.MainAxisAlignment.END,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                tab_body_controls: List[ft.Control] = [header_row] + controls_for_group
+                body_spacing = 12
+            else:
+                header_row = ft.Row(
+                    controls=[
+                        ft.Text(
+                            FORM_GROUP_LABELS.get(group_key, group_key.title()),
+                            size=15,
+                            weight=ft.FontWeight.W_600,
+                            color=palette["primary"],
+                            font_family=self._primary_font_family,
+                        ),
+                        summary_label,
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                tab_body_controls = [header_row, ft.Column(controls_for_group, spacing=12, tight=True)]
+                body_spacing = 16
+
             tab_content = ft.Column(
-                controls=[header_row, ft.Column(controls_for_group, spacing=12, tight=True)],
-                spacing=16,
+                controls=tab_body_controls,
+                spacing=body_spacing,
                 tight=True,
             )
             tabs.append(
@@ -1130,7 +1131,11 @@ class CopilotApp:
         label = self._group_summary_labels.get(group_key)
         if not label:
             return
-        label.value = self._compute_group_summary(group_key)
+        summary_value = self._compute_group_summary(group_key)
+        if group_key == "mode":
+            label.value = f"現在: {summary_value}"
+        else:
+            label.value = summary_value
         try:
             label.update()
         except Exception:
@@ -1170,9 +1175,9 @@ class CopilotApp:
         if not values:
             return "未入力"
         if group_key == "output" and len(values) > 1:
-            return f"{values[0]} ほか{len(values) - 1}"
+            return f"{values[0]} ほか{len(values) - 1} 件"
         if group_key == "options" and len(values) > 1:
-            return f"{values[0]} 他 {len(values) - 1}"
+            return f"{values[0]} 他 {len(values) - 1} 項目"
         return values[0]
 
     def _split_list_values(self, raw_text: str) -> List[str]:
@@ -1497,19 +1502,17 @@ class CopilotApp:
         palette = EXPRESSIVE_PALETTE
         mode_row = self._build_mode_cards()
         self.mode_card_row = mode_row
+        instruction = ft.Text(
+            "実行する処理を選択してください",
+            size=13,
+            color=palette["on_surface_variant"],
+            font_family=self._hint_font_family,
+        )
+
         return ft.Container(
             content=ft.Column(
-                [
-                    ft.Text(
-                        "モード選択",
-                        size=14,
-                        weight=ft.FontWeight.W_600,
-                        color=palette["on_surface_variant"],
-                        font_family=self._primary_font_family,
-                    ),
-                    mode_row,
-                ],
-                spacing=12,
+                [instruction, mode_row],
+                spacing=10,
                 tight=True,
             ),
             bgcolor=palette["surface_high"],
