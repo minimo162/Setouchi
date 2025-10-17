@@ -115,21 +115,34 @@ class ChatMessage(ft.ResponsiveRow):
             controls: List[ft.Control] = []
             header_controls: List[ft.Control] = []
             if mode_label:
-                header_controls.append(ft.Container(ft.Text(mode_label, size=11, weight=ft.FontWeight.W_500, color=palette["primary"]), padding=ft.Padding(10, 4, 10, 4), bgcolor=ft.Colors.with_opacity(0.12, palette["primary"]), border_radius=12))
+                header_controls.append(
+                    ft.Text(
+                        mode_label,
+                        size=11,
+                        weight=ft.FontWeight.W_500,
+                        color=palette["primary"],
+                    )
+                )
             if display_time:
                 header_controls.append(ft.Text(display_time, size=11, color=palette["on_surface_variant"]))
             if header_controls:
                 alignment = ft.MainAxisAlignment.SPACE_BETWEEN if len(header_controls) == 2 else (ft.MainAxisAlignment.START if mode_label else ft.MainAxisAlignment.END)
-                controls.append(ft.Row(header_controls, alignment=alignment, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+                controls.append(
+                    ft.Row(
+                        header_controls,
+                        alignment=alignment,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
+                )
             text_control = ft.Text(msg_content, **config.get("text_style", {}))
             controls.append(text_control)
             self.controls = [
                 ft.Column(
                     controls,
                     col=12,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=6,
+                    alignment=ft.MainAxisAlignment.START,
+                    horizontal_alignment=ft.CrossAxisAlignment.START,
+                    spacing=4,
                 )
             ]
             return

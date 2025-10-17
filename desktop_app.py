@@ -84,14 +84,6 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "placeholder": "例: B2:B20",
             "group": "output",
         },
-        {
-            "name": "target_language",
-            "label": "ターゲット言語",
-            "argument": "target_language",
-            "default": "English",
-            "placeholder": "例: English",
-            "group": "options",
-        },
     ],
     CopilotMode.TRANSLATION_WITH_REFERENCES: [
         {
@@ -109,14 +101,6 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "required": True,
             "placeholder": "例: B2:D20",
             "group": "output",
-        },
-        {
-            "name": "target_language",
-            "label": "ターゲット言語",
-            "argument": "target_language",
-            "default": "English",
-            "placeholder": "例: English",
-            "group": "options",
         },
         {
             "control": "section",
@@ -196,7 +180,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "label": "修正案列（任意）",
             "argument": "corrected_output_range",
             "placeholder": "例: G2:G20",
-            "group": "options",
+            "group": "output",
         },
     ],
 }
@@ -208,7 +192,7 @@ FORM_GROUP_LABELS: Dict[str, str] = {
     "options": "オプション",
 }
 
-FORM_GROUP_ORDER: List[str] = ["mode", "scope", "output", "references", "options"]
+FORM_GROUP_ORDER: List[str] = ["mode", "scope", "output", "references"]
 
 
 def _flatten_field_definitions(definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -665,23 +649,11 @@ class CopilotApp:
             on_click=self._scroll_chat_to_latest,
             disabled=True,
         )
-        chat_header_title = ft.Text(
-            "チャットタイムライン",
-            size=15,
-            weight=ft.FontWeight.W_600,
-            color=palette["on_surface"],
-            font_family=self._primary_font_family,
-        )
         self._chat_header_subtitle = ft.Text(
             "処理ログと結果が最新順に表示されます。",
             size=12,
             color=palette["on_surface_variant"],
             font_family=self._hint_font_family,
-        )
-        header_column = ft.Column(
-            [chat_header_title, self._chat_header_subtitle],
-            spacing=4,
-            tight=True,
         )
         header_actions = ft.Row(
             [self._chat_filter_dropdown, self._chat_scroll_button],
@@ -692,13 +664,20 @@ class CopilotApp:
         chat_header_section = ft.Column(
             controls=[
                 ft.Row(
-                    [header_column, header_actions],
+                    [
+                        ft.Container(
+                            content=self._chat_header_subtitle,
+                            expand=True,
+                            alignment=ft.alignment.center_left,
+                        ),
+                        header_actions,
+                    ],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.05, palette["outline"])),
             ],
-            spacing=14,
+            spacing=12,
         )
 
         self._chat_empty_state = ft.Container(
@@ -727,6 +706,7 @@ class CopilotApp:
             border=ft.border.all(1, ft.Colors.with_opacity(0.06, palette["outline_variant"])),
             bgcolor=ft.Colors.with_opacity(0.18, palette["surface_variant"]),
             visible=True,
+            alignment=ft.alignment.center,
         )
 
         self.chat_list = ft.ListView(
@@ -761,39 +741,21 @@ class CopilotApp:
 
         self._form_panel = self._build_form_panel()
 
-        form_and_chat_row = ft.ResponsiveRow(
-            controls=[
-                ft.Container(
-                    content=self._form_panel,
-                    col={"xs": 12, "md": 12, "lg": 6},
-                    expand=True,
-                ),
-                ft.Container(
-                    content=self._chat_panel,
-                    col={"xs": 12, "md": 12, "lg": 6},
-                    expand=True,
-                ),
-            ],
-            spacing=24,
-            run_spacing=24,
-        )
-
-        self._main_column = ft.Column(
-            controls=[form_and_chat_row],
-            expand=True,
-            spacing=24,
-        )
-
         self._layout = ft.ResponsiveRow(
             controls=[
                 ft.Container(
                     content=ft.Column([self._context_panel], spacing=16),
-                    col={"xs": 12, "sm": 12, "md": 4, "lg": 3},
+                    col={"xs": 12, "sm": 12, "md": 4, "lg": 4},
                     expand=True,
                 ),
                 ft.Container(
-                    content=self._main_column,
-                    col={"xs": 12, "sm": 12, "md": 8, "lg": 9},
+                    content=self._form_panel,
+                    col={"xs": 12, "sm": 12, "md": 4, "lg": 4},
+                    expand=True,
+                ),
+                ft.Container(
+                    content=self._chat_panel,
+                    col={"xs": 12, "sm": 12, "md": 4, "lg": 4},
                     expand=True,
                 ),
             ],
@@ -909,16 +871,8 @@ class CopilotApp:
             tight=True,
         )
 
-        header = ft.Text(
-            "フォーム入力",
-            size=16,
-            weight=ft.FontWeight.W_600,
-            color=palette["primary"],
-            font_family=self._primary_font_family,
-        )
-
         content = ft.Column(
-            controls=[header, self._form_body_column, self.form_error_text, action_bar],
+            controls=[self._form_body_column, self.form_error_text, action_bar],
             spacing=20,
             tight=True,
         )
@@ -938,6 +892,7 @@ class CopilotApp:
             clip_behavior=ft.ClipBehavior.NONE,
         )
 
+        self._mode_panel_container = panel
         self._update_all_group_summaries()
         return panel
 
@@ -1196,8 +1151,6 @@ class CopilotApp:
             return "未入力"
         if group_key == "output" and len(values) > 1:
             return f"{values[0]} ほか{len(values) - 1} 件"
-        if group_key == "options" and len(values) > 1:
-            return f"{values[0]} 他 {len(values) - 1} 項目"
         return values[0]
 
     def _split_list_values(self, raw_text: str) -> List[str]:
@@ -1432,7 +1385,11 @@ class CopilotApp:
             if available_height > 0:
                 composer_est = (panel_padding.top + panel_padding.bottom) + 120
                 mode_est = (mode_padding.top + mode_padding.bottom) + 110
-                spacing_total = max(0, main_column_spacing) * 2
+                if self._main_column:
+                    spacing_total = max(0, main_column_spacing) * 2
+                else:
+                    layout_spacing = getattr(self._layout, "spacing", 0) if self._layout else 0
+                    spacing_total = max(0, layout_spacing)
                 calculated = available_height - composer_est - mode_est - spacing_total
                 if layout_key == "compact":
                     min_chat_height = 240
