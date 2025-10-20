@@ -259,9 +259,6 @@ class CopilotApp:
         self._layout: Optional[ft.ResponsiveRow] = None
         self._main_column: Optional[ft.Column] = None
         self._chat_empty_state: Optional[ft.Container] = None
-        self._chat_filter_dropdown: Optional[ft.Dropdown] = None
-        self._chat_filter_value: str = "all"
-        self._chat_scroll_button: Optional[ft.TextButton] = None
         self._chat_header_subtitle: Optional[ft.Text] = None
 
         self.chat_history: list[Dict[str, Any]] = []
@@ -599,40 +596,11 @@ class CopilotApp:
             content=context_column,
         )
 
-        self._chat_filter_dropdown = ft.Dropdown(
-            value=self._chat_filter_value,
-            options=[
-                ft.dropdown.Option("all", "すべて"),
-                ft.dropdown.Option("user", "ユーザー入力"),
-                ft.dropdown.Option("ai", "AI応答"),
-                ft.dropdown.Option("system", "通知・エラー"),
-            ],
-            on_change=self._on_chat_filter_change,
-            border_radius=18,
-            border_color=palette["outline_variant"],
-            focused_border_color=palette["primary"],
-            fill_color=palette["surface_variant"],
-            text_style=ft.TextStyle(color=palette["on_surface"], size=12, font_family=self._primary_font_family),
-            hint_text="表示を絞り込む",
-            dense=True,
-        )
-        self._chat_scroll_button = ft.TextButton(
-            text="最新の結果へ",
-            icon=ft.Icons.ARROW_DOWNWARD,
-            on_click=self._scroll_chat_to_latest,
-            disabled=True,
-        )
         self._chat_header_subtitle = ft.Text(
             "処理ログと結果が最新順に表示されます。",
             size=12,
             color=palette["on_surface_variant"],
             font_family=self._hint_font_family,
-        )
-        header_actions = ft.Row(
-            [self._chat_filter_dropdown, self._chat_scroll_button],
-            spacing=12,
-            alignment=ft.MainAxisAlignment.END,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         chat_header_section = ft.Column(
             controls=[
@@ -643,9 +611,8 @@ class CopilotApp:
                             expand=True,
                             alignment=ft.alignment.center_left,
                         ),
-                        header_actions,
                     ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    alignment=ft.MainAxisAlignment.START,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.05, palette["outline"])),
@@ -1746,17 +1713,22 @@ class CopilotApp:
         except Exception as e:
             print(f"UI\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {e}")
 
+    _CHAT_VISIBLE_TYPES = {"user", ResponseType.FINAL_ANSWER.value}
+
     def _add_message(
         self,
         msg_type: Union[ResponseType, str],
         msg_content: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
+        msg_type_value = msg_type.value if isinstance(msg_type, ResponseType) else str(msg_type)
+        if msg_type_value not in self._CHAT_VISIBLE_TYPES:
+            return
+
         if not msg_content and not metadata:
             return
 
         timestamp = datetime.now()
-        msg_type_value = msg_type.value if isinstance(msg_type, ResponseType) else str(msg_type)
         metadata_payload: Dict[str, Any] = dict(metadata or {})
         metadata_payload.setdefault("timestamp", timestamp.isoformat(timespec="seconds"))
         metadata_payload.setdefault("display_time", timestamp.strftime("%H:%M"))
@@ -1764,8 +1736,7 @@ class CopilotApp:
         self._append_history(msg_type_value, msg_content, metadata_payload)
         self._update_save_button_state()
 
-        should_display = self._should_display_message_type(msg_type_value)
-        if not should_display or not self.chat_list:
+        if not self.chat_list:
             self._update_chat_empty_state()
             return
 
@@ -1807,25 +1778,6 @@ class CopilotApp:
 
         self._add_message(ResponseType.INFO, f"\u4f1a\u8a71\u30ed\u30b0\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f: {file_path}")
 
-    def _on_chat_filter_change(self, e: Optional[ft.ControlEvent]):
-        selected = (e.control.value if e and e.control else None) or "all"
-        self._chat_filter_value = selected
-        self._refresh_chat_view_from_history()
-
-    def _should_display_message_type(self, msg_type: str) -> bool:
-        filter_value = self._chat_filter_value or "all"
-        if filter_value == "all":
-            return True
-        ai_categories = {"final_answer", "observation", "thought", "action"}
-        system_categories = {"info", "status", "error"}
-        if filter_value == "user":
-            return msg_type == "user"
-        if filter_value == "ai":
-            return msg_type in ai_categories
-        if filter_value == "system":
-            return msg_type in system_categories
-        return True
-
     def _refresh_chat_view_from_history(self):
         if not self.chat_list:
             return
@@ -1833,8 +1785,6 @@ class CopilotApp:
         with self.history_lock:
             entries = list(self.chat_history)
         for entry in entries:
-            if not self._should_display_message_type(entry["type"]):
-                continue
             metadata = entry.get("metadata", {})
             chat_msg = ChatMessage(entry["type"], entry["content"], metadata=metadata, animate=False)
             chat_msg.opacity = 1
@@ -1847,35 +1797,14 @@ class CopilotApp:
             pass
 
     def _update_chat_empty_state(self):
-        has_visible_entries = False
         with self.history_lock:
-            for entry in self.chat_history:
-                if self._should_display_message_type(entry["type"]):
-                    has_visible_entries = True
-                    break
+            has_history = bool(self.chat_history)
         if self._chat_empty_state:
-            self._chat_empty_state.visible = not has_visible_entries
+            self._chat_empty_state.visible = not has_history
             try:
                 self._chat_empty_state.update()
             except Exception:
                 pass
-        if self._chat_scroll_button:
-            with self.history_lock:
-                has_history = bool(self.chat_history)
-            self._chat_scroll_button.disabled = not has_history
-            try:
-                self._chat_scroll_button.update()
-            except Exception:
-                pass
-
-    def _scroll_chat_to_latest(self, e: Optional[ft.ControlEvent]):
-        if not self.chat_list or not self.chat_list.controls:
-            return
-        try:
-            self.chat_list.scroll_to(index=len(self.chat_list.controls) - 1, duration=300)
-        except Exception:
-            pass
-
 
     def _handle_new_chat_click(self, e: Optional[ft.ControlEvent]):
         if self._browser_reset_in_progress:
