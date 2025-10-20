@@ -1564,10 +1564,9 @@ def translate_range_contents(
                 return []
 
             items_payload: List[Dict[str, Any]] = []
-            for idx, source_text in enumerate(current_texts):
+            for source_text in current_texts:
                 normalized_source = source_text if isinstance(source_text, str) else ""
                 entry = {
-                    "context_id": idx,
                     "source_text": normalized_source,
                 }
                 items_payload.append(entry)
@@ -1587,12 +1586,12 @@ def translate_range_contents(
                 "2. 各キーワード候補を軸に参照URL本文を走査し、語句が完全一致または意味的に関連する文を広く収集してください。日本語の語尾違いや活用違いも許容して構いません。",
                 "3. 文は参照URLに実際に記載されている日本語をそのまま引用し、語尾・句読点を含めて改変しないでください。要約・翻訳・新規生成は禁止です。",
                 "4. 関連度が高い順に最大10件まで source_sentences に並べてください。10件未満しか見つからない場合は、取得できた文のみを返してください。",
-                "5. 重複する文や他の context_id ですでに列挙した文は除外し、同じ文書でも視点が異なる文を優先してください。",
+                "5. 重複する文や前のアイテムで既に列挙した文は除外し、同じ文書でも視点が異なる文を優先してください。",
                 "6. 脚注番号 ([1] など)・リンク・リスト記号など本文以外の装飾は削除し、純粋な文だけを保持してください。",
                 "7. 参照URL以外の情報源や外部検索は利用せず、適切な文が見つからない場合は空配列 [] を返してください。",
                 "",
                 "出力形式:",
-                "JSON のみを返してください。例: [{\"context_id\": 0, \"source_sentences\": [\"...\"]}]. 同じ順序で context_id を並べてください。",
+                "JSON のみを返してください。例: [{\"source_sentences\": [\"...\"]}]. items(JSON) と同じ順序で並べてください。",
                 "source_sentences には文字列のリストだけを入れ、追加のキーやテキストは不要です。",
                 "",
                 "items(JSON):",
@@ -1670,7 +1669,6 @@ def translate_range_contents(
             for idx, source_sentences in enumerate(source_references_per_item):
                 extraction_payload.append(
                     {
-                        "context_id": idx,
                         "source_sentences": source_sentences,
                         "source_text": current_texts[idx] if idx < len(current_texts) and isinstance(current_texts[idx], str) else "",
                     }
@@ -1687,18 +1685,18 @@ def translate_range_contents(
 
             extraction_prompt_sections: List[str] = [
                 (
-                    f"タスク: 各 context_id について、`source_sentences` に含まれる日本語引用文と、指定された `target_reference_urls` からそのまま引用した {target_language} の文を必要なだけ対応付けてください。"
+                    f"タスク: items(JSON) の各要素について、`source_sentences` に含まれる日本語引用文と、指定された `target_reference_urls` からそのまま引用した {target_language} の文を必要なだけ対応付けてください。"
                 ),
                 "",
                 "手順:",
-                "- `context_id` ごとに順番に処理し、`source_text` は話題の把握だけに利用してください。",
+                "- items(JSON) の順番に従って処理し、`source_text` は話題の把握だけに利用してください。",
                 "- `target_reference_urls` で指定されたページ内のみを探索し、ナビゲーションやヘッダー、目次など本文外の要素は無視してください。",
                 "- 文は掲載されているとおりにコピーし、翻訳・要約・言い換え・句読点や大小文字の変更は行わないでください。",
                 "- 固有名詞や数値など特徴的な語が一致する文を優先し、曖昧または一般的な一致は採用しないでください。",
-                "- 信頼できる一致が見つからない場合は、その `context_id` の `pairs` を空のままにしてください。",
+                "- 信頼できる一致が見つからない場合は、そのアイテムの `pairs` を空のままにしてください。",
                 "",
                 "出力形式:",
-                "- 応答は `items(JSON)` と同じ長さの JSON 配列にしてください。",
+                "- 応答は `items(JSON)` と同じ長さ・順序の JSON 配列にしてください。",
                 '- 各要素は `{"pairs": [{"source_sentence": "...", "target_sentence": "..."}]}` 形式のオブジェクトにしてください。',
                 f"- `target_sentence` には参照資料からコピーした {target_language} の文を、`source_sentence` には対応する日本語引用文をそのまま記載してください。",
                 "- 適切な一致が無い場合は `pairs` を空配列にしてください。",
