@@ -258,7 +258,6 @@ class CopilotApp:
         self._form_tabs: Optional[ft.Tabs] = None
         self._form_progress_indicator: Optional[ft.ProgressRing] = None
         self._form_progress_text: Optional[ft.Text] = None
-        self._form_continue_button: Optional[ft.Control] = None
         self._form_panel: Optional[ft.Container] = None
         self._mode_card_map: dict[str, ft.Container] = {}
         self._context_panel: Optional[ft.Container] = None
@@ -301,7 +300,6 @@ class CopilotApp:
         self._last_context_refresh_at: Optional[datetime] = None
         self._group_summary_labels: Dict[str, ft.Text] = {}
         self._field_groups: Dict[str, str] = {}
-        self._task_recently_completed = False
 
         auto_test_prompt_override = os.getenv("COPILOT_AUTOTEST_PROMPT")
         auto_test_enabled_flag = os.getenv("COPILOT_AUTOTEST_ENABLED")
@@ -810,13 +808,6 @@ class CopilotApp:
             visible=False,
         )
 
-        self._form_continue_button = ft.TextButton(
-            "続けて実行",
-            icon=ft.Icons.REPLAY_OUTLINED,
-            on_click=self._handle_form_continue_click,
-            visible=False,
-        )
-
         self._form_progress_indicator = ft.ProgressRing(
             width=20,
             height=20,
@@ -838,7 +829,7 @@ class CopilotApp:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         action_buttons = ft.Row(
-            controls=[self._form_continue_button, self._form_cancel_button, self._form_submit_button],
+            controls=[self._form_cancel_button, self._form_submit_button],
             alignment=ft.MainAxisAlignment.END,
             spacing=12,
         )
@@ -1054,8 +1045,6 @@ class CopilotApp:
         self._set_form_error("")
         if self._form_submit_button:
             self._form_submit_button.disabled = self.app_state not in {AppState.READY, AppState.ERROR}
-        if self._form_continue_button:
-            self._form_continue_button.visible = False
         self._update_all_group_summaries()
         self._update_ui()
 
@@ -1064,17 +1053,6 @@ class CopilotApp:
             return
         self.form_error_text.value = message
         self.form_error_text.visible = bool(message)
-
-    def _handle_form_continue_click(self, e: Optional[ft.ControlEvent]) -> None:
-        if self._form_continue_button:
-            self._form_continue_button.visible = False
-        first_control = next(iter(self.form_controls.values()), None)
-        if first_control:
-            try:
-                first_control.focus()
-            except Exception:
-                pass
-        self._update_ui()
 
     def _handle_form_value_change(self, field_name: str) -> None:
         group_key = self._field_groups.get(field_name)
@@ -1342,9 +1320,6 @@ class CopilotApp:
             metadata["workbook"] = self.current_workbook_name
         if self.current_sheet_name:
             metadata["sheet"] = self.current_sheet_name
-        if self._form_continue_button:
-            self._form_continue_button.visible = False
-
         self._set_state(AppState.TASK_IN_PROGRESS)
         self._add_message("user", summary_message, metadata)
         self.request_queue.put(RequestMessage(RequestType.USER_INPUT, payload))
@@ -1653,17 +1628,6 @@ class CopilotApp:
             else:
                 self._form_cancel_button.visible = False
                 self._form_cancel_button.disabled = True
-        if self._form_continue_button:
-            if new_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
-                self._form_continue_button.visible = False
-                self._form_continue_button.disabled = True
-                self._task_recently_completed = False
-            elif is_ready and previous_state in {AppState.TASK_IN_PROGRESS, AppState.STOPPING}:
-                self._task_recently_completed = True
-                self._form_continue_button.visible = True
-                self._form_continue_button.disabled = False
-            elif is_error:
-                self._form_continue_button.visible = False
         if self.mode_selector:
             self.mode_selector.disabled = not can_interact
         if self.workbook_selector:
