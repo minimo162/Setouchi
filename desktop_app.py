@@ -6,6 +6,7 @@ import logging
 import os
 import queue
 import platform
+import re
 import threading
 import time
 from datetime import datetime
@@ -152,37 +153,20 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "group": "scope",
         },
         {
-            "name": "status_output_range",
-            "label": "ステータス列",
-            "argument": "status_output_range",
+            "name": "review_output_range",
+            "label": "出力範囲（ステータス／指摘／ハイライト／修正案）",
+            "argument": "review_output_range",
             "required": True,
-            "placeholder": "例: D2:D20",
-            "group": "output",
-        },
-        {
-            "name": "issue_output_range",
-            "label": "指摘列",
-            "argument": "issue_output_range",
-            "required": True,
-            "placeholder": "例: E2:E20",
-            "group": "output",
-        },
-        {
-            "name": "highlight_output_range",
-            "label": "ハイライト列",
-            "argument": "highlight_output_range",
-            "required": True,
-            "placeholder": "例: F2:F20",
-            "group": "output",
-        },
-        {
-            "name": "corrected_output_range",
-            "label": "修正案列（任意）",
-            "argument": "corrected_output_range",
-            "placeholder": "例: G2:G20",
+            "placeholder": "例: D2:G20",
             "group": "output",
         },
     ],
+}
+
+FORM_TOOL_NAMES: Dict[CopilotMode, str] = {
+    CopilotMode.TRANSLATION: "translate_range_without_references",
+    CopilotMode.TRANSLATION_WITH_REFERENCES: "translate_range_with_references",
+    CopilotMode.REVIEW: "check_translation_quality",
 }
 FORM_GROUP_LABELS: Dict[str, str] = {
     "mode": "モード",
@@ -1161,9 +1145,88 @@ class CopilotApp:
                 tokens.append(item)
         return tokens
 
+    @staticmethod
+    def _split_sheet_and_range(value: str) -> Tuple[Optional[str], str]:
+        if "!" not in value:
+            return None, value
+        sheet_name, inner = value.split("!", 1)
+        return sheet_name, inner
+
+    @staticmethod
+    def _column_label_to_index(label: str) -> int:
+        result = 0
+        for ch in label:
+            if not ("A" <= ch <= "Z"):
+                raise ValueError(f"無効な列指定です: {label}")
+            result = result * 26 + (ord(ch) - ord("A") + 1)
+        return result
+
+    @staticmethod
+    def _column_index_to_label(index: int) -> str:
+        if index <= 0:
+            raise ValueError(f"列番号は1以上で指定してください（指定値: {index}）")
+        label = ""
+        while index > 0:
+            index, remainder = divmod(index - 1, 26)
+            label = chr(ord("A") + remainder) + label
+        return label
+
+    @staticmethod
+    def _parse_cell_reference(cell: str) -> Tuple[str, int]:
+        match = re.fullmatch(r"([A-Za-z]+)(\d+)", cell)
+        if not match:
+            raise ValueError(f"セル参照の形式が正しくありません: {cell}")
+        column = match.group(1).upper()
+        row = int(match.group(2))
+        return column, row
+
+    def _derive_review_output_ranges(self, combined_range: str) -> Dict[str, str]:
+        if not combined_range:
+            raise ValueError("出力範囲を入力してください。")
+
+        sheet_name, inner_range = self._split_sheet_and_range(combined_range.strip())
+        inner_range = inner_range.replace("$", "")
+        if ":" not in inner_range:
+            raise ValueError("出力範囲は開始セルと終了セルを「:」で区切って指定してください。")
+
+        start_cell, end_cell = [part.strip() for part in inner_range.split(":", 1)]
+        start_col_label, start_row = self._parse_cell_reference(start_cell)
+        end_col_label, end_row = self._parse_cell_reference(end_cell)
+
+        if end_row < start_row:
+            raise ValueError("出力範囲の終了行は開始行以上になるように指定してください。")
+
+        start_col_index = self._column_label_to_index(start_col_label)
+        end_col_index = self._column_label_to_index(end_col_label)
+
+        if end_col_index < start_col_index:
+            raise ValueError("出力範囲の列指定が逆転しています。左端から右端に向かって指定してください。")
+
+        column_count = end_col_index - start_col_index + 1
+        if column_count < 3:
+            raise ValueError("出力範囲には少なくとも3列（ステータス／指摘／ハイライト）が必要です。")
+        if column_count > 4:
+            raise ValueError("出力範囲は最大4列（ステータス／指摘／ハイライト／修正案）までにしてください。")
+
+        prefix = f"{sheet_name}!" if sheet_name else ""
+
+        def build_range(offset: int) -> str:
+            column_label = self._column_index_to_label(start_col_index + offset)
+            return f"{prefix}{column_label}{start_row}:{column_label}{end_row}"
+
+        result: Dict[str, str] = {
+            "status_output_range": build_range(0),
+            "issue_output_range": build_range(1),
+            "highlight_output_range": build_range(2),
+        }
+        if column_count >= 4:
+            result["corrected_output_range"] = build_range(3)
+        return result
+
     def _collect_form_payload(self) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, Any]]]:
         definitions = _iter_mode_field_definitions(self.mode)
         arguments: Dict[str, Any] = {}
+        summary_arguments: Dict[str, Any] = {}
         errors: List[str] = []
 
         for field in definitions:
@@ -1197,6 +1260,7 @@ class CopilotApp:
                     errors.append(f"{field['label']}は{field['min']}以上で入力してください。")
                     continue
                 arguments[argument_key] = value
+                summary_arguments[argument_key] = value
             elif field_type == "list":
                 items = self._split_list_values(raw_value)
                 if field.get("required") and not items:
@@ -1204,14 +1268,17 @@ class CopilotApp:
                     continue
                 if items:
                     arguments[argument_key] = items
+                    summary_arguments[argument_key] = items
             else:
                 arguments[argument_key] = raw_value
+                summary_arguments[argument_key] = raw_value
 
         if errors:
             return None, "\n".join(errors), None
 
         tool_name = FORM_TOOL_NAMES.get(self.mode)
         if not tool_name:
+            logging.error("No tool mapping found for mode '%s'.", getattr(self.mode, "value", self.mode))
             return None, "現在のモードで使用できるツールが見つかりません。", None
 
         if self.mode in {CopilotMode.TRANSLATION, CopilotMode.TRANSLATION_WITH_REFERENCES}:
@@ -1221,6 +1288,14 @@ class CopilotApp:
             has_reference = any(arguments.get(key) for key in ("source_reference_urls", "target_reference_urls"))
             if not has_reference:
                 return None, "参照URLを1件以上入力してください。", None
+
+        if self.mode is CopilotMode.REVIEW:
+            combined_range = arguments.pop("review_output_range", None)
+            try:
+                derived_ranges = self._derive_review_output_ranges(combined_range or "")
+            except ValueError as exc:
+                return None, str(exc), None
+            arguments.update(derived_ranges)
 
         payload: Dict[str, Any] = {
             "mode": self.mode.value,
@@ -1232,7 +1307,7 @@ class CopilotApp:
         if self.current_sheet_name:
             payload["sheet_name"] = self.current_sheet_name
 
-        return payload, None, arguments
+        return payload, None, summary_arguments
 
     def _format_form_summary(self, arguments: Dict[str, Any]) -> str:
         mode_label = MODE_LABELS.get(self.mode, self.mode.value)
