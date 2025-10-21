@@ -26,6 +26,14 @@ from .messages import RequestMessage, RequestType, ResponseMessage, ResponseType
 
 _logger = logging.getLogger(__name__)
 
+INVALID_TASK_PAYLOAD_MESSAGE = "タスク要求の形式が正しくありません。"
+INVALID_ARGUMENTS_MESSAGE = "引数の形式が JSON オブジェクトではありません。"
+BROWSER_NOT_READY_MESSAGE = "Copilot ブラウザーセッションが初期化されていません。"
+TOOL_NOT_AVAILABLE_MESSAGE = "現在のモードで利用できるツールが見つかりません。"
+MISSING_WORKBOOK_ERROR_MESSAGE = (
+    "対象ブックを特定できず Excel 操作を開始できません。Excel 上で対象ブックを開き、一覧から選択してください。"
+)
+
 
 class CopilotWorker:
     def __init__(
@@ -183,7 +191,7 @@ class CopilotWorker:
                 self._emit_response(
                     ResponseMessage(
                         ResponseType.INFO,
-                        f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30d6\u30c3\u30af\u3092\u300e{normalized_workbook}\u300f\u306b\u5909\u66f4\u3057\u307e\u3057\u305f\u3002",
+                        f"操作対象のブックを『{normalized_workbook}』に変更しました。",
                     )
                 )
 
@@ -193,7 +201,7 @@ class CopilotWorker:
             if sheet_label != self.sheet_name:
                 self.sheet_name = sheet_label
                 self._emit_response(
-                    ResponseMessage(ResponseType.INFO, f"\u64cd\u4f5c\u5bfe\u8c61\u306e\u30b7\u30fc\u30c8\u3092\u300c{sheet_label}\u300d\u306b\u5909\u66f4\u3057\u307e\u3057\u305f\u3002")
+                    ResponseMessage(ResponseType.INFO, f"操作対象のシートを「{sheet_label}」に変更しました。")
                 )
 
         mode_value = payload.get("mode")
@@ -202,7 +210,7 @@ class CopilotWorker:
         try:
             new_mode = CopilotMode(mode_value)
         except ValueError:
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u30e2\u30fc\u30c9\u5024\u304c\u4e0d\u6b63\u3067\u3059: {mode_value}"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"モード値が不正です: {mode_value}"))
             return
 
         if new_mode == self.mode:
@@ -214,7 +222,7 @@ class CopilotWorker:
         except Exception as tool_err:
             self.tool_functions = []
             self.current_tool = None
-            self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u5229\u7528\u53ef\u80fd\u306a\u30c4\u30fc\u30eb\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093: {tool_err}"))
+            self._emit_response(ResponseMessage(ResponseType.ERROR, f"利用可能なツールが見つかりません: {tool_err}"))
             return
 
         # モード変更時のチャット通知は省略し、UI 側で直接反映する。
@@ -227,7 +235,7 @@ class CopilotWorker:
 
         if not isinstance(payload, dict):
             self._emit_response(
-                ResponseMessage(ResponseType.ERROR, "フォーム入力が検出できませんでした。再度送信してください。")
+                ResponseMessage(ResponseType.ERROR, INVALID_TASK_PAYLOAD_MESSAGE)
             )
             self._finalize_task()
             return
@@ -240,17 +248,17 @@ class CopilotWorker:
     def _run_structured_task(self, payload: Dict[str, Any]) -> None:
         if not isinstance(payload, dict):
             self._emit_response(
-                ResponseMessage(ResponseType.ERROR, "構造化リクエストの形式が不正です。")
+                ResponseMessage(ResponseType.ERROR, INVALID_TASK_PAYLOAD_MESSAGE)
             )
             return
         if not self.browser_manager:
             self._emit_response(
-                ResponseMessage(ResponseType.ERROR, "Copilot セッションが利用できません。")
+                ResponseMessage(ResponseType.ERROR, BROWSER_NOT_READY_MESSAGE)
             )
             return
         if not self.current_tool:
             self._emit_response(
-                ResponseMessage(ResponseType.ERROR, "現在のモードで利用できるツールが登録されていません。")
+                ResponseMessage(ResponseType.ERROR, TOOL_NOT_AVAILABLE_MESSAGE)
             )
             return
 
@@ -262,7 +270,7 @@ class CopilotWorker:
             self._emit_response(
                 ResponseMessage(
                     ResponseType.ERROR,
-                    f"要求されたツール '{requested_tool}' は現在のモードでは使用できません。",
+                    f"リクエストされたツール '{requested_tool}' は現在のモードでは使用できません。",
                 )
             )
             return
@@ -272,7 +280,7 @@ class CopilotWorker:
             self._emit_response(
                 ResponseMessage(
                     ResponseType.ERROR,
-                    f"モード指定が一致しません (要求: {mode_hint}, 現在: {self.mode.value})。",
+                    f"リクエストされたモード '{mode_hint}' は現在のモード '{self.mode.value}' と一致しません。",
                 )
             )
             return
@@ -287,16 +295,13 @@ class CopilotWorker:
 
         if not isinstance(arguments, dict):
             self._emit_response(
-                ResponseMessage(ResponseType.ERROR, "ツール引数は JSON オブジェクト形式で指定してください。")
+                ResponseMessage(ResponseType.ERROR, INVALID_ARGUMENTS_MESSAGE)
             )
             return
 
         if not self.workbook_name:
             self._emit_response(
-                ResponseMessage(
-                    ResponseType.ERROR,
-                    "対象のブックが未選択です。Excel 側でブックをアクティブにしてください。",
-                )
+                ResponseMessage(ResponseType.ERROR, MISSING_WORKBOOK_ERROR_MESSAGE)
             )
             return
 

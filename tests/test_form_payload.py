@@ -1,7 +1,14 @@
+import queue
 import types
 import unittest
 
-from desktop_app import CopilotApp, CopilotMode, FORM_TOOL_NAMES
+from desktop_app import (
+    CopilotApp,
+    CopilotMode,
+    FORM_TOOL_NAMES,
+    MISSING_CONTEXT_ERROR_MESSAGE,
+)
+from excel_copilot.ui.messages import AppState
 
 
 def _build_app_for_mode(mode: CopilotMode, control_values: dict[str, str]) -> CopilotApp:
@@ -92,6 +99,33 @@ class CollectFormPayloadTests(unittest.TestCase):
         self.assertEqual(arguments["highlight_output_range"], "F2:F5")
         self.assertNotIn("corrected_output_range", arguments)
         self.assertEqual(summary_arguments["review_output_range"], "D2:F5")
+
+    def test_submit_form_requires_active_context(self) -> None:
+        app = CopilotApp.__new__(CopilotApp)  # type: ignore[call-arg]
+        app.app_state = AppState.READY
+        app.current_workbook_name = None
+        app.current_sheet_name = None
+        app.request_queue = queue.Queue()
+        app._last_error = ""
+
+        def fake_set_form_error(message: str) -> None:
+            app._last_error = message
+
+        collect_called = {"value": False}
+
+        def fake_collect_form_payload():
+            collect_called["value"] = True
+            return {}, None, {}
+
+        app._set_form_error = fake_set_form_error  # type: ignore[attr-defined]
+        app._update_ui = lambda: None  # type: ignore[attr-defined]
+        app._collect_form_payload = fake_collect_form_payload  # type: ignore[attr-defined]
+
+        app._submit_form(None)  # type: ignore[attr-defined]
+
+        self.assertFalse(collect_called["value"])
+        self.assertEqual(app._last_error, MISSING_CONTEXT_ERROR_MESSAGE)
+        self.assertTrue(app.request_queue.empty())
 
 
 if __name__ == "__main__":

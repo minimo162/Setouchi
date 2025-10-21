@@ -74,6 +74,7 @@ MODE_LABELS = {
     CopilotMode.TRANSLATION_WITH_REFERENCES: "翻訳（参照あり）",
     CopilotMode.REVIEW: "翻訳チェック",
 }
+MISSING_CONTEXT_ERROR_MESSAGE = "対象ブックとシートを選択してから送信してください。"
 
 FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
     CopilotMode.TRANSLATION: [
@@ -1043,8 +1044,7 @@ class CopilotApp:
         self._form_tabs = tabs_control
         self._form_body_column.content = tabs_control
         self._set_form_error("")
-        if self._form_submit_button:
-            self._form_submit_button.disabled = self.app_state not in {AppState.READY, AppState.ERROR}
+        self._update_submit_button_state()
         self._update_all_group_summaries()
         self._update_ui()
 
@@ -1304,6 +1304,10 @@ class CopilotApp:
 
     def _submit_form(self, e: Optional[ft.ControlEvent]):
         if self.app_state not in {AppState.READY, AppState.ERROR}:
+            return
+        if not self._has_active_excel_context():
+            self._set_form_error(MISSING_CONTEXT_ERROR_MESSAGE)
+            self._update_ui()
             return
 
         payload, error_message, arguments = self._collect_form_payload()
@@ -1616,8 +1620,7 @@ class CopilotApp:
         if self.form_controls:
             for control in self.form_controls.values():
                 control.disabled = not can_interact
-        if self._form_submit_button:
-            self._form_submit_button.disabled = not can_interact
+        self._update_submit_button_state()
         if self._form_cancel_button:
             if is_task_in_progress:
                 self._form_cancel_button.visible = True
@@ -1806,6 +1809,22 @@ class CopilotApp:
             has_history = bool(self.chat_history)
         self.save_log_button.disabled = not has_history
         self._update_chat_empty_state()
+
+    def _has_active_excel_context(self) -> bool:
+        return bool(self.current_workbook_name) and bool(self.current_sheet_name)
+
+    def _update_submit_button_state(self) -> None:
+        if not self._form_submit_button:
+            return
+        can_submit = (
+            self.app_state in {AppState.READY, AppState.ERROR}
+            and self._has_active_excel_context()
+        )
+        self._form_submit_button.disabled = not can_submit
+        try:
+            self._form_submit_button.update()
+        except Exception:
+            pass
 
     def _handle_save_log_click(self, e: Optional[ft.ControlEvent]):
         try:
@@ -2223,6 +2242,7 @@ class CopilotApp:
 
                 self._last_context_refresh_at = datetime.now()
                 self._update_context_summary()
+                self._update_submit_button_state()
                 return active_sheet
 
             except Exception as ex:
@@ -2241,9 +2261,12 @@ class CopilotApp:
                 self.workbook_selector.disabled = True
                 self.workbook_selection_updating = False
 
+                self.current_workbook_name = None
+                self.current_sheet_name = None
                 self._last_excel_snapshot = {}
                 self._last_context_refresh_at = None
                 self._update_context_summary()
+                self._update_submit_button_state()
                 if not auto_triggered and not is_initial_start:
                     self._add_message(ResponseType.ERROR, error_message, {"source": "excel_refresh"})
                 self._update_ui()
