@@ -7,11 +7,16 @@ import os
 import queue
 import platform
 import re
+import sys
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+if os.environ.get("PYTHONUNBUFFERED") != "1":
+    os.environ["PYTHONUNBUFFERED"] = "1"
+    os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
 
 import flet as ft
 
@@ -60,6 +65,8 @@ DEFAULT_AUTOTEST_TARGET_REFERENCE_URL = (
     "https://ralleti-my.sharepoint.com/:b:/g/personal/yuukikod_ralleti_onmicrosoft_com/"
     "EdJ586XuxedLsaSArCCve9kB1K79F0BvGqxzuZBhfWWS-w?e=wjR4C2"
 )
+
+WORKER_INIT_TIMEOUT_DEFAULT = 45.0
 
 MODE_LABELS = {
     CopilotMode.TRANSLATION: "翻訳（通常）",
@@ -219,6 +226,15 @@ class CopilotApp:
         self.worker_thread: Optional[threading.Thread] = None
         self.queue_thread: Optional[threading.Thread] = None
         self.worker: Optional[CopilotWorker] = None
+        timeout_env = os.getenv("COPILOT_WORKER_INIT_TIMEOUT")
+        try:
+            timeout_value = float(timeout_env) if timeout_env else WORKER_INIT_TIMEOUT_DEFAULT
+        except (TypeError, ValueError):
+            timeout_value = WORKER_INIT_TIMEOUT_DEFAULT
+        self._worker_init_timeout_seconds = max(5.0, timeout_value)
+        self._worker_started_at: Optional[float] = None
+        self._worker_init_last_message_time: Optional[float] = None
+        self._worker_init_timed_out = False
         self.app_state: Optional[AppState] = None
         self.ui_loop_running = True
         self.shutdown_requested = False
@@ -356,6 +372,10 @@ class CopilotApp:
         self._update_ui()
         sheet_name = self._refresh_excel_context(is_initial_start=True)
 
+        logging.info(
+            "Starting Copilot worker thread (timeout %.1fs)...",
+            self._worker_init_timeout_seconds,
+        )
         self.worker = CopilotWorker(
             self.request_queue,
             self.response_queue,
@@ -364,9 +384,20 @@ class CopilotApp:
         )
         self.worker_thread = threading.Thread(target=self.worker.run, daemon=True)
         self.worker_thread.start()
+        self._worker_started_at = time.monotonic()
+        self._worker_init_last_message_time = self._worker_started_at
+        logging.info(
+            "Copilot worker thread launched (alive=%s)",
+            self.worker_thread.is_alive() if self.worker_thread else False,
+        )
 
+        logging.info("Starting response queue processing thread...")
         self.queue_thread = threading.Thread(target=self._process_response_queue_loop, daemon=True)
         self.queue_thread.start()
+        logging.info(
+            "Response queue thread launched (alive=%s)",
+            self.queue_thread.is_alive() if self.queue_thread else False,
+        )
 
         self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
 
@@ -2348,10 +2379,12 @@ class CopilotApp:
         self._refresh_excel_context_before_dropdown()
 
     def _process_response_queue_loop(self):
+        logging.info("Response queue loop started.")
         while self.ui_loop_running:
             try:
                 raw_message = self.response_queue.get(timeout=0.1)
             except queue.Empty:
+                self._maybe_handle_worker_init_timeout()
                 continue
             except Exception as e:
                 print(f"\u30ec\u30b9\u30dd\u30f3\u30b9\u30ad\u30e5\u30fc\u51e6\u7406\u4e2d\u306b\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f: {e}")
@@ -2363,6 +2396,7 @@ class CopilotApp:
                 print(f"\u30ec\u30b9\u30dd\u30f3\u30b9\u306e\u89e3\u6790\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {exc}")
                 continue
 
+            self._worker_init_last_message_time = time.monotonic()
             self._display_response(response)
 
     def _display_response(self, response: ResponseMessage):
@@ -2396,9 +2430,14 @@ class CopilotApp:
                     self.new_chat_button.disabled = False
 
         if response.type is ResponseType.INITIALIZATION_COMPLETE:
+            self._worker_init_timed_out = False
+            self._worker_started_at = None
+            self._worker_init_last_message_time = None
             self._set_state(AppState.READY)
             if self.status_label:
                 self.status_label.value = response.content or self.status_label.value
+                self._status_color_override = None
+                self.status_label.color = EXPRESSIVE_PALETTE["primary"]
             self._focus_app_window()
             if self._auto_test_enabled:
                 print("AUTOTEST: initialization complete", flush=True)
@@ -2485,6 +2524,28 @@ class CopilotApp:
             if snippet:
                 print(f"AUTOTEST: {response.type.value} '{snippet[:120]}'", flush=True)
 
+        self._update_ui()
+
+    def _maybe_handle_worker_init_timeout(self) -> None:
+        if self._worker_init_timed_out:
+            return
+        if self.app_state != AppState.INITIALIZING:
+            return
+        if self._worker_started_at is None:
+            return
+        last_event = self._worker_init_last_message_time or self._worker_started_at
+        if time.monotonic() - last_event < self._worker_init_timeout_seconds:
+            return
+        self._worker_init_timed_out = True
+        logging.error(
+            "Copilot worker failed to finish initialization within %.1f seconds.",
+            self._worker_init_timeout_seconds,
+        )
+        timeout_message = "Copilot 初期化がタイムアウトしました。Playwright の起動状況を確認してください。"
+        if self.status_label:
+            self.status_label.value = timeout_message
+            self.status_label.color = EXPRESSIVE_PALETTE["error"]
+        self._set_state(AppState.ERROR)
         self._update_ui()
 
     def _schedule_autotest_shutdown(self) -> None:

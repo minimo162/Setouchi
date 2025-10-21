@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import queue
 import threading
-import traceback
 from typing import Any, Dict, List, Optional, Union
 
 from excel_copilot.agent.prompts import CopilotMode
@@ -23,6 +23,8 @@ from excel_copilot.tools import excel_tools
 from excel_copilot.tools.actions import ExcelActions
 
 from .messages import RequestMessage, RequestType, ResponseMessage, ResponseType
+
+_logger = logging.getLogger(__name__)
 
 
 class CopilotWorker:
@@ -44,13 +46,13 @@ class CopilotWorker:
         self.current_tool: Optional[callable] = None
 
     def run(self):
+        _logger.info("Copilot worker thread started.")
         try:
             self._initialize()
             if self.browser_manager:
                 self._main_loop()
         except Exception as e:
-            print(f"Critical error in worker run method: {e}")
-            traceback.print_exc()
+            _logger.exception("Critical error in worker run method: %s", e)
             self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u81f4\u547d\u7684\u306a\u5b9f\u884c\u6642\u30a8\u30e9\u30fc: {e}"))
         finally:
             self._cleanup()
@@ -59,7 +61,7 @@ class CopilotWorker:
         try:
             self.response_queue.put(ResponseMessage.from_raw(message))
         except Exception as err:
-            print(f"Failed to enqueue response: {err}")
+            _logger.exception("Failed to enqueue response: %s", err)
 
     def _load_tools(self, mode: Optional[CopilotMode] = None) -> None:
         target_mode = mode or self.mode
@@ -91,8 +93,7 @@ class CopilotWorker:
             reset_ok = self.browser_manager.reset_chat_session()
         except Exception as e:
             error_message = f"Copilot セッションのリセットに失敗しました: {e}"
-            print(error_message)
-            traceback.print_exc()
+            _logger.exception(error_message)
             self._emit_response(ResponseMessage(ResponseType.ERROR, error_message))
             return False
 
@@ -102,8 +103,7 @@ class CopilotWorker:
                 self.browser_manager.restart()
             except Exception as e:
                 error_message = f"ブラウザの再起動に失敗しました: {e}"
-                print(error_message)
-                traceback.print_exc()
+                _logger.exception(error_message)
                 try:
                     self.browser_manager.close()
                 except Exception:
@@ -118,7 +118,7 @@ class CopilotWorker:
 
     def _initialize(self):
         try:
-            print("Worker\u306e\u521d\u671f\u5316\u3092\u958b\u59cb\u3057\u307e\u3059...")
+            _logger.info("Worker initialization started.")
             self._emit_response(ResponseMessage(ResponseType.STATUS, "\u30d6\u30e9\u30a6\u30b6 (Playwright) \u3092\u8d77\u52d5\u4e2d..."))
             self.browser_manager = BrowserCopilotManager(
                 user_data_dir=COPILOT_USER_DATA_DIR,
@@ -128,21 +128,20 @@ class CopilotWorker:
                 slow_mo_ms=COPILOT_SLOW_MO_MS,
             )
             self.browser_manager.start()
-            print("BrowserManager \u306e\u8d77\u52d5\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
+            _logger.info("BrowserCopilotManager start completed.")
 
             self._emit_response(ResponseMessage(ResponseType.STATUS, "\u30d5\u30a9\u30fc\u30e0\u7528\u30c4\u30fc\u30eb\u3092\u521d\u671f\u5316\u3057\u3066\u3044\u307e\u3059..."))
             self._load_tools(self.mode)
-            print("\u69cb\u9020\u5316\u3055\u308c\u305f\u30c4\u30fc\u30eb\u306e\u6e96\u5099\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
+            _logger.info("Structured tool preparation completed.")
 
             self._emit_response(ResponseMessage(ResponseType.INITIALIZATION_COMPLETE, "\u521d\u671f\u5316\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002\u6307\u793a\u3092\u3069\u3046\u305e\u3002"))
-            print("Worker\u306e\u521d\u671f\u5316\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
+            _logger.info("Worker initialization completed.")
         except Exception as e:
-            print(f"Worker\u306e\u521d\u671f\u5316\u4e2d\u306b\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f: {e}")
-            traceback.print_exc()
+            _logger.exception("Worker initialization failed: %s", e)
             self._emit_response(ResponseMessage(ResponseType.ERROR, f"\u521d\u671f\u5316\u30a8\u30e9\u30fc: {e}"))
 
     def _main_loop(self):
-        print("\u30e1\u30a4\u30f3\u30eb\u30fc\u30d7\u3092\u958b\u59cb\u3057\u307e\u3059...")
+        _logger.info("Worker main loop started.")
         while True:
             raw_request = self.request_queue.get()
             try:
@@ -152,7 +151,7 @@ class CopilotWorker:
                 continue
 
             if request.type is RequestType.QUIT:
-                print("\u7d42\u4e86\u30ea\u30af\u30a8\u30b9\u30c8\u3092\u53d7\u4fe1\u3057\u307e\u3057\u305f\u3002\u30e1\u30a4\u30f3\u30eb\u30fc\u30d7\u3092\u7d42\u4e86\u3057\u307e\u3059\u3002")
+                _logger.info("Quit request received; shutting down worker loop.")
                 break
             if request.type is RequestType.STOP:
                 self.stop_event.set()
@@ -160,7 +159,7 @@ class CopilotWorker:
                     try:
                         self.browser_manager.request_stop()
                     except Exception as stop_err:
-                        print(f"\u505c\u6b62\u30ea\u30af\u30a8\u30b9\u30c8\u306e\u8ee2\u9001\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {stop_err}")
+                        _logger.exception("Failed to forward stop request: %s", stop_err)
                 continue
 
             if request.type is RequestType.UPDATE_CONTEXT:
@@ -395,7 +394,7 @@ class CopilotWorker:
             )
 
     def _cleanup(self):
-        print("\u30af\u30ea\u30fc\u30f3\u30a2\u30c3\u30d7\u3092\u958b\u59cb\u3057\u307e\u3059...")
+        _logger.info("Worker cleanup starting...")
         if self.browser_manager:
             self.browser_manager.close()
-        print("Worker\u306e\u30af\u30ea\u30fc\u30f3\u30a2\u30c3\u30d7\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002")
+        _logger.info("Worker cleanup completed.")
