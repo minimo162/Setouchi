@@ -67,6 +67,7 @@ DEFAULT_AUTOTEST_TARGET_REFERENCE_URL = (
 )
 
 WORKER_INIT_TIMEOUT_DEFAULT = 45.0
+EXCEL_CONNECT_TIMEOUT_DEFAULT = 5.0
 
 MODE_LABELS = {
     CopilotMode.TRANSLATION: "翻訳（通常）",
@@ -220,6 +221,7 @@ def _is_autotest_mode_enabled() -> bool:
 
 class CopilotApp:
     def __init__(self, page: ft.Page):
+        logging.info("CopilotApp.__init__ started")
         self.page = page
         self.request_queue: "queue.Queue[RequestMessage]" = queue.Queue()
         self.response_queue: "queue.Queue[ResponseMessage]" = queue.Queue()
@@ -232,9 +234,16 @@ class CopilotApp:
         except (TypeError, ValueError):
             timeout_value = WORKER_INIT_TIMEOUT_DEFAULT
         self._worker_init_timeout_seconds = max(5.0, timeout_value)
+        excel_timeout_env = os.getenv("COPILOT_EXCEL_CONNECT_TIMEOUT")
+        try:
+            excel_timeout_value = float(excel_timeout_env) if excel_timeout_env else EXCEL_CONNECT_TIMEOUT_DEFAULT
+        except (TypeError, ValueError):
+            excel_timeout_value = EXCEL_CONNECT_TIMEOUT_DEFAULT
+        self._excel_connect_timeout_seconds = max(1.0, excel_timeout_value)
         self._worker_started_at: Optional[float] = None
         self._worker_init_last_message_time: Optional[float] = None
         self._worker_init_timed_out = False
+        self._excel_connection_failed = False
         self.app_state: Optional[AppState] = None
         self.ui_loop_running = True
         self.shutdown_requested = False
@@ -366,11 +375,13 @@ class CopilotApp:
         self._configure_page()
         self._build_layout()
         self._register_window_handlers()
+        logging.info("CopilotApp.__init__ completed")
 
     def mount(self):
+        logging.info("CopilotApp.mount invoked")
         self._set_state(AppState.INITIALIZING)
         self._update_ui()
-        sheet_name = self._refresh_excel_context(is_initial_start=True)
+        sheet_name = self._refresh_excel_context(is_initial_start=True, allow_fail=True)
 
         logging.info(
             "Starting Copilot worker thread (timeout %.1fs)...",
@@ -2013,7 +2024,7 @@ class CopilotApp:
             except OSError as err:
                 print(f"Failed to write sheet preference: {err}")
 
-    def _refresh_excel_context(
+    def _refresh_excel_context_once(
         self,
         is_initial_start: bool = False,
         desired_workbook: Optional[str] = None,
@@ -2237,6 +2248,41 @@ class CopilotApp:
                     self._add_message(ResponseType.ERROR, error_message, {"source": "excel_refresh"})
                 self._update_ui()
                 return None
+
+    def _refresh_excel_context(
+        self,
+        is_initial_start: bool = False,
+        desired_workbook: Optional[str] = None,
+        auto_triggered: bool = False,
+        allow_fail: bool = False,
+    ) -> Optional[str]:
+        try:
+            result = self._refresh_excel_context_once(
+                is_initial_start=is_initial_start,
+                desired_workbook=desired_workbook,
+                auto_triggered=auto_triggered,
+            )
+        except ExcelConnectionError as exc:
+            if allow_fail:
+                logging.warning("Excel context refresh failed: %s", exc)
+                self._handle_excel_connection_failure()
+                return None
+            raise
+        except Exception as exc:
+            if allow_fail:
+                logging.warning("Excel context refresh raised an unexpected error: %s", exc)
+                self._handle_excel_connection_failure()
+                return None
+            raise
+
+        if result is None:
+            if allow_fail:
+                logging.warning("Excel context refresh returned no active sheet.")
+                self._handle_excel_connection_failure()
+            return None
+
+        self._clear_excel_connection_warning()
+        return result
 
     def _start_background_excel_polling(self):
         if self._excel_poll_thread and self._excel_poll_thread.is_alive():
@@ -2546,6 +2592,26 @@ class CopilotApp:
             self.status_label.value = timeout_message
             self.status_label.color = EXPRESSIVE_PALETTE["error"]
         self._set_state(AppState.ERROR)
+        self._update_ui()
+
+    def _handle_excel_connection_failure(self) -> None:
+        if not self._excel_connection_failed:
+            logging.error("Excel connection unavailable; continuing without workbook context.")
+        self._excel_connection_failed = True
+        message = "Excel に接続できませんでした。"
+        self._status_message_override = message
+        self._status_color_override = EXPRESSIVE_PALETTE["error"]
+        if self.status_label:
+            self.status_label.value = message
+            self.status_label.color = EXPRESSIVE_PALETTE["error"]
+        self._update_ui()
+
+    def _clear_excel_connection_warning(self) -> None:
+        if not self._excel_connection_failed:
+            return
+        self._excel_connection_failed = False
+        self._status_message_override = None
+        self._status_color_override = None
         self._update_ui()
 
     def _schedule_autotest_shutdown(self) -> None:
