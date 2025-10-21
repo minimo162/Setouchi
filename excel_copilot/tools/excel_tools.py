@@ -1399,11 +1399,7 @@ def translate_range_contents(
                 if not isinstance(cell_value, str):
                     continue
                 normalized_cell = cell_value.replace("\r\n", "\n").replace("\r", "\n")
-                if "\n" in normalized_cell:
-                    segments = normalized_cell.split("\n")
-                    if any(JAPANESE_CHAR_PATTERN.search(segment) for segment in segments):
-                        pending_cols.add(col_idx)
-                elif JAPANESE_CHAR_PATTERN.search(cell_value):
+                if JAPANESE_CHAR_PATTERN.search(normalized_cell):
                     pending_cols.add(col_idx)
             if pending_cols:
                 pending_columns_by_row[row_idx] = pending_cols
@@ -1812,8 +1808,7 @@ def translate_range_contents(
             _ensure_not_stopped()
             row_end = min(row_start + batch_size, source_rows)
             chunk_texts: List[str] = []
-            chunk_positions: List[Tuple[int, int, Optional[int]]] = []
-            multi_line_segments: Dict[Tuple[int, int], Dict[str, Any]] = {}
+            chunk_positions: List[Tuple[int, int]] = []
 
             for local_row in range(row_start, row_end):
                 _ensure_not_stopped()
@@ -1822,33 +1817,10 @@ def translate_range_contents(
                     if not isinstance(cell_value, str):
                         continue
 
-                    cell_key = (local_row, col_idx)
-                    normalized_cell = cell_value.replace('\r\n', '\n').replace('\r', '\n')
-                    if '\n' in normalized_cell:
-                        segments = normalized_cell.split('\n')
-                        pending_indexes: Set[int] = set()
-                        translated_segments: List[Optional[str]] = []
-                        for seg_index, segment_text in enumerate(segments):
-                            if JAPANESE_CHAR_PATTERN.search(segment_text):
-                                chunk_texts.append(segment_text)
-                                chunk_positions.append((local_row, col_idx, seg_index))
-                                pending_indexes.add(seg_index)
-                                translated_segments.append(None)
-                            else:
-                                translated_segments.append(segment_text)
-                        if pending_indexes:
-                            multi_line_segments[cell_key] = {
-                                "segments": segments,
-                                "translated_segments": translated_segments,
-                                "pending_indexes": pending_indexes,
-                                "process_notes": {},
-                                "reference_pairs": {},
-                            }
-                            continue
-
-                    if JAPANESE_CHAR_PATTERN.search(cell_value):
-                        chunk_texts.append(cell_value)
-                        chunk_positions.append((local_row, col_idx, None))
+                    normalized_cell = _normalize_cell_value(cell_value).replace('\r\n', '\n').replace('\r', '\n')
+                    if JAPANESE_CHAR_PATTERN.search(normalized_cell):
+                        chunk_texts.append(normalized_cell)
+                        chunk_positions.append((local_row, col_idx))
 
             if not chunk_texts:
                 continue
@@ -1998,11 +1970,7 @@ def translate_range_contents(
                             "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
                         )
 
-                    if len(position) == 3:
-                        local_row, col_idx, segment_index = position
-                    else:
-                        local_row, col_idx = position
-                        segment_index = None
+                    local_row, col_idx = position
 
                     if writing_to_source_directly:
                         translation_col_index = col_idx
@@ -2071,38 +2039,6 @@ def translate_range_contents(
                                     }
                                 )
                             reference_pairs_list = merged
-                    cell_key = (local_row, col_idx)
-                    multi_segment_state = multi_line_segments.get(cell_key)
-                    if multi_segment_state and segment_index is not None:
-                        multi_segment_state['translated_segments'][segment_index] = translation_value
-                        if process_notes_text:
-                            multi_segment_state.setdefault('process_notes', {})[segment_index] = process_notes_text
-                        if reference_pairs_list:
-                            multi_segment_state.setdefault('reference_pairs', {})[segment_index] = list(reference_pairs_list)
-                        pending = multi_segment_state.get('pending_indexes')
-                        if pending is not None:
-                            pending.discard(segment_index)
-                            if pending:
-                                continue
-                        translated_segments = []
-                        for idx, segment in enumerate(multi_segment_state.get('translated_segments', [])):
-                            if segment is None:
-                                translated_segments.append(multi_segment_state['segments'][idx])
-                            else:
-                                translated_segments.append(segment)
-                        translation_value = "\n".join(translated_segments)
-                        ordered_notes = [
-                            multi_segment_state.get('process_notes', {}).get(idx, '')
-                            for idx in range(len(multi_segment_state.get('segments', [])))
-                        ]
-                        process_notes_text = "\n".join([entry for entry in ordered_notes if entry]).strip()
-                        aggregated_pairs: List[Dict[str, str]] = []
-                        for idx in range(len(multi_segment_state.get('segments', []))):
-                            aggregated_pairs.extend(
-                                multi_segment_state.get('reference_pairs', {}).get(idx, [])
-                            )
-                        reference_pairs_list = aggregated_pairs
-
                     existing_output_value = output_matrix[local_row][translation_col_index]
                     if translation_value != existing_output_value:
                         output_matrix[local_row][translation_col_index] = translation_value
