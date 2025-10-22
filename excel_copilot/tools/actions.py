@@ -206,15 +206,21 @@ class ExcelActions:
         except Exception as e:
             raise ToolExecutionError(f"範囲 '{cell_range}' の読み取り中にエラーが発生しました: {e}")
 
-    def write_range(self, cell_range: str, data: List[List[Any]], sheet_name: Optional[str] = None) -> str:
-        """指定された範囲にデータを書き込む前に、データの次元が範囲と一致するかを検証する。"""
+    def write_range(
+        self,
+        cell_range: str,
+        data: List[List[Any]],
+        sheet_name: Optional[str] = None,
+        apply_formatting: bool = True,
+    ) -> str:
+        """指定された範囲にデータを書き込む前に次元を検証し、必要に応じて整形を適用する。"""
         try:
             sheet = self._get_sheet(sheet_name)
             target_range = sheet.range(cell_range)
 
             if not isinstance(data, list) or (data and not isinstance(data[0], list)):
-                 raise ToolExecutionError("書き込むデータは2次元リストである必要があります。")
-            
+                raise ToolExecutionError("書き込むデータは2次元リストである必要があります。")
+
             data_rows = len(data)
             data_cols = len(data[0]) if data_rows > 0 else 0
             _review_debug(f"actions.write_range start range={cell_range} rows={data_rows} cols={data_cols}")
@@ -233,14 +239,18 @@ class ExcelActions:
 
             target_range.value = data
             _review_debug(f"actions.write_range wrote values range={cell_range}")
-            self._apply_text_wrapping(target_range)
-            _review_debug(f"actions.write_range completed range={cell_range}")
+            if apply_formatting:
+                self._apply_text_wrapping(target_range)
+                _review_debug(f"actions.write_range completed range={cell_range} formatted=True")
+            else:
+                _review_debug(f"actions.write_range completed range={cell_range} formatted=False")
             return f"範囲 '{cell_range}' にデータを正常に書き込みました。"
         except Exception as e:
             _review_debug(f"actions.write_range error range={cell_range} error={e}")
             if isinstance(e, ToolExecutionError):
                 raise e
             raise ToolExecutionError(f"範囲 '{cell_range}' への書き込み中に予期せぬエラーが発生しました: {e}")
+
 
     def _apply_text_wrapping(self, target_range: xw.Range) -> None:
         """Turn on wrapping, align to top-left, and auto-fit within sensible bounds."""

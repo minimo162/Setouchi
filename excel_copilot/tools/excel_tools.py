@@ -1136,6 +1136,7 @@ def translate_range_contents(
         range_adjustment_note: Optional[str] = None
         writing_to_source_directly = translation_output_range is None
         include_context_columns = output_mode != "translation_only"
+        should_apply_formatting = output_mode != "translation_only"
         translation_block_width = (
             _MIN_CONTEXT_BLOCK_WIDTH if include_context_columns else 1
         )
@@ -1463,7 +1464,7 @@ def translate_range_contents(
             row_reference = _output_row_reference(row_idx)
             row_slice = output_matrix[row_idx][:output_total_cols]
             if row_dirty_flags[row_idx]:
-                write_message = actions.write_range(row_reference, [row_slice], output_sheet)
+                write_message = actions.write_range(row_reference, [row_slice], output_sheet, apply_formatting=should_apply_formatting)
                 incremental_row_messages.append(write_message)
                 row_dirty_flags[row_idx] = False
                 wrote_anything = True
@@ -1473,6 +1474,7 @@ def translate_range_contents(
                     source_reference,
                     [source_matrix[row_idx][:source_cols]],
                     target_sheet,
+                    apply_formatting=should_apply_formatting,
                 )
                 incremental_row_messages.append(overwrite_message)
                 source_row_dirty_flags[row_idx] = False
@@ -2341,11 +2343,11 @@ def translate_range_contents(
         _ensure_not_stopped()
 
         if output_dirty:
-            translation_message = actions.write_range(output_range, output_matrix, output_sheet)
+            translation_message = actions.write_range(output_range, output_matrix, output_sheet, apply_formatting=should_apply_formatting)
             write_messages.append(translation_message)
 
         if overwrite_source and not writing_to_source_directly and source_dirty:
-            overwrite_message = actions.write_range(normalized_range, source_matrix, target_sheet)
+            overwrite_message = actions.write_range(normalized_range, source_matrix, target_sheet, apply_formatting=should_apply_formatting)
             write_messages.append(overwrite_message)
 
         if not write_messages:
