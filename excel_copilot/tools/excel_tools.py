@@ -1174,7 +1174,10 @@ def translate_range_contents(
             if not math.isfinite(candidate_limit) or candidate_limit <= 0:
                 raise ToolExecutionError("length_ratio_limit には 0 より大きい有限の数値を指定してください。")
             effective_length_ratio_limit = candidate_limit
-        enforce_length_limit = False
+        enforce_length_limit = (
+            effective_length_ratio_limit is not None
+            and output_mode == "translation_only"
+        )
         length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
         length_limit_messages: List[str] = []
         length_retry_counts: Dict[Tuple[int, int], int] = {}
