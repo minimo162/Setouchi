@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import math
 import os
 import queue
 import platform
@@ -94,6 +95,15 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "placeholder": "例: B2:B20",
             "group": "output",
         },
+        {
+            "name": "length_ratio_limit",
+            "label": "翻訳文字数倍率（任意）",
+            "argument": "length_ratio_limit",
+            "placeholder": "例: 1.7",
+            "group": "options",
+            "type": "float",
+            "helper": "未入力=制限なし",
+        },
     ],
     CopilotMode.TRANSLATION_WITH_REFERENCES: [
         {
@@ -176,7 +186,7 @@ FORM_GROUP_LABELS: Dict[str, str] = {
     "options": "オプション",
 }
 
-FORM_GROUP_ORDER: List[str] = ["mode", "scope", "output", "references"]
+FORM_GROUP_ORDER: List[str] = ["mode", "scope", "output", "options", "references"]
 
 
 def _flatten_field_definitions(definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -922,6 +932,9 @@ class CopilotApp:
                 text_field.max_lines = definition["max_lines"]
             if definition.get("type") == "int":
                 text_field.keyboard_type = ft.KeyboardType.NUMBER
+            helper_text = definition.get("helper")
+            if helper_text:
+                text_field.helper_text = helper_text
             if definition.get("required"):
                 text_field.suffix = _build_required_badge()
             text_field.on_submit = self._submit_form
@@ -1236,6 +1249,21 @@ class CopilotApp:
                     continue
                 if field.get("min") and value < field["min"]:
                     errors.append(f"{field['label']}は{field['min']}以上で入力してください。")
+                    continue
+                arguments[argument_key] = value
+                summary_arguments[argument_key] = value
+            elif field_type == "float":
+                try:
+                    value = float(raw_value)
+                except ValueError:
+                    errors.append(f"{field['label']}は数値で入力してください。")
+                    continue
+                if math.isnan(value) or math.isinf(value):
+                    errors.append(f"{field['label']}は有限の数値で入力してください。")
+                    continue
+                min_value = field.get("min")
+                if min_value is not None and value < min_value:
+                    errors.append(f"{field['label']}は{min_value}以上で入力してください。")
                     continue
                 arguments[argument_key] = value
                 summary_arguments[argument_key] = value

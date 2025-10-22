@@ -127,6 +127,21 @@ def _maybe_unescape_html_entities(text: str) -> str:
     return unescaped
 
 
+def _measure_utf16_length(value: Optional[str]) -> int:
+    """Return the number of UTF-16 code units in the provided string."""
+    if value is None:
+        return 0
+    if not isinstance(value, str):
+        value = str(value)
+    if not value:
+        return 0
+    try:
+        return len(value.encode("utf-16-le")) // 2
+    except Exception:
+        # Fall back to Python's code point count if encoding fails unexpectedly.
+        return len(value)
+
+
 def _unescape_matrix_values(matrix: List[List[Any]]) -> List[List[Any]]:
     return [
         [
@@ -1060,6 +1075,7 @@ def translate_range_contents(
     target_reference_urls: Optional[List[str]] = None,
     translation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
+    length_ratio_limit: Optional[float] = None,
     rows_per_batch: Optional[int] = None,
     stop_event: Optional[Event] = None,
     output_mode: str = "translation_with_context",
@@ -1078,6 +1094,8 @@ def translate_range_contents(
         target_reference_urls: URLs to the target-language reference documents used for pairing.
         translation_output_range: Range where translated content, process notes, and reference pairs are written.
         overwrite_source: Whether to overwrite the source range directly.
+        length_ratio_limit: Optional upper bound for the ratio (translated UTF-16 length / source UTF-16 length)
+            enforced in translation-only mode. When None, no limit is applied.
         rows_per_batch: Optional cap for batch size when chunking the translation work.
         stop_event: Optional cancellation event set when the user interrupts the operation.
         output_mode: Controls whether contextual columns (process notes / reference pairs) are emitted.
@@ -1140,6 +1158,99 @@ def translate_range_contents(
         translation_block_width = (
             _MIN_CONTEXT_BLOCK_WIDTH if include_context_columns else 1
         )
+        effective_length_ratio_limit: Optional[float] = None
+        if length_ratio_limit is not None:
+            try:
+                candidate_limit = float(length_ratio_limit)
+            except (TypeError, ValueError):
+                raise ToolExecutionError("length_ratio_limit は数値で指定してください。") from None
+            if not math.isfinite(candidate_limit) or candidate_limit <= 0:
+                raise ToolExecutionError("length_ratio_limit には 0 より大きい有限の数値を指定してください。")
+            effective_length_ratio_limit = candidate_limit
+        enforce_length_limit = effective_length_ratio_limit is not None and not include_context_columns
+        length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        length_limit_messages: List[str] = []
+        length_retry_counts: Dict[Tuple[int, int], int] = {}
+        max_length_retries = 2
+
+        def _compute_length_ratio(source_units: int, translated_units: int) -> float:
+            if source_units <= 0:
+                return 0.0 if translated_units <= 0 else math.inf
+            return translated_units / source_units
+
+        def _format_ratio(value: float) -> str:
+            if not math.isfinite(value):
+                return "∞"
+            return f"{value:.2f}"
+
+        def _request_length_constrained_translation(
+            original_text: str,
+            supporting_context: Dict[str, Any],
+            current_translation: str,
+            attempt_index: int,
+        ) -> Optional[str]:
+            if not enforce_length_limit or effective_length_ratio_limit is None:
+                return None
+            instructions = [
+                "再調整タスク: 以下の日本語テキストについて、既存の英訳を文字数制限内に収めるように短く調整してください。",
+                f"- 制約: 訳文の UTF-16 コードユニット数は原文の {effective_length_ratio_limit:.2f} 倍以内にしてください。",
+                "- 意味と重要な情報を保持しつつ、冗長な語句を削除し、簡潔な言い換えを選択してください。",
+                "- 新しい情報や不要な意訳を追加しないでください。",
+                "- 現在の訳文を参考にしながら、長さ制限を守る最も自然な表現を選んでください。",
+                "",
+                "出力形式:",
+                "- JSON 配列のみを出力し、要素数は 1 件です。",
+                '- 要素のキーは "translated_text" のみを含めてください。',
+                "",
+                "source_texts(JSON):",
+                json.dumps([original_text], ensure_ascii=False),
+            ]
+            if supporting_context and any(
+                supporting_context.get(key) for key in ("source_sentences", "reference_pairs")
+            ):
+                instructions.extend(
+                    [
+                        "supporting_data(JSON):",
+                        json.dumps([supporting_context], ensure_ascii=False),
+                    ]
+                )
+            instructions.extend(
+                [
+                    "current_translation(JSON):",
+                    json.dumps([current_translation], ensure_ascii=False),
+                ]
+            )
+            retry_prompt = "\n".join(instructions) + "\n"
+            _ensure_not_stopped()
+            actions.log_progress(
+                f"文字数制限調整を再試行中 (attempt {attempt_index}): UTF-16比 {effective_length_ratio_limit:.2f} 以下を目標に再生成"
+            )
+            response = browser_manager.ask(retry_prompt, stop_event=stop_event)
+            try:
+                match = re.search(r"{.*}|\[.*\]", response, re.DOTALL)
+                json_payload = match.group(0) if match else response
+                parsed_payload = json.loads(json_payload)
+            except json.JSONDecodeError:
+                return None
+
+            candidate_value: Optional[str] = None
+            if isinstance(parsed_payload, list) and parsed_payload:
+                candidate = parsed_payload[0]
+                if isinstance(candidate, dict):
+                    raw_value = (
+                        candidate.get("translated_text")
+                        or candidate.get("translation")
+                        or candidate.get("text")
+                    )
+                    if isinstance(raw_value, str):
+                        candidate_value = raw_value
+                elif isinstance(candidate, str):
+                    candidate_value = candidate
+            elif isinstance(parsed_payload, dict):
+                raw_value = parsed_payload.get("translated_text")
+                if isinstance(raw_value, str):
+                    candidate_value = raw_value
+            return candidate_value
         citation_should_include_explanations = writing_to_source_directly and include_context_columns
         out_rows = source_rows
         out_cols = source_cols if writing_to_source_directly else source_cols * translation_block_width
@@ -1375,11 +1486,17 @@ def translate_range_contents(
             ]
             prompt_preamble = "".join(prompt_parts)
         else:
-            prompt_preamble = (
-                f"以下の日本語テキストを {target_language} に翻訳してください。\n"
-                "入力順を維持し、すべての文を翻訳してください。\n"
-                "出力は翻訳文のみを要素とする JSON 配列とし、説明やコメントは含めないでください。\n"
-            )
+            prompt_lines = [
+                f"以下の日本語テキストを {target_language} に翻訳してください。\n",
+                "入力列の順序を維持し、すべての文を翻訳してください。\n",
+                "出力は翻訳文のみを要素とする JSON 配列とし、説明やコメントを含めないでください。\n",
+            ]
+            if enforce_length_limit and effective_length_ratio_limit is not None:
+                prompt_lines.extend([
+                    f"訳文は UTF-16 のコードユニット数で原文の {effective_length_ratio_limit:.2f} 倍以内に収めてください。\n",
+                    "意味と重要な情報を保ちながら、冗長な表現を削って簡潔な語を選んでください。\n",
+                ])
+            prompt_preamble = "".join(prompt_lines)
         if references_requested or use_references:
             rows_per_batch = 1
         batch_size = rows_per_batch if rows_per_batch is not None else 1
@@ -1977,12 +2094,67 @@ def translate_range_contents(
                             "Translation response must include a 'translated_text' string for each item."
                         )
 
-                    translation_value = translation_value.strip()
                     translation_value = _maybe_unescape_html_entities(translation_value)
+                    translation_value = translation_value.strip()
+
+                    local_row, col_idx = position
+                    translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
+                    cell_ref_for_metrics = _cell_reference(
+                        output_start_row,
+                        output_start_col,
+                        local_row,
+                        translation_col_index_seed,
+                    )
+
+                    source_cell_value = _normalize_cell_value(original_data[local_row][col_idx]).strip()
                     if not translation_value:
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
-                    source_cell_value = _normalize_cell_value(original_data[position[0]][position[1]]).strip()
+                    source_length_units = _measure_utf16_length(source_cell_value)
+                    translated_length_units = _measure_utf16_length(translation_value)
+                    ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                    retries_used = 0
+                    length_status = "observed"
+
+                    if enforce_length_limit and effective_length_ratio_limit is not None:
+                        length_status = "ok"
+                        if ratio_value > effective_length_ratio_limit:
+                            actions.log_progress(
+                                f"文字数倍率超過検出: {cell_ref_for_metrics} の倍率 {ratio_value:.2f} (上限 {effective_length_ratio_limit:.2f})。再調整を試行します。"
+                            )
+                        context_payload = (
+                            translation_context[item_index] if item_index < len(translation_context) else {}
+                        )
+                        while ratio_value > effective_length_ratio_limit and retries_used < max_length_retries:
+                            retries_used += 1
+                            adjusted = _request_length_constrained_translation(
+                                source_cell_value,
+                                context_payload,
+                                translation_value,
+                                retries_used,
+                            )
+                            if not adjusted:
+                                actions.log_progress("文字数制限の再調整に失敗したため、これ以上の再試行を中止します。")
+                                break
+                            adjusted = _maybe_unescape_html_entities(adjusted)
+                            adjusted = adjusted.strip()
+                            if not adjusted:
+                                actions.log_progress("再調整された翻訳が空文字だったため、これ以上の再試行を中止します。")
+                                break
+                            translation_value = adjusted
+                            translated_length_units = _measure_utf16_length(translation_value)
+                            ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                        length_retry_counts[(local_row, col_idx)] = retries_used
+                        if ratio_value > effective_length_ratio_limit:
+                            length_status = "exceeded"
+                        else:
+                            length_status = "ok"
+                    else:
+                        length_retry_counts[(local_row, col_idx)] = 0
+
+                    if not translation_value:
+                        raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+
                     if translation_value == source_cell_value and _contains_japanese(translation_value):
                         raise ToolExecutionError(
                             "翻訳結果が元のテキストと同一で日本語のままです。翻訳が完了していません。"
@@ -1992,15 +2164,28 @@ def translate_range_contents(
                             "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
                         )
 
-                    local_row, col_idx = position
+                    metric_entry: Dict[str, Any] = {
+                        "source_length": source_length_units,
+                        "translated_length": translated_length_units,
+                        "ratio": ratio_value,
+                        "limit": effective_length_ratio_limit,
+                        "retries": retries_used,
+                        "status": length_status,
+                        "cell_ref": cell_ref_for_metrics,
+                    }
+                    length_metrics[(local_row, col_idx)] = metric_entry
+                    if enforce_length_limit and length_status == "exceeded":
+                        length_limit_messages.append(
+                            f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} (倍率 {_format_ratio(ratio_value)})"
+                        )
 
                     if writing_to_source_directly:
-                        translation_col_index = col_idx
+                        translation_col_index = translation_col_index_seed
                         explanation_col_index = None
                         pair_start_index = None
                         pair_end_index = None
                     else:
-                        translation_col_index = col_idx * translation_block_width
+                        translation_col_index = translation_col_index_seed
                         if include_context_columns:
                             explanation_col_index = translation_col_index + 1
                             pair_start_index = translation_col_index + 2
@@ -2340,6 +2525,29 @@ def translate_range_contents(
         if reference_warning_notes:
             write_messages.extend(reference_warning_notes)
 
+        if length_metrics:
+            total_length_entries = len(length_metrics)
+            if enforce_length_limit and effective_length_ratio_limit is not None:
+                exceeded_entries = [entry for entry in length_metrics.values() if entry.get("status") == "exceeded"]
+                if exceeded_entries:
+                    detail_items = length_limit_messages[:10]
+                    detail_text = "; ".join(detail_items) if detail_items else ""
+                    message = f"文字数倍率チェック: {len(exceeded_entries)}/{total_length_entries}件が上限 {effective_length_ratio_limit:.2f} を超過しました。"
+                    if detail_text:
+                        message += f" 詳細: {detail_text}"
+                    write_messages.append(message)
+                else:
+                    write_messages.append("文字数倍率チェック: 全{}件が上限 {:.2f} 以内でした。".format(total_length_entries, effective_length_ratio_limit))
+            else:
+                sample_entries = sorted(length_metrics.values(), key=lambda entry: entry.get("cell_ref", ""))[:5]
+                preview = [
+                    f"{entry['cell_ref']}: ×{_format_ratio(entry['ratio'])}"
+                    for entry in sample_entries
+                    if entry.get('cell_ref')
+                ]
+                if preview:
+                    write_messages.append("翻訳文字数メトリクス: " + "; ".join(preview))
+
         _ensure_not_stopped()
 
         if output_dirty:
@@ -2372,10 +2580,13 @@ def translate_range_without_references(
     sheet_name: Optional[str] = None,
     translation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
+    length_ratio_limit: Optional[float] = None,
     rows_per_batch: Optional[int] = None,
     stop_event: Optional[Event] = None,
 ) -> str:
-    """Translate ranges without using external reference material."""
+    """Translate ranges without using external reference material.
+
+    Optionally enforces a UTF-16 ベースの文字数倍率制限を適用できます。"""
     if rows_per_batch is not None and rows_per_batch < 1:
         raise ToolExecutionError("rows_per_batch must be at least 1 when provided.")
 
@@ -2392,6 +2603,7 @@ def translate_range_without_references(
         reference_urls=None,
         translation_output_range=translation_output_range,
         overwrite_source=overwrite_source,
+        length_ratio_limit=length_ratio_limit,
         rows_per_batch=rows_per_batch,
         stop_event=stop_event,
         output_mode="translation_only",
