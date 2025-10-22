@@ -37,6 +37,7 @@ class ResponseType(str, Enum):
     ACTION = "action"
     OBSERVATION = "observation"
     FINAL_ANSWER = "final_answer"
+    SHUTDOWN_COMPLETE = "shutdown_complete"
 
 
 @dataclass(frozen=True)

@@ -403,3 +403,7 @@ class CopilotWorker:
         if self.browser_manager:
             self.browser_manager.close()
         _logger.info("Worker cleanup completed.")
+        try:
+            self._emit_response(ResponseMessage(ResponseType.SHUTDOWN_COMPLETE))
+        except Exception:
+            _logger.debug("Failed to emit shutdown confirmation.", exc_info=True)

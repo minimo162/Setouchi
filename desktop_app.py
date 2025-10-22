@@ -257,7 +257,10 @@ class CopilotApp:
         self._excel_connection_failed = False
         self.app_state: Optional[AppState] = None
         self.ui_loop_running = True
+        self._shutdown_lock = threading.Lock()
         self.shutdown_requested = False
+        self.shutdown_finalized = False
+        self.worker_shutdown_event = threading.Event()
         self.window_closed_event = threading.Event()
         self.current_workbook_name: Optional[str] = None
         self.current_sheet_name: Optional[str] = None
@@ -2504,6 +2507,13 @@ class CopilotApp:
             "error": EXPRESSIVE_PALETTE["error"],
         }
 
+        if response.type is ResponseType.SHUTDOWN_COMPLETE:
+            print("Shutdown: worker reported cleanup complete.")
+            self.worker_shutdown_event.set()
+            if self.shutdown_requested:
+                self._finalize_shutdown(reason="worker-signal")
+            return
+
         if (
             self._pending_focus_action == "focus_excel_window"
             and self._pending_focus_deadline is not None
@@ -2882,60 +2892,106 @@ class CopilotApp:
         print("AUTOTEST: form submitted", flush=True)
 
     def _force_exit(self, reason: str = ""):
+        normalized_reason = reason or "unspecified"
         if self.shutdown_requested:
             print("Force exit: shutdown already in progress.")
-        else:
-            print(f"Force exit triggered. reason={reason}")
-            self.shutdown_requested = True
-            self._stop_background_excel_polling()
-            if self.ui_loop_running:
-                self.ui_loop_running = False
-                try:
-                    self.request_queue.put_nowait(RequestMessage(RequestType.QUIT))
-                    print("Force exit: QUIT request posted.")
-                except Exception as queue_err:
-                    print(f"Force exit: failed to enqueue QUIT: {queue_err}")
-                if self.worker_thread:
-                    try:
-                        self.worker_thread.join(timeout=3.0)
-                        print("Force exit: worker thread joined or timeout.")
-                    except Exception as join_err:
-                        print(f"Force exit: worker join error: {join_err}")
-            try:
-                self.page.window.prevent_close = False
-            except Exception as prevent_err:
-                print(f"Force exit: unable to clear prevent_close: {prevent_err}")
+            self._finalize_shutdown(reason=normalized_reason)
+            return
 
-            close_requested = False
+        print(f"Force exit triggered. reason={normalized_reason}")
+        self.shutdown_requested = True
+        self._stop_background_excel_polling()
+
+        try:
+            self.request_queue.put_nowait(RequestMessage(RequestType.QUIT))
+            print("Force exit: QUIT request posted.")
+        except Exception as queue_err:
+            print(f"Force exit: failed to enqueue QUIT: {queue_err}")
+
+        if not self.worker_thread or not self.worker_thread.is_alive():
+            self.worker_shutdown_event.set()
+
+        try:
+            self.page.window.prevent_close = False
+        except Exception as prevent_err:
+            print(f"Force exit: unable to clear prevent_close: {prevent_err}")
+
+        self._finalize_shutdown(reason=normalized_reason)
+
+    def _finalize_shutdown(self, reason: str = ""):
+        normalized_reason = reason or "unspecified"
+        with self._shutdown_lock:
+            if self.shutdown_finalized:
+                print(f"Shutdown already finalized. reason={normalized_reason}")
+                return
+            self.shutdown_finalized = True
+
+        print(f"Shutdown finalization started. reason={normalized_reason}")
+
+        worker_active = self.worker_thread is not None and self.worker_thread.is_alive()
+        if worker_active:
+            if self.worker_shutdown_event.wait(timeout=5.0):
+                print("Shutdown: worker shutdown signal received.")
+            else:
+                print("Shutdown: worker shutdown wait timed out.")
+        else:
+            self.worker_shutdown_event.set()
+
+        self.ui_loop_running = False
+        current_thread = threading.current_thread()
+
+        if worker_active and self.worker_thread is not current_thread:
             try:
-                self.page.window.close()
+                self.worker_thread.join(timeout=2.0)
+                print("Shutdown: worker thread joined or timeout.")
+            except Exception as join_err:
+                print(f"Shutdown: worker thread join failed: {join_err}")
+
+        if (
+            self.queue_thread
+            and self.queue_thread.is_alive()
+            and self.queue_thread is not current_thread
+        ):
+            try:
+                self.queue_thread.join(timeout=2.0)
+                print("Shutdown: queue thread joined or timeout.")
+            except Exception as join_err:
+                print(f"Shutdown: queue thread join failed: {join_err}")
+
+        window = getattr(self.page, "window", None)
+        close_requested = False
+        if window:
+            try:
+                window.close()
                 close_requested = True
-                print("Force exit: window.close() called.")
+                print("Shutdown: window.close() called.")
             except AttributeError:
                 try:
-                    self.page.window.destroy()
+                    window.destroy()
                     close_requested = True
                     self.window_closed_event.set()
-                    print("Force exit: window.destroy() called.")
+                    print("Shutdown: window.destroy() called.")
                 except Exception as destroy_err:
-                    print(f"Force exit: window destroy failed: {destroy_err}")
+                    print(f"Shutdown: window destroy failed: {destroy_err}")
             except Exception as close_err:
-                print(f"Force exit: window close failed: {close_err}")
+                print(f"Shutdown: window close failed: {close_err}")
+        else:
+            print("Shutdown: page window not available.")
 
-            if close_requested:
-                try:
-                    self.page.update()
-                except Exception as update_err:
-                    print(f"Force exit: page update after close failed: {update_err}")
+        if close_requested:
+            try:
+                self.page.update()
+            except Exception as update_err:
+                print(f"Shutdown: page update after close failed: {update_err}")
 
         if not self.window_closed_event.is_set():
             try:
                 if self.window_closed_event.wait(timeout=3.0):
-                    print("Force exit: window close confirmed.")
+                    print("Shutdown: window close confirmed.")
                 else:
-                    print("Force exit: window close wait timed out.")
+                    print("Shutdown: window close wait timed out.")
             except Exception as wait_err:
-                print(f"Force exit: waiting for window close failed: {wait_err}")
+                print(f"Shutdown: waiting for window close failed: {wait_err}")
         os._exit(0)
 
     def _on_window_event(self, e: ft.ControlEvent):
