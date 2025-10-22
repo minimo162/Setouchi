@@ -1174,7 +1174,7 @@ def translate_range_contents(
             if not math.isfinite(candidate_limit) or candidate_limit <= 0:
                 raise ToolExecutionError("length_ratio_limit には 0 より大きい有限の数値を指定してください。")
             effective_length_ratio_limit = candidate_limit
-        enforce_length_limit = effective_length_ratio_limit is not None and not include_context_columns
+        enforce_length_limit = False
         length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
         length_limit_messages: List[str] = []
         length_retry_counts: Dict[Tuple[int, int], int] = {}
@@ -1650,46 +1650,20 @@ def translate_range_contents(
                 any_translation = True
 
             source_text_canonical = source_key.strip()
-            source_length_units = cached_entry.get("source_length")
-            if not isinstance(source_length_units, int):
-                source_length_units = _measure_utf16_length(source_text_canonical)
-
-            translated_length_units = cached_entry.get("translated_length")
-            if not isinstance(translated_length_units, int):
-                translated_length_units = _measure_utf16_length(translation_value)
-
-            ratio_value = cached_entry.get("ratio")
-            if not isinstance(ratio_value, (int, float)):
-                ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-
-            limit_value = cached_entry.get("limit", effective_length_ratio_limit)
-            length_status = cached_entry.get("length_status", "observed")
-            retries_used = cached_entry.get("retries", 0)
-
-            if enforce_length_limit:
-                if limit_value is None:
-                    limit_value = effective_length_ratio_limit
-                if limit_value is not None and ratio_value > limit_value:
-                    length_status = "exceeded"
-                elif length_status == "exceeded" and limit_value is not None and ratio_value <= limit_value:
-                    length_status = "ok"
+            source_length_units = _measure_utf16_length(source_text_canonical)
+            translated_length_units = _measure_utf16_length(translation_value)
+            ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
 
             metric_entry = {
                 "source_length": source_length_units,
                 "translated_length": translated_length_units,
                 "ratio": ratio_value,
-                "limit": limit_value,
-                "retries": retries_used,
-                "status": length_status,
+                "limit": effective_length_ratio_limit,
+                "retries": 0,
+                "status": "observed",
                 "cell_ref": cell_ref_for_metrics,
             }
             length_metrics[(local_row, col_idx)] = metric_entry
-            length_retry_counts[(local_row, col_idx)] = retries_used
-
-            if enforce_length_limit and length_status == "exceeded":
-                length_limit_messages.append(
-                    f"{cell_ref_for_metrics}: 鄙ｻ險ｳ {translated_length_units} / 蜴滓枚 {source_length_units} (蛟咲紫 {_format_ratio(ratio_value)})"
-                )
 
             pending_cols = pending_columns_by_row.get(local_row)
             if pending_cols is not None:
@@ -2179,24 +2153,10 @@ def translate_range_contents(
                             existing_output_normalized = normalized_output.strip()
 
                     if existing_output_normalized and not _contains_japanese(existing_output_normalized):
-                        if not include_context_columns:
-                            if canonical_source not in translation_cache:
-                                source_length_units = _measure_utf16_length(canonical_source.strip())
-                                translated_length_units = _measure_utf16_length(existing_output_normalized)
-                                ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-                                limit_value = effective_length_ratio_limit if enforce_length_limit else None
-                                length_status = "observed"
-                                if enforce_length_limit and limit_value is not None:
-                                    length_status = "ok" if ratio_value <= limit_value else "exceeded"
-                                translation_cache[canonical_source] = {
-                                    "translation": existing_output_normalized,
-                                    "source_length": source_length_units,
-                                    "translated_length": translated_length_units,
-                                    "ratio": ratio_value,
-                                    "limit": limit_value,
-                                    "retries": 0,
-                                    "length_status": length_status,
-                                }
+                        if not include_context_columns and canonical_source not in translation_cache:
+                            translation_cache[canonical_source] = {
+                                "translation": existing_output_normalized,
+                            }
                         pending_cols = pending_columns_by_row.get(local_row)
                         if pending_cols is not None:
                             pending_cols.discard(col_idx)
@@ -2737,12 +2697,6 @@ def translate_range_contents(
                     if not include_context_columns:
                         translation_cache[source_text_canonical] = {
                             "translation": translation_value,
-                            "source_length": source_length_units,
-                            "translated_length": translated_length_units,
-                            "ratio": ratio_value,
-                            "limit": effective_length_ratio_limit,
-                            "retries": length_retry_counts.get((local_row, col_idx), 0),
-                            "length_status": length_status,
                         }
                         cached_entry = translation_cache[source_text_canonical]
                         for extra_position in position_group[1:]:
@@ -2884,7 +2838,7 @@ def translate_range_contents(
         if reference_warning_notes:
             write_messages.extend(reference_warning_notes)
 
-        if length_metrics:
+        if include_context_columns and length_metrics:
             total_length_entries = len(length_metrics)
             if enforce_length_limit and effective_length_ratio_limit is not None:
                 exceeded_entries = [entry for entry in length_metrics.values() if entry.get("status") == "exceeded"]
