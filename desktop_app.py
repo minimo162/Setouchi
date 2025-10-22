@@ -49,6 +49,8 @@ if not logging.getLogger().handlers:
 
 FOCUS_WAIT_TIMEOUT_SECONDS = 15.0
 PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
+PREFERENCE_FORM_VALUES_KEY = "__form_values__"
+FORM_VALUE_SAVE_DEBOUNCE_SECONDS = 0.75
 # Container in this Flet build lacks min-height/constraints helpers, so keep a fixed base height.
 CHAT_PANEL_BASE_HEIGHT = 600
 
@@ -305,6 +307,10 @@ class CopilotApp:
         self.log_dir = Path(COPILOT_USER_DATA_DIR) / "setouchi_logs"
         self.preference_file = Path(COPILOT_USER_DATA_DIR) / "setouchi_state.json"
         self.preference_lock = threading.Lock()
+        self._persisted_form_values: Dict[str, Dict[str, str]] = self._load_last_form_values()
+        self._persisted_form_values.setdefault(self.mode.value, {})
+        self._form_value_save_timer: Optional[threading.Timer] = None
+        self._pending_form_seed: Optional[Dict[str, str]] = None
 
         self._browser_ready_for_focus = False
         self._pending_focus_action: Optional[str] = None
@@ -891,7 +897,7 @@ class CopilotApp:
         initial_values: Optional[Dict[str, str]] = None,
     ) -> Tuple[ft.Tabs, Dict[str, ft.TextField]]:
         definitions = FORM_FIELD_DEFINITIONS.get(mode, [])
-        preserved = initial_values or {}
+        seed_values = self._build_seed_form_values(mode, initial_values)
         palette = EXPRESSIVE_PALETTE
 
         grouped_controls: Dict[str, List[ft.Control]] = {group: [] for group in FORM_GROUP_ORDER}
@@ -911,7 +917,7 @@ class CopilotApp:
 
         def _build_text_field(definition: Dict[str, Any], group: str) -> ft.TextField:
             name = definition["name"]
-            value = preserved.get(name, definition.get("default", "")) or ""
+            value = seed_values.get(name, definition.get("default", "")) or ""
             multiline = bool(definition.get("multiline"))
 
             text_field = ft.TextField(
@@ -1054,7 +1060,17 @@ class CopilotApp:
     def _refresh_form_panel(self) -> None:
         if not self._form_body_column:
             return
-        preserved_values = {name: ctrl.value for name, ctrl in self.form_controls.items()}
+        if self._pending_form_seed is not None:
+            preserved_values = dict(self._pending_form_seed)
+            self._pending_form_seed = None
+        else:
+            preserved_values: Dict[str, str] = {}
+            for name, ctrl in self.form_controls.items():
+                value = getattr(ctrl, "value", None)
+                if isinstance(value, str):
+                    preserved_values[name] = value
+                elif value is not None:
+                    preserved_values[name] = str(value)
         tabs_control, controls_map = self._create_form_controls_for_mode(self.mode, preserved_values)
         self.form_controls = controls_map
         self._form_tabs = tabs_control
@@ -1071,6 +1087,19 @@ class CopilotApp:
         self.form_error_text.visible = bool(message)
 
     def _handle_form_value_change(self, field_name: str) -> None:
+        control = self.form_controls.get(field_name)
+        mode_key = self.mode.value if isinstance(self.mode, CopilotMode) else str(self.mode)
+        if control is not None:
+            value = getattr(control, "value", "")
+            if value is None:
+                normalized_value = ""
+            elif isinstance(value, str):
+                normalized_value = value
+            else:
+                normalized_value = str(value)
+            mode_store = self._persisted_form_values.setdefault(mode_key, {})
+            mode_store[field_name] = normalized_value
+            self._schedule_form_value_save()
         group_key = self._field_groups.get(field_name)
         if not group_key:
             return
@@ -1358,6 +1387,7 @@ class CopilotApp:
         self._set_state(AppState.TASK_IN_PROGRESS)
         self._add_message("user", summary_message, metadata)
         self.request_queue.put(RequestMessage(RequestType.USER_INPUT, payload))
+        self._flush_pending_form_value_save()
         self._update_ui()
 
     def _register_window_handlers(self):
@@ -1602,6 +1632,8 @@ class CopilotApp:
         if new_mode == self.mode:
             return
         self.mode = new_mode
+        self._persisted_form_values.setdefault(new_mode.value, {})
+        self._pending_form_seed = self._build_seed_form_values(new_mode)
         if self.mode_selector:
             self.mode_selector.value = self.mode.value
         self._refresh_mode_cards()
@@ -2073,6 +2105,126 @@ class CopilotApp:
                 self.preference_file.write_text(json.dumps(trimmed_data, ensure_ascii=False, indent=2), encoding="utf-8")
             except OSError as err:
                 print(f"Failed to write sheet preference: {err}")
+
+    def _load_last_form_values(self) -> Dict[str, Dict[str, str]]:
+        with self.preference_lock:
+            if not self.preference_file.exists():
+                return {}
+            try:
+                raw_text = self.preference_file.read_text(encoding="utf-8")
+                data = json.loads(raw_text) if raw_text else {}
+            except (OSError, json.JSONDecodeError) as err:
+                print(f"Failed to load form preference: {err}")
+                return {}
+        stored = data.get(PREFERENCE_FORM_VALUES_KEY)
+        if not isinstance(stored, dict):
+            return {}
+        result: Dict[str, Dict[str, str]] = {}
+        for mode_key, values in stored.items():
+            if not isinstance(mode_key, str) or not isinstance(values, dict):
+                continue
+            cleaned: Dict[str, str] = {}
+            for field_name, field_value in values.items():
+                if isinstance(field_name, str) and isinstance(field_value, str):
+                    cleaned[field_name] = field_value
+            if cleaned:
+                result[mode_key] = cleaned
+        return result
+
+    def _save_last_form_values(self) -> None:
+        with self.preference_lock:
+            try:
+                if self.preference_file.exists():
+                    raw_text = self.preference_file.read_text(encoding="utf-8")
+                    loaded = json.loads(raw_text) if raw_text else {}
+                    preferences = dict(loaded) if isinstance(loaded, dict) else {}
+                else:
+                    preferences = {}
+            except (OSError, json.JSONDecodeError) as err:
+                print(f"Failed to read form preference: {err}")
+                preferences = {}
+
+            payload: Dict[str, Dict[str, str]] = {}
+            for mode_key, values in self._persisted_form_values.items():
+                if not isinstance(mode_key, str) or not isinstance(values, dict):
+                    continue
+                filtered = {name: value for name, value in values.items() if isinstance(name, str) and isinstance(value, str)}
+                if filtered:
+                    payload[mode_key] = filtered
+
+            if payload:
+                preferences[PREFERENCE_FORM_VALUES_KEY] = payload
+            else:
+                preferences.pop(PREFERENCE_FORM_VALUES_KEY, None)
+
+            try:
+                self.preference_file.parent.mkdir(parents=True, exist_ok=True)
+                self.preference_file.write_text(
+                    json.dumps(preferences, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except OSError as err:
+                print(f"Failed to write form preference: {err}")
+
+    def _handle_form_value_save_timer(self) -> None:
+        self._form_value_save_timer = None
+        self._save_last_form_values()
+
+    def _schedule_form_value_save(self) -> None:
+        existing = self._form_value_save_timer
+        if existing:
+            self._form_value_save_timer = None
+            try:
+                existing.cancel()
+            except Exception:
+                pass
+        timer = threading.Timer(
+            FORM_VALUE_SAVE_DEBOUNCE_SECONDS,
+            self._handle_form_value_save_timer,
+        )
+        timer.daemon = True
+        self._form_value_save_timer = timer
+        try:
+            timer.start()
+        except Exception:
+            self._form_value_save_timer = None
+            self._save_last_form_values()
+
+    def _cancel_pending_form_value_save(self) -> None:
+        timer = self._form_value_save_timer
+        if not timer:
+            return
+        self._form_value_save_timer = None
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+
+    def _flush_pending_form_value_save(self) -> None:
+        timer = self._form_value_save_timer
+        if timer:
+            self._form_value_save_timer = None
+            try:
+                timer.cancel()
+            except Exception:
+                pass
+        self._save_last_form_values()
+
+    def _build_seed_form_values(
+        self,
+        mode: CopilotMode,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        base = dict(self._persisted_form_values.get(mode.value, {}))
+        if overrides:
+            for key, value in overrides.items():
+                if not isinstance(key, str):
+                    continue
+                if isinstance(value, str):
+                    base[key] = value
+                elif value is not None:
+                    base[key] = str(value)
+        return base
 
     def _refresh_excel_context_once(
         self,
@@ -2926,6 +3078,7 @@ class CopilotApp:
                 return
             self.shutdown_finalized = True
 
+        self._flush_pending_form_value_save()
         print(f"Shutdown finalization started. reason={normalized_reason}")
 
         worker_active = self.worker_thread is not None and self.worker_thread.is_alive()
