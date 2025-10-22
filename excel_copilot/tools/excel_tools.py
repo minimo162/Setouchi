@@ -1193,6 +1193,52 @@ def translate_range_contents(
                 return "∞"
             return f"{value:.2f}"
 
+        def _coerce_non_negative_int(value: Any) -> Optional[int]:
+            if isinstance(value, bool):
+                return None
+            if isinstance(value, int):
+                return value if value >= 0 else None
+            if isinstance(value, float):
+                if not math.isfinite(value):
+                    return None
+                rounded = int(round(value))
+                if rounded < 0:
+                    return None
+                if abs(value - rounded) <= 0.5:
+                    return rounded
+                return None
+            if isinstance(value, str):
+                stripped = value.strip()
+                if not stripped:
+                    return None
+                try:
+                    numeric_value = float(stripped)
+                except ValueError:
+                    return None
+                return _coerce_non_negative_int(numeric_value)
+            return None
+
+        def _coerce_ratio_value(value: Any) -> Optional[float]:
+            if isinstance(value, bool):
+                return None
+            if isinstance(value, (int, float)):
+                numeric_value = float(value)
+                if not math.isfinite(numeric_value) or numeric_value < 0:
+                    return None
+                return numeric_value
+            if isinstance(value, str):
+                stripped = value.strip()
+                if not stripped:
+                    return None
+                try:
+                    numeric_value = float(stripped)
+                except ValueError:
+                    return None
+                if not math.isfinite(numeric_value) or numeric_value < 0:
+                    return None
+                return numeric_value
+            return None
+
         def _request_length_constrained_translation(
             original_text: str,
             supporting_context: Dict[str, Any],
@@ -1213,7 +1259,8 @@ def translate_range_contents(
                 "",
                 "出力形式:",
                 "- JSON 配列のみを出力し、要素数は 1 件です。",
-                '- 要素のキーは "translated_text" のみを含めてください。',
+                '- 要素は {"translated_text": "...", "translated_length": 数値, "length_ratio": 数値} 形式のオブジェクトにしてください。',
+                '- "translated_length" には len() で測った UTF-16 コードユニット数を整数で記入し、"length_ratio" には原文に対する比率を数値で記入してください。',
                 "",
                 "source_texts(JSON):",
                 json.dumps([original_text], ensure_ascii=False),
@@ -1513,12 +1560,17 @@ def translate_range_contents(
             prompt_lines = [
                 f"以下の日本語テキストを {target_language} に翻訳してください。\n",
                 "入力列の順序を維持し、すべての文を翻訳してください。\n",
-                "出力は翻訳文のみを要素とする JSON 配列とし、説明やコメントを含めないでください。\n",
+                "出力は JSON 配列のみとし、各要素は次のキーを必ず含むオブジェクトにしてください。\n",
+                '- "translated_text": 翻訳文の文字列。\n',
+                '- "translated_length": 翻訳文の UTF-16 コードユニット数。Python の len() と同じ定義で整数を返してください。\n',
+                '- "length_ratio": 原文に対する長さの比率 (translated_length / 原文の UTF-16 コードユニット数)。数値で返してください。\n',
+                "余分な説明やコメント、追加のテキストを含めないでください。\n",
             ]
             if enforce_length_limit and effective_length_ratio_limit is not None:
                 prompt_lines.extend([
                     "原文ごとの UTF-16 コードユニット数は後続の \"Source UTF-16 lengths (JSON)\" に示します。\n",
-                    f"各訳文について Python の len() を想定した UTF-16 コードユニット数を計測し、原文との比率が {effective_length_ratio_limit:.2f} 以下であることを出力前に必ず確認してください。\n",
+                    f"各訳文について Python の len() を想定した UTF-16 コードユニット数を計測し、その値を \"translated_length\" に整数で記入してください。\n",
+                    f"\"length_ratio\" には translated_length を原文の UTF-16 コードユニット数で割った比率を記入し、{effective_length_ratio_limit:.2f} 以下であることを出力前に必ず確認してください。\n",
                     "制限を超える場合は自ら短く調整し、再度 len() で長さを測って制限内に収めてください。\n",
                     "意味と重要な情報を保ちながら、冗長な表現を削って簡潔な語を選んでください。\n",
                 ])
@@ -2334,6 +2386,8 @@ def translate_range_contents(
                     translation_value: Optional[str] = None
                     process_notes_jp = ""
                     reference_pairs_output: List[Dict[str, str]] = []
+                    reported_translated_length: Optional[int] = None
+                    reported_length_ratio: Optional[float] = None
 
                     if isinstance(item, dict):
                         translation_value = (
@@ -2389,6 +2443,8 @@ def translate_range_contents(
                                         "target_sentence": target_clean,
                                     })
                                 reference_pairs_output = cleaned_pairs
+                        reported_translated_length = _coerce_non_negative_int(item.get("translated_length"))
+                        reported_length_ratio = _coerce_ratio_value(item.get("length_ratio"))
                     elif isinstance(item, str):
                         translation_value = item
                     elif isinstance(item, (int, float)):
@@ -2418,6 +2474,12 @@ def translate_range_contents(
                     source_length_units = _measure_utf16_length(source_cell_value)
                     translated_length_units = _measure_utf16_length(translation_value)
                     ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                    reported_length_delta: Optional[float] = None
+                    reported_ratio_delta: Optional[float] = None
+                    if reported_translated_length is not None:
+                        reported_length_delta = reported_translated_length - translated_length_units
+                    if reported_length_ratio is not None:
+                        reported_ratio_delta = reported_length_ratio - ratio_value
                     retries_used = 0
                     length_status = "observed"
 
@@ -2478,11 +2540,22 @@ def translate_range_contents(
                         "status": length_status,
                         "cell_ref": cell_ref_for_metrics,
                     }
+                    if reported_translated_length is not None:
+                        metric_entry["reported_translated_length"] = reported_translated_length
+                    if reported_length_ratio is not None:
+                        metric_entry["reported_length_ratio"] = reported_length_ratio
+                    if reported_length_delta is not None:
+                        metric_entry["reported_length_delta"] = reported_length_delta
+                    if reported_ratio_delta is not None:
+                        metric_entry["reported_ratio_delta"] = reported_ratio_delta
                     length_metrics[(local_row, col_idx)] = metric_entry
                     if enforce_length_limit and length_status == "exceeded":
-                        length_limit_messages.append(
+                        limit_message = (
                             f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} (倍率 {_format_ratio(ratio_value)})"
                         )
+                        if reported_length_ratio is not None:
+                            limit_message += f" | AI申告 {_format_ratio(reported_length_ratio)}"
+                        length_limit_messages.append(limit_message)
 
                     if writing_to_source_directly:
                         translation_col_index = translation_col_index_seed
