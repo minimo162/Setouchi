@@ -1191,9 +1191,12 @@ def translate_range_contents(
         ) -> Optional[str]:
             if not enforce_length_limit or effective_length_ratio_limit is None:
                 return None
+            source_units = _measure_utf16_length(original_text)
             instructions = [
                 "再調整タスク: 以下の日本語テキストについて、既存の英訳を文字数制限内に収めるように短く調整してください。",
                 f"- 制約: 訳文の UTF-16 コードユニット数は原文の {effective_length_ratio_limit:.2f} 倍以内にしてください。",
+                f"- 原文の UTF-16 コードユニット数は {source_units} です。Python の len() を想定して訳文の長さを計測し、比率が {effective_length_ratio_limit:.2f} 以下であることを確認してから回答してください。",
+                "- 制限を超える場合は表現を短く調整し、再度 len() で長さを測って制限内に収めてから JSON を返してください。",
                 "- 意味と重要な情報を保持しつつ、冗長な語句を削除し、簡潔な言い換えを選択してください。",
                 "- 新しい情報や不要な意訳を追加しないでください。",
                 "- 現在の訳文を参考にしながら、長さ制限を守る最も自然な表現を選んでください。",
@@ -1493,7 +1496,9 @@ def translate_range_contents(
             ]
             if enforce_length_limit and effective_length_ratio_limit is not None:
                 prompt_lines.extend([
-                    f"訳文は UTF-16 のコードユニット数で原文の {effective_length_ratio_limit:.2f} 倍以内に収めてください。\n",
+                    "原文ごとの UTF-16 コードユニット数は後続の \"Source UTF-16 lengths (JSON)\" に示します。\n",
+                    f"各訳文について Python の len() を想定した UTF-16 コードユニット数を計測し、原文との比率が {effective_length_ratio_limit:.2f} 以下であることを出力前に必ず確認してください。\n",
+                    "制限を超える場合は自ら短く調整し、再度 len() で長さを測って制限内に収めてください。\n",
                     "意味と重要な情報を保ちながら、冗長な表現を削って簡潔な語を選んでください。\n",
                 ])
             prompt_preamble = "".join(prompt_lines)
@@ -1974,6 +1979,12 @@ def translate_range_contents(
                 current_texts = [text for text, _ in entry_slice]
                 current_positions = [pos for _, pos in entry_slice]
 
+                source_lengths: Optional[List[int]] = None
+                source_lengths_json: Optional[str] = None
+                if enforce_length_limit and effective_length_ratio_limit is not None:
+                    source_lengths = [_measure_utf16_length(text) for text in current_texts]
+                    source_lengths_json = json.dumps(source_lengths, ensure_ascii=False)
+
                 source_references_per_item = _extract_source_sentences_batch(current_texts)
                 reference_pairs_context = _pair_target_sentences_batch(
                     source_references_per_item,
@@ -1996,9 +2007,16 @@ def translate_range_contents(
                     prompt_preamble,
                     "Source sentences:",
                     texts_json,
+                ]
+                if source_lengths_json is not None:
+                    final_prompt_parts.extend([
+                        "Source UTF-16 lengths (JSON):",
+                        source_lengths_json,
+                    ])
+                final_prompt_parts.extend([
                     "Supporting data (JSON):",
                     translation_context_json,
-                ]
+                ])
                 final_prompt = "\n".join(final_prompt_parts) + "\n"
                 _ensure_not_stopped()
                 response = browser_manager.ask(final_prompt, stop_event=stop_event)
@@ -2008,7 +2026,17 @@ def translate_range_contents(
                     json_payload = match.group(0) if match else response
                     parsed_payload = json.loads(json_payload)
                 except json.JSONDecodeError:
-                    final_prompt = f"{prompt_preamble}{texts_json}"
+                    fallback_prompt_parts = [
+                        prompt_preamble,
+                        "Source sentences:",
+                        texts_json,
+                    ]
+                    if source_lengths_json is not None:
+                        fallback_prompt_parts.extend([
+                            "Source UTF-16 lengths (JSON):",
+                            source_lengths_json,
+                        ])
+                    final_prompt = "\n".join(fallback_prompt_parts) + "\n"
                     _ensure_not_stopped()
                     response = browser_manager.ask(final_prompt, stop_event=stop_event)
                     try:

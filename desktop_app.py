@@ -101,7 +101,7 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "name": "length_ratio_limit",
             "label": "翻訳文字数倍率（任意）",
             "argument": "length_ratio_limit",
-            "placeholder": "例: 1.7",
+            "placeholder": "例: 1.8",
             "group": "options",
             "type": "float",
             "helper": "未入力=制限なし",
