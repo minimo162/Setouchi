@@ -44,6 +44,13 @@ try:
 except ValueError:
     _ITEMS_PER_TRANSLATION_REQUEST = 1
 
+try:
+    _TRANSLATION_UTF16_BUDGET = int(os.getenv("EXCEL_COPILOT_TRANSLATION_UTF16_BUDGET", "4000"))
+except ValueError:
+    _TRANSLATION_UTF16_BUDGET = 4000
+if _TRANSLATION_UTF16_BUDGET <= 0:
+    _TRANSLATION_UTF16_BUDGET = None  # type: ignore[assignment]
+
 
 
 def _diff_debug(message: str) -> None:
@@ -1318,6 +1325,7 @@ def translate_range_contents(
         _ensure_not_stopped()
 
         reference_warning_notes: List[str] = []
+        translation_cache: Dict[str, Dict[str, Any]] = {}
 
         def _dedupe_preserve_order(values: List[str]) -> List[str]:
             seen: Set[str] = set()
@@ -1383,6 +1391,16 @@ def translate_range_contents(
                     f"{label} で指定された値 ({invalid_urls}) はHTTP(S) URLとして解釈できなかったため無視しました。"
                 )
             return entries, warnings
+
+        def _canonicalize_source_text(value: Any) -> str:
+            if not isinstance(value, str):
+                return ""
+            normalized = _normalize_cell_value(value)
+            if not isinstance(normalized, str):
+                return ""
+            normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+            return normalized
+
 
         source_reference_inputs: List[Any] = []
         target_reference_inputs: List[Any] = []
@@ -1580,25 +1598,185 @@ def translate_range_contents(
             summary = "; ".join(fragments) if fragments else "no translations"
             return f"Row {excel_row_number} translation completed: {summary}"
 
+        def _apply_cached_translation(local_row: int, col_idx: int, source_key: str, cached_entry: Dict[str, Any]) -> None:
+            nonlocal output_dirty, source_dirty, any_translation, reused_translation_detected
+            if include_context_columns:
+                return
+            translation_value = cached_entry.get("translation")
+            if not isinstance(translation_value, str):
+                return
+            translation_value = _maybe_unescape_html_entities(translation_value).strip()
+            if not translation_value:
+                return
+
+            applied_changes = False
+            translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
+            cell_ref_for_metrics = _cell_reference(
+                output_start_row,
+                output_start_col,
+                local_row,
+                translation_col_index_seed,
+            )
+
+            existing_output_value = ""
+            try:
+                existing_output_value = output_matrix[local_row][translation_col_index_seed]
+            except (IndexError, TypeError):
+                existing_output_value = ""
+
+            if translation_value != existing_output_value:
+                if local_row < len(output_matrix):
+                    row_values = output_matrix[local_row]
+                    if translation_col_index_seed < len(row_values):
+                        row_values[translation_col_index_seed] = translation_value
+                        row_dirty_flags[local_row] = True
+                        output_dirty = True
+                        applied_changes = True
+
+            if not writing_to_source_directly and overwrite_source:
+                try:
+                    existing_source_value = source_matrix[local_row][col_idx]
+                except (IndexError, TypeError):
+                    existing_source_value = ""
+                if translation_value != existing_source_value:
+                    if local_row < len(source_matrix):
+                        source_matrix[local_row][col_idx] = translation_value
+                        source_dirty = True
+                        source_row_dirty_flags[local_row] = True
+                        applied_changes = True
+
+            reused_translation_detected = True
+            if applied_changes:
+                any_translation = True
+
+            source_text_canonical = source_key.strip()
+            source_length_units = cached_entry.get("source_length")
+            if not isinstance(source_length_units, int):
+                source_length_units = _measure_utf16_length(source_text_canonical)
+
+            translated_length_units = cached_entry.get("translated_length")
+            if not isinstance(translated_length_units, int):
+                translated_length_units = _measure_utf16_length(translation_value)
+
+            ratio_value = cached_entry.get("ratio")
+            if not isinstance(ratio_value, (int, float)):
+                ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+
+            limit_value = cached_entry.get("limit", effective_length_ratio_limit)
+            length_status = cached_entry.get("length_status", "observed")
+            retries_used = cached_entry.get("retries", 0)
+
+            if enforce_length_limit:
+                if limit_value is None:
+                    limit_value = effective_length_ratio_limit
+                if limit_value is not None and ratio_value > limit_value:
+                    length_status = "exceeded"
+                elif length_status == "exceeded" and limit_value is not None and ratio_value <= limit_value:
+                    length_status = "ok"
+
+            metric_entry = {
+                "source_length": source_length_units,
+                "translated_length": translated_length_units,
+                "ratio": ratio_value,
+                "limit": limit_value,
+                "retries": retries_used,
+                "status": length_status,
+                "cell_ref": cell_ref_for_metrics,
+            }
+            length_metrics[(local_row, col_idx)] = metric_entry
+            length_retry_counts[(local_row, col_idx)] = retries_used
+
+            if enforce_length_limit and length_status == "exceeded":
+                length_limit_messages.append(
+                    f"{cell_ref_for_metrics}: 鄙ｻ險ｳ {translated_length_units} / 蜴滓枚 {source_length_units} (蛟咲紫 {_format_ratio(ratio_value)})"
+                )
+
+            pending_cols = pending_columns_by_row.get(local_row)
+            if pending_cols is not None:
+                pending_cols.discard(col_idx)
+                if not pending_cols:
+                    _finalize_row(local_row)
+
+        pending_output_segment: Optional[Dict[str, Any]] = None
+        pending_source_segment: Optional[Dict[str, Any]] = None
+
+        def _flush_output_segment() -> None:
+            nonlocal pending_output_segment
+            if pending_output_segment is None:
+                return
+            start_row_idx = pending_output_segment["start_row"]
+            end_row_idx = pending_output_segment["end_row"]
+            rows_data = pending_output_segment["rows"]
+            range_ref = _build_range_reference(
+                output_start_row + start_row_idx,
+                output_start_row + end_row_idx,
+                output_start_col,
+                output_start_col + output_total_cols - 1,
+            )
+            write_message = actions.write_range(range_ref, rows_data, output_sheet, apply_formatting=should_apply_formatting)
+            incremental_row_messages.append(write_message)
+            pending_output_segment = None
+
+        def _flush_source_segment() -> None:
+            nonlocal pending_source_segment
+            if pending_source_segment is None:
+                return
+            start_row_idx = pending_source_segment["start_row"]
+            end_row_idx = pending_source_segment["end_row"]
+            rows_data = pending_source_segment["rows"]
+            range_ref = _build_range_reference(
+                source_start_row + start_row_idx,
+                source_start_row + end_row_idx,
+                source_start_col,
+                source_start_col + source_cols - 1,
+            )
+            write_message = actions.write_range(range_ref, rows_data, target_sheet, apply_formatting=should_apply_formatting)
+            incremental_row_messages.append(write_message)
+            pending_source_segment = None
+
+        def _flush_pending_segments() -> None:
+            _flush_output_segment()
+            _flush_source_segment()
+
+        def _queue_output_row(row_idx: int, row_slice: List[Any]) -> None:
+            nonlocal pending_output_segment
+            if pending_output_segment is not None:
+                if row_idx == pending_output_segment["end_row"] + 1:
+                    pending_output_segment["rows"].append(row_slice)
+                    pending_output_segment["end_row"] = row_idx
+                    return
+                _flush_output_segment()
+            pending_output_segment = {
+                "start_row": row_idx,
+                "end_row": row_idx,
+                "rows": [row_slice],
+            }
+
+        def _queue_source_row(row_idx: int, row_slice: List[Any]) -> None:
+            nonlocal pending_source_segment
+            if pending_source_segment is not None:
+                if row_idx == pending_source_segment["end_row"] + 1:
+                    pending_source_segment["rows"].append(row_slice)
+                    pending_source_segment["end_row"] = row_idx
+                    return
+                _flush_source_segment()
+            pending_source_segment = {
+                "start_row": row_idx,
+                "end_row": row_idx,
+                "rows": [row_slice],
+            }
+
         def _write_row_output(row_idx: int) -> None:
             _ensure_not_stopped()
             wrote_anything = False
-            row_reference = _output_row_reference(row_idx)
-            row_slice = output_matrix[row_idx][:output_total_cols]
             if row_dirty_flags[row_idx]:
-                write_message = actions.write_range(row_reference, [row_slice], output_sheet, apply_formatting=should_apply_formatting)
-                incremental_row_messages.append(write_message)
+                row_slice = output_matrix[row_idx][:output_total_cols]
+                _queue_output_row(row_idx, row_slice)
                 row_dirty_flags[row_idx] = False
                 wrote_anything = True
             if overwrite_source and not writing_to_source_directly and source_row_dirty_flags[row_idx]:
-                source_reference = _source_row_reference(row_idx)
-                overwrite_message = actions.write_range(
-                    source_reference,
-                    [source_matrix[row_idx][:source_cols]],
-                    target_sheet,
-                    apply_formatting=should_apply_formatting,
-                )
-                incremental_row_messages.append(overwrite_message)
+                source_slice = source_matrix[row_idx][:source_cols]
+                _queue_source_row(row_idx, source_slice)
                 source_row_dirty_flags[row_idx] = False
                 wrote_anything = True
             progress_message = _compose_row_progress_message(row_idx)
@@ -1663,6 +1841,7 @@ def translate_range_contents(
         messages: List[str] = []
         explanation_fallback_notes: List[str] = []
         any_translation = False
+        reused_translation_detected = False
         output_dirty = False
         source_dirty = False
 
@@ -1957,14 +2136,77 @@ def translate_range_contents(
             for local_row in range(row_start, row_end):
                 _ensure_not_stopped()
                 for col_idx in range(source_cols):
+                    _ensure_not_stopped()
                     cell_value = original_data[local_row][col_idx]
                     if not isinstance(cell_value, str):
                         continue
 
-                    normalized_cell = _normalize_cell_value(cell_value).replace('\r\n', '\n').replace('\r', '\n')
-                    if JAPANESE_CHAR_PATTERN.search(normalized_cell):
-                        chunk_texts.append(normalized_cell)
-                        chunk_positions.append((local_row, col_idx))
+                    canonical_source = _canonicalize_source_text(cell_value)
+                    if not canonical_source:
+                        pending_cols = pending_columns_by_row.get(local_row)
+                        if pending_cols is not None:
+                            pending_cols.discard(col_idx)
+                            if not pending_cols:
+                                _finalize_row(local_row)
+                        continue
+
+                    if not JAPANESE_CHAR_PATTERN.search(canonical_source):
+                        pending_cols = pending_columns_by_row.get(local_row)
+                        if pending_cols is not None:
+                            pending_cols.discard(col_idx)
+                            if not pending_cols:
+                                _finalize_row(local_row)
+                        continue
+
+                    if not include_context_columns:
+                        cached_entry = translation_cache.get(canonical_source)
+                        if cached_entry:
+                            _apply_cached_translation(local_row, col_idx, canonical_source, cached_entry)
+                            continue
+
+                    translation_col_index_seed = _translation_column_index(col_idx)
+                    existing_output_value: Any = ""
+                    if not writing_to_source_directly:
+                        try:
+                            existing_output_value = output_matrix[local_row][translation_col_index_seed]
+                        except (IndexError, TypeError):
+                            existing_output_value = ""
+
+                    existing_output_normalized = ""
+                    if isinstance(existing_output_value, str):
+                        normalized_output = _normalize_cell_value(existing_output_value)
+                        if isinstance(normalized_output, str):
+                            existing_output_normalized = normalized_output.strip()
+
+                    if existing_output_normalized and not _contains_japanese(existing_output_normalized):
+                        if not include_context_columns:
+                            if canonical_source not in translation_cache:
+                                source_length_units = _measure_utf16_length(canonical_source.strip())
+                                translated_length_units = _measure_utf16_length(existing_output_normalized)
+                                ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                                limit_value = effective_length_ratio_limit if enforce_length_limit else None
+                                length_status = "observed"
+                                if enforce_length_limit and limit_value is not None:
+                                    length_status = "ok" if ratio_value <= limit_value else "exceeded"
+                                translation_cache[canonical_source] = {
+                                    "translation": existing_output_normalized,
+                                    "source_length": source_length_units,
+                                    "translated_length": translated_length_units,
+                                    "ratio": ratio_value,
+                                    "limit": limit_value,
+                                    "retries": 0,
+                                    "length_status": length_status,
+                                }
+                        pending_cols = pending_columns_by_row.get(local_row)
+                        if pending_cols is not None:
+                            pending_cols.discard(col_idx)
+                            if not pending_cols:
+                                _finalize_row(local_row)
+                        reused_translation_detected = True
+                        continue
+
+                    chunk_texts.append(canonical_source)
+                    chunk_positions.append((local_row, col_idx))
 
             if not chunk_texts:
                 continue
@@ -1972,12 +2214,81 @@ def translate_range_contents(
             chunk_cell_evidences: Dict[Tuple[int, int], Dict[str, Any]] = {}
             row_evidence_details: Dict[int, List[Dict[str, Any]]] = {}
 
-            chunk_entries = list(zip(chunk_texts, chunk_positions))
-            for entry_start in range(0, len(chunk_entries), items_per_request):
+            if include_context_columns:
+                chunk_entries: List[Dict[str, Any]] = [
+                    {"text": text, "positions": [position]}
+                    for text, position in zip(chunk_texts, chunk_positions)
+                ]
+            else:
+                chunk_entries = []
+                dedup_index: Dict[str, int] = {}
+                for text, position in zip(chunk_texts, chunk_positions):
+                    cached_entry = translation_cache.get(text)
+                    if cached_entry:
+                        row_idx_cached, col_idx_cached = position
+                        _apply_cached_translation(row_idx_cached, col_idx_cached, text, cached_entry)
+                        continue
+                    entry_idx = dedup_index.get(text)
+                    if entry_idx is None:
+                        dedup_index[text] = len(chunk_entries)
+                        chunk_entries.append({"text": text, "positions": [position]})
+                    else:
+                        chunk_entries[entry_idx]["positions"].append(position)
+
+            if not chunk_entries:
+                continue
+
+            budget_adjustment_notified = False
+            entry_index = 0
+            total_entries = len(chunk_entries)
+            while entry_index < total_entries:
                 _ensure_not_stopped()
-                entry_slice = chunk_entries[entry_start:entry_start + items_per_request]
-                current_texts = [text for text, _ in entry_slice]
-                current_positions = [pos for _, pos in entry_slice]
+                available_budget = _TRANSLATION_UTF16_BUDGET
+                budget_trim_applied = False
+                current_texts: List[str] = []
+                current_position_groups: List[List[Tuple[int, int]]] = []
+
+                while entry_index < total_entries and len(current_texts) < items_per_request:
+                    entry = chunk_entries[entry_index]
+                    text = entry["text"]
+                    text_units = _measure_utf16_length(text)
+                    if (
+                        available_budget is not None
+                        and text_units > available_budget
+                        and current_texts
+                    ):
+                        budget_trim_applied = True
+                        break
+
+                    current_texts.append(text)
+                    current_position_groups.append(entry["positions"])
+                    entry_index += 1
+
+                    if available_budget is not None:
+                        available_budget = max(0, available_budget - text_units)
+                        if available_budget == 0:
+                            if entry_index < total_entries:
+                                budget_trim_applied = True
+                            break
+
+                if not current_texts and entry_index < total_entries:
+                    entry = chunk_entries[entry_index]
+                    current_texts = [entry["text"]]
+                    current_position_groups = [entry["positions"]]
+                    entry_index += 1
+
+                if not current_texts:
+                    break
+
+                if (
+                    budget_trim_applied
+                    and not budget_adjustment_notified
+                    and _TRANSLATION_UTF16_BUDGET is not None
+                ):
+                    actions.log_progress(
+                        f"翻訳バッチをUTF-16長さ {_TRANSLATION_UTF16_BUDGET} 以内に調整しました (現在 {len(current_texts)} 件)。"
+                    )
+                    budget_adjustment_notified = True
 
                 source_lengths: Optional[List[int]] = None
                 source_lengths_json: Optional[str] = None
@@ -2053,7 +2364,10 @@ def translate_range_contents(
                         "Translation response must be a list with one entry per source text."
                     )
 
-                for item_index, (item, position) in enumerate(zip(parsed_payload, current_positions)):
+                for item_index, (item, position_group) in enumerate(zip(parsed_payload, current_position_groups)):
+                    if not position_group:
+                        continue
+                    local_row, col_idx = position_group[0]
                     translation_value: Optional[str] = None
                     process_notes_jp = ""
                     reference_pairs_output: List[Dict[str, str]] = []
@@ -2125,7 +2439,6 @@ def translate_range_contents(
                     translation_value = _maybe_unescape_html_entities(translation_value)
                     translation_value = translation_value.strip()
 
-                    local_row, col_idx = position
                     translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
                     cell_ref_for_metrics = _cell_reference(
                         output_start_row,
@@ -2134,7 +2447,8 @@ def translate_range_contents(
                         translation_col_index_seed,
                     )
 
-                    source_cell_value = _normalize_cell_value(original_data[local_row][col_idx]).strip()
+                    source_text_canonical = current_texts[item_index]
+                    source_cell_value = source_text_canonical.strip()
                     if not translation_value:
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
@@ -2419,6 +2733,21 @@ def translate_range_contents(
                         pending_cols.discard(col_idx)
                         if not pending_cols:
                             _finalize_row(local_row)
+
+                    if not include_context_columns:
+                        translation_cache[source_text_canonical] = {
+                            "translation": translation_value,
+                            "source_length": source_length_units,
+                            "translated_length": translated_length_units,
+                            "ratio": ratio_value,
+                            "limit": effective_length_ratio_limit,
+                            "retries": length_retry_counts.get((local_row, col_idx), 0),
+                            "length_status": length_status,
+                        }
+                        cached_entry = translation_cache[source_text_canonical]
+                        for extra_position in position_group[1:]:
+                            extra_row, extra_col = extra_position
+                            _apply_cached_translation(extra_row, extra_col, source_text_canonical, cached_entry)
             if use_references and citation_matrix is not None:
                 if citation_mode == "paired_columns":
                     for local_row in range(row_start, row_end):
@@ -2531,13 +2860,15 @@ def translate_range_contents(
         for remaining_row in list(pending_columns_by_row.keys()):
             _finalize_row(remaining_row)
 
+        _flush_pending_segments()
+
         output_dirty = any(row_dirty_flags)
         if overwrite_source and not writing_to_source_directly:
             source_dirty = any(source_row_dirty_flags)
         else:
             source_dirty = False
 
-        if not any_translation:
+        if not any_translation and not reused_translation_detected:
             return f"No translatable text was found in range '{cell_range}'."
 
         if include_context_columns and explanation_fallback_notes:
