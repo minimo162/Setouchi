@@ -3131,7 +3131,7 @@ class CopilotApp:
         else:
             print("Shutdown: page window not available.")
 
-        if close_requested:
+        if not close_requested:
             try:
                 self.page.update()
             except Exception as update_err:
