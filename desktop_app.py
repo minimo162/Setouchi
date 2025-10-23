@@ -106,6 +106,15 @@ FORM_FIELD_DEFINITIONS: Dict[CopilotMode, List[Dict[str, Any]]] = {
             "type": "float",
             "helper": "未入力=制限なし",
         },
+        {
+            "name": "length_ratio_min",
+            "label": "翻訳文字数倍率（下限・任意）",
+            "argument": "length_ratio_min",
+            "placeholder": "例: 0.8",
+            "group": "options",
+            "type": "float",
+            "helper": "未入力=下限なし",
+        },
     ],
     CopilotMode.TRANSLATION_WITH_REFERENCES: [
         {

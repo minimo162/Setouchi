@@ -1083,6 +1083,7 @@ def translate_range_contents(
     translation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
     length_ratio_limit: Optional[float] = None,
+    length_ratio_min: Optional[float] = None,
     rows_per_batch: Optional[int] = None,
     stop_event: Optional[Event] = None,
     output_mode: str = "translation_with_context",
@@ -1103,6 +1104,8 @@ def translate_range_contents(
         overwrite_source: Whether to overwrite the source range directly.
         length_ratio_limit: Optional upper bound for the ratio (translated UTF-16 length / source UTF-16 length)
             enforced in translation-only mode. When None, no limit is applied.
+        length_ratio_min: Optional lower bound for the ratio (translated UTF-16 length / source UTF-16 length)
+            enforced in translation-only mode. When None, no lower bound is applied.
         rows_per_batch: Optional cap for batch size when chunking the translation work.
         stop_event: Optional cancellation event set when the user interrupts the operation.
         output_mode: Controls whether contextual columns (process notes / reference pairs) are emitted.
@@ -1166,6 +1169,7 @@ def translate_range_contents(
             _MIN_CONTEXT_BLOCK_WIDTH if include_context_columns else 1
         )
         effective_length_ratio_limit: Optional[float] = None
+        effective_length_ratio_min: Optional[float] = None
         if length_ratio_limit is not None:
             try:
                 candidate_limit = float(length_ratio_limit)
@@ -1174,9 +1178,26 @@ def translate_range_contents(
             if not math.isfinite(candidate_limit) or candidate_limit <= 0:
                 raise ToolExecutionError("length_ratio_limit には 0 より大きい有限の数値を指定してください。")
             effective_length_ratio_limit = candidate_limit
+        if length_ratio_min is not None:
+            try:
+                candidate_min = float(length_ratio_min)
+            except (TypeError, ValueError):
+                raise ToolExecutionError("length_ratio_min は数値で指定してください。") from None
+            if not math.isfinite(candidate_min) or candidate_min < 0:
+                raise ToolExecutionError("length_ratio_min には 0 以上の有限の数値を指定してください。")
+            effective_length_ratio_min = candidate_min
+        if (
+            effective_length_ratio_min is not None
+            and effective_length_ratio_limit is not None
+            and effective_length_ratio_min > effective_length_ratio_limit
+        ):
+            raise ToolExecutionError("length_ratio_min は length_ratio_limit 以下にしてください。")
         enforce_length_limit = (
-            effective_length_ratio_limit is not None
-            and output_mode == "translation_only"
+            output_mode == "translation_only"
+            and (
+                effective_length_ratio_limit is not None
+                or effective_length_ratio_min is not None
+            )
         )
         length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
         length_limit_messages: List[str] = []
@@ -1187,6 +1208,28 @@ def translate_range_contents(
             if source_units <= 0:
                 return 0.0 if translated_units <= 0 else math.inf
             return translated_units / source_units
+
+        def _ratio_violation_kind(ratio_value: float) -> Optional[str]:
+            if effective_length_ratio_min is not None and ratio_value < effective_length_ratio_min:
+                return "below"
+            if effective_length_ratio_limit is not None and ratio_value > effective_length_ratio_limit:
+                return "above"
+            return None
+
+        def _ratio_within_bounds(ratio_value: float) -> bool:
+            return _ratio_violation_kind(ratio_value) is None
+
+        def _format_ratio_bounds_for_display() -> str:
+            if (
+                effective_length_ratio_min is not None
+                and effective_length_ratio_limit is not None
+            ):
+                return f"{effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f}"
+            if effective_length_ratio_min is not None:
+                return f"{effective_length_ratio_min:.2f} 以上"
+            if effective_length_ratio_limit is not None:
+                return f"{effective_length_ratio_limit:.2f} 以下"
+            return ""
 
         def _format_ratio(value: float) -> str:
             if not math.isfinite(value):
@@ -1245,13 +1288,49 @@ def translate_range_contents(
             current_translation: str,
             attempt_index: int,
         ) -> Optional[str]:
-            if not enforce_length_limit or effective_length_ratio_limit is None:
+            if not enforce_length_limit:
                 return None
             source_units = _measure_utf16_length(original_text)
+            bounds_display = _format_ratio_bounds_for_display()
+            constraint_directive = ""
+            ratio_check_directive = ""
+            if (
+                effective_length_ratio_min is not None
+                and effective_length_ratio_limit is not None
+            ):
+                constraint_directive = (
+                    f"- 制約: 訳文の UTF-16 コードユニット数は原文の "
+                    f"{effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} 倍の範囲に収まるようにしてください。"
+                )
+                ratio_check_directive = (
+                    f"- 原文の UTF-16 コードユニット数は {source_units} です。Python の len() を想定して訳文の長さを計測し、"
+                    f"比率が {effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} の範囲内であることを確認してから回答してください。"
+                )
+            elif effective_length_ratio_limit is not None:
+                constraint_directive = (
+                    f"- 制約: 訳文の UTF-16 コードユニット数は原文の {effective_length_ratio_limit:.2f} 倍以内にしてください。"
+                )
+                ratio_check_directive = (
+                    f"- 原文の UTF-16 コードユニット数は {source_units} です。Python の len() を想定して訳文の長さを計測し、"
+                    f"比率が {effective_length_ratio_limit:.2f} 以下であることを確認してから回答してください。"
+                )
+            elif effective_length_ratio_min is not None:
+                constraint_directive = (
+                    f"- 制約: 訳文の UTF-16 コードユニット数は原文の {effective_length_ratio_min:.2f} 倍以上にしてください。"
+                )
+                ratio_check_directive = (
+                    f"- 原文の UTF-16 コードユニット数は {source_units} です。Python の len() を想定して訳文の長さを計測し、"
+                    f"比率が {effective_length_ratio_min:.2f} 以上であることを確認してから回答してください。"
+                )
             instructions = [
                 "再調整タスク: 以下の日本語テキストについて、既存の英訳を文字数制限内に収めるように短く調整してください。",
-                f"- 制約: 訳文の UTF-16 コードユニット数は原文の {effective_length_ratio_limit:.2f} 倍以内にしてください。",
-                f"- 原文の UTF-16 コードユニット数は {source_units} です。Python の len() を想定して訳文の長さを計測し、比率が {effective_length_ratio_limit:.2f} 以下であることを確認してから回答してください。",
+            ]
+            if constraint_directive:
+                instructions.append(constraint_directive)
+            if ratio_check_directive:
+                instructions.append(ratio_check_directive)
+            instructions.extend(
+                [
                 "- 制限を超える場合は表現を短く調整し、再度 len() で長さを測って制限内に収めてから JSON を返してください。",
                 "- 意味と重要な情報を保持しつつ、冗長な語句を削除し、簡潔な言い換えを選択してください。",
                 "- 新しい情報や不要な意訳を追加しないでください。",
@@ -1263,8 +1342,9 @@ def translate_range_contents(
                 '- "translated_length" には len() で測った UTF-16 コードユニット数を整数で記入し、"length_ratio" には原文に対する比率を数値で記入してください。',
                 "",
                 "source_texts(JSON):",
-                json.dumps([original_text], ensure_ascii=False),
-            ]
+                    json.dumps([original_text], ensure_ascii=False),
+                ]
+            )
             if supporting_context and any(
                 supporting_context.get(key) for key in ("source_sentences", "reference_pairs")
             ):
@@ -1282,8 +1362,9 @@ def translate_range_contents(
             )
             retry_prompt = "\n".join(instructions) + "\n"
             _ensure_not_stopped()
+            target_hint = f"UTF-16比 {bounds_display}" if bounds_display else "UTF-16比"
             actions.log_progress(
-                f"文字数制限調整を再試行中 (attempt {attempt_index}): UTF-16比 {effective_length_ratio_limit:.2f} 以下を目標に再生成"
+                f"文字数制限調整を再試行中 (attempt {attempt_index}): {target_hint} を目標に再生成"
             )
             response = browser_manager.ask(retry_prompt, stop_event=stop_event)
             try:
@@ -1566,12 +1647,27 @@ def translate_range_contents(
                 '- "length_ratio": 原文に対する長さの比率 (translated_length / 原文の UTF-16 コードユニット数)。数値で返してください。\n',
                 "余分な説明やコメント、追加のテキストを含めないでください。\n",
             ]
-            if enforce_length_limit and effective_length_ratio_limit is not None:
+            if enforce_length_limit and (
+                effective_length_ratio_limit is not None or effective_length_ratio_min is not None
+            ):
                 prompt_lines.extend([
                     "原文ごとの UTF-16 コードユニット数は後続の \"Source UTF-16 lengths (JSON)\" に示します。\n",
                     f"各訳文について Python の len() を想定した UTF-16 コードユニット数を計測し、その値を \"translated_length\" に整数で記入してください。\n",
-                    f"\"length_ratio\" には translated_length を原文の UTF-16 コードユニット数で割った比率を記入し、{effective_length_ratio_limit:.2f} 以下であることを出力前に必ず確認してください。\n",
-                    "制限を超える場合は自ら短く調整し、再度 len() で長さを測って制限内に収めてください。\n",
+                ])
+                if effective_length_ratio_min is not None and effective_length_ratio_limit is not None:
+                    prompt_lines.append(
+                        f"\"length_ratio\" には translated_length を原文の UTF-16 コードユニット数で割った比率を記入し、{effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} の範囲内であることを出力前に必ず確認してください。\n"
+                    )
+                elif effective_length_ratio_limit is not None:
+                    prompt_lines.append(
+                        f"\"length_ratio\" には translated_length を原文の UTF-16 コードユニット数で割った比率を記入し、{effective_length_ratio_limit:.2f} 以下であることを出力前に必ず確認してください。\n"
+                    )
+                elif effective_length_ratio_min is not None:
+                    prompt_lines.append(
+                        f"\"length_ratio\" には translated_length を原文の UTF-16 コードユニット数で割った比率を記入し、{effective_length_ratio_min:.2f} 以上であることを出力前に必ず確認してください。\n"
+                    )
+                prompt_lines.extend([
+                    "制限から外れる場合は自ら長さを調整し、再度 len() で長さを測って許容範囲に収めてください。\n",
                     "意味と重要な情報を保ちながら、冗長な表現を削って簡潔な語を選んでください。\n",
                 ])
             prompt_preamble = "".join(prompt_lines)
@@ -2307,7 +2403,9 @@ def translate_range_contents(
 
                 source_lengths: Optional[List[int]] = None
                 source_lengths_json: Optional[str] = None
-                if enforce_length_limit and effective_length_ratio_limit is not None:
+                if enforce_length_limit and (
+                    effective_length_ratio_limit is not None or effective_length_ratio_min is not None
+                ):
                     source_lengths = [_measure_utf16_length(text) for text in current_texts]
                     source_lengths_json = json.dumps(source_lengths, ensure_ascii=False)
 
@@ -2483,16 +2581,21 @@ def translate_range_contents(
                     retries_used = 0
                     length_status = "observed"
 
-                    if enforce_length_limit and effective_length_ratio_limit is not None:
+                    if enforce_length_limit:
                         length_status = "ok"
-                        if ratio_value > effective_length_ratio_limit:
+                        violation_kind = _ratio_violation_kind(ratio_value)
+                        if violation_kind == "above":
                             actions.log_progress(
                                 f"文字数倍率超過検出: {cell_ref_for_metrics} の倍率 {ratio_value:.2f} (上限 {effective_length_ratio_limit:.2f})。再調整を試行します。"
+                            )
+                        elif violation_kind == "below":
+                            actions.log_progress(
+                                f"文字数倍率下限未達検出: {cell_ref_for_metrics} の倍率 {ratio_value:.2f} (下限 {effective_length_ratio_min:.2f})。再調整を試行します。"
                             )
                         context_payload = (
                             translation_context[item_index] if item_index < len(translation_context) else {}
                         )
-                        while ratio_value > effective_length_ratio_limit and retries_used < max_length_retries:
+                        while violation_kind and retries_used < max_length_retries:
                             retries_used += 1
                             adjusted = _request_length_constrained_translation(
                                 source_cell_value,
@@ -2511,9 +2614,10 @@ def translate_range_contents(
                             translation_value = adjusted
                             translated_length_units = _measure_utf16_length(translation_value)
                             ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                            violation_kind = _ratio_violation_kind(ratio_value)
                         length_retry_counts[(local_row, col_idx)] = retries_used
-                        if ratio_value > effective_length_ratio_limit:
-                            length_status = "exceeded"
+                        if violation_kind:
+                            length_status = "above" if violation_kind == "above" else "below"
                         else:
                             length_status = "ok"
                     else:
@@ -2536,6 +2640,7 @@ def translate_range_contents(
                         "translated_length": translated_length_units,
                         "ratio": ratio_value,
                         "limit": effective_length_ratio_limit,
+                        "min_limit": effective_length_ratio_min,
                         "retries": retries_used,
                         "status": length_status,
                         "cell_ref": cell_ref_for_metrics,
@@ -2549,12 +2654,14 @@ def translate_range_contents(
                     if reported_ratio_delta is not None:
                         metric_entry["reported_ratio_delta"] = reported_ratio_delta
                     length_metrics[(local_row, col_idx)] = metric_entry
-                    if enforce_length_limit and length_status == "exceeded":
-                        limit_message = (
-                            f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} (倍率 {_format_ratio(ratio_value)})"
-                        )
+                    if enforce_length_limit and length_status in {"above", "below"}:
+                        limit_message = f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} (倍率 {_format_ratio(ratio_value)})"
                         if reported_length_ratio is not None:
                             limit_message += f" | AI申告 {_format_ratio(reported_length_ratio)}"
+                        if length_status == "above" and effective_length_ratio_limit is not None:
+                            limit_message += f" | 上限 {effective_length_ratio_limit:.2f}"
+                        if length_status == "below" and effective_length_ratio_min is not None:
+                            limit_message += f" | 下限 {effective_length_ratio_min:.2f}"
                         length_limit_messages.append(limit_message)
 
                     if writing_to_source_directly:
@@ -2916,17 +3023,36 @@ def translate_range_contents(
 
         if include_context_columns and length_metrics:
             total_length_entries = len(length_metrics)
-            if enforce_length_limit and effective_length_ratio_limit is not None:
-                exceeded_entries = [entry for entry in length_metrics.values() if entry.get("status") == "exceeded"]
-                if exceeded_entries:
+            if enforce_length_limit:
+                above_entries = [
+                    entry for entry in length_metrics.values() if entry.get("status") == "above"
+                ]
+                below_entries = [
+                    entry for entry in length_metrics.values() if entry.get("status") == "below"
+                ]
+                if above_entries or below_entries:
                     detail_items = length_limit_messages[:10]
                     detail_text = "; ".join(detail_items) if detail_items else ""
-                    message = f"文字数倍率チェック: {len(exceeded_entries)}/{total_length_entries}件が上限 {effective_length_ratio_limit:.2f} を超過しました。"
+                    summary_parts: List[str] = []
+                    if above_entries and effective_length_ratio_limit is not None:
+                        summary_parts.append(
+                            f"上限 {effective_length_ratio_limit:.2f} 超過 {len(above_entries)}/{total_length_entries}件"
+                        )
+                    if below_entries and effective_length_ratio_min is not None:
+                        summary_parts.append(
+                            f"下限 {effective_length_ratio_min:.2f} 未達 {len(below_entries)}/{total_length_entries}件"
+                        )
+                    if not summary_parts:
+                        summary_parts.append(
+                            f"制限範囲外 {len(above_entries) + len(below_entries)}/{total_length_entries}件"
+                        )
+                    message = "文字数倍率チェック: " + " / ".join(summary_parts)
                     if detail_text:
                         message += f" 詳細: {detail_text}"
                     write_messages.append(message)
                 else:
-                    write_messages.append("文字数倍率チェック: 全{}件が上限 {:.2f} 以内でした。".format(total_length_entries, effective_length_ratio_limit))
+                    range_text = _format_ratio_bounds_for_display() or "設定範囲"
+                    write_messages.append(f"文字数倍率チェック: 全{total_length_entries}件が{range_text}内でした。")
             else:
                 sample_entries = sorted(length_metrics.values(), key=lambda entry: entry.get("cell_ref", ""))[:5]
                 preview = [
@@ -2970,12 +3096,14 @@ def translate_range_without_references(
     translation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
     length_ratio_limit: Optional[float] = None,
+    length_ratio_min: Optional[float] = None,
     rows_per_batch: Optional[int] = None,
     stop_event: Optional[Event] = None,
 ) -> str:
     """Translate ranges without using external reference material.
 
-    Optionally enforces a UTF-16 ベースの文字数倍率制限を適用できます。"""
+    Optionally enforces a UTF-16 ベースの文字数倍率制限を適用できます。
+    Supports defining both upper (length_ratio_limit) and lower (length_ratio_min) bounds."""
     if rows_per_batch is not None and rows_per_batch < 1:
         raise ToolExecutionError("rows_per_batch must be at least 1 when provided.")
 
@@ -2993,6 +3121,7 @@ def translate_range_without_references(
         translation_output_range=translation_output_range,
         overwrite_source=overwrite_source,
         length_ratio_limit=length_ratio_limit,
+        length_ratio_min=length_ratio_min,
         rows_per_batch=rows_per_batch,
         stop_event=stop_event,
         output_mode="translation_only",
@@ -3012,6 +3141,8 @@ def translate_range_with_references(
     citation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
     stop_event: Optional[Event] = None,
+    length_ratio_limit: Optional[float] = None,
+    length_ratio_min: Optional[float] = None,
 ) -> str:
     """Translate ranges while consulting paired reference materials in both languages.
 
@@ -3028,6 +3159,8 @@ def translate_range_with_references(
         citation_output_range: Optional range for structured citation output.
         overwrite_source: Whether to overwrite the source cells directly.
         stop_event: Optional cancellation event set when the user interrupts execution.
+        length_ratio_limit: Optional upper bound for UTF-16 length ratio enforced in translation-only mode.
+        length_ratio_min: Optional lower bound for UTF-16 length ratio enforced in translation-only mode.
     """
     normalized_source_refs = source_reference_urls or reference_urls
     if not normalized_source_refs and not target_reference_urls:
@@ -3047,6 +3180,8 @@ def translate_range_with_references(
         target_reference_urls=target_reference_urls,
         translation_output_range=translation_output_range,
         overwrite_source=overwrite_source,
+        length_ratio_limit=length_ratio_limit,
+        length_ratio_min=length_ratio_min,
         rows_per_batch=1,
         stop_event=stop_event,
     )
