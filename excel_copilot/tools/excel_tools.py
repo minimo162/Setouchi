@@ -1,4 +1,5 @@
 import html
+import ast
 import re
 import difflib
 import logging
@@ -1282,6 +1283,47 @@ def translate_range_contents(
                 return numeric_value
             return None
 
+        def _parse_length_verification_payload(result: Any) -> Optional[Dict[str, Any]]:
+            if isinstance(result, dict):
+                return result
+            if result is None:
+                return None
+            if not isinstance(result, str):
+                return None
+            raw_text = result.strip()
+            if not raw_text:
+                return None
+            try:
+                return json.loads(raw_text)
+            except json.JSONDecodeError as original_error:
+                candidates: List[str] = []
+                stripped = _strip_enclosing_quotes(raw_text)
+                if stripped and stripped != raw_text:
+                    candidates.append(stripped)
+                unescaped = _maybe_unescape_html_entities(raw_text)
+                if unescaped and unescaped != raw_text:
+                    candidates.append(unescaped)
+                    stripped_unescaped = _strip_enclosing_quotes(unescaped)
+                    if stripped_unescaped and stripped_unescaped not in candidates:
+                        candidates.append(stripped_unescaped)
+                for candidate in candidates:
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        continue
+                try:
+                    literal_value = ast.literal_eval(raw_text)
+                except (ValueError, SyntaxError):
+                    literal_value = None
+                if isinstance(literal_value, str):
+                    try:
+                        return json.loads(literal_value)
+                    except json.JSONDecodeError:
+                        pass
+                elif isinstance(literal_value, (list, dict)):
+                    return literal_value
+                raise original_error
+
         def _request_length_constrained_translation(
             original_text: str,
             supporting_context: Dict[str, Any],
@@ -1331,15 +1373,16 @@ def translate_range_contents(
                 instructions.append(ratio_check_directive)
             instructions.extend(
                 [
-                "- 制限を超える場合は表現を短く調整し、再度 len() で長さを測って制限内に収めてから JSON を返してください。",
+                "- 制限を超える場合は表現を短く調整し、再度 len() で長さを測って制限に収めてから JSON を返してください。",
                 "- 意味と重要な情報を保持しつつ、冗長な語句を削除し、簡潔な言い換えを選択してください。",
                 "- 新しい情報や不要な意訳を追加しないでください。",
-                "- 現在の訳文を参考にしながら、長さ制限を守る最も自然な表現を選んでください。",
+                "- 現在の訳文と整合するように参考訳を見直しながら、長さ制限を守る最も自然な表現を選んでください。",
                 "",
                 "出力形式:",
                 "- JSON 配列のみを出力し、要素数は 1 件です。",
-                '- 要素は {"translated_text": "...", "translated_length": 数値, "length_ratio": 数値} 形式のオブジェクトにしてください。',
-                '- "translated_length" には len() で測った UTF-16 コードユニット数を整数で記入し、"length_ratio" には原文に対する比率を数値で記入してください。',
+                '- 要素は {"translated_text": "...", "translated_length": 数値, "length_ratio": 数値, "length_verification": {"result": "...", "status": "..."}} 形式のオブジェクトにしてください。',
+                '- length_verification.result には エスケープした JSON 文字列 (例: "{\"source_length\": ...}") を入れてください。未エスケープの引用符が含まれる場合は応答が拒否されます。',
+                '- "translated_length" には len() で測った UTF-16 コードユニット数を整数で記し、"length_ratio" には原文に対する比率を数値で記してください。',
                 "",
                 "source_texts(JSON):",
                     json.dumps([original_text], ensure_ascii=False),
@@ -1632,6 +1675,8 @@ def translate_range_contents(
                 "出力は JSON 配列のみです。各要素には次のキーを必ず含めてください。\n",
                 f"- \"translated_text\": {target_language} での翻訳文。\n",
                 "- \"process_notes_jp\": 日本語で数文の翻訳メモ。訳語の根拠や参照ペアの使い方を簡潔に記述してください。\n",
+                '- "length_verification": {"result": "...", "status": "..."} を含めてください、En',
+                '- length_verification.result には エスケープした JSON 文字列 (例: "{\"source_length\": ...}") を入れてください。未エスケープの引用符が含まれる場合は応答が拒否されます、En',
                 "- \"reference_pairs\": 実際に参考にしたペアの配列。利用しなかった場合は空配列を返してください。\n",
                 "余分なコメントやマークダウンを付けず、純粋な JSON だけを返してください。\n",
                 "以下に日本語原文の配列、続いて参照ペアの配列を示します。\n",
@@ -1643,7 +1688,9 @@ def translate_range_contents(
                 "入力列の順序を維持し、すべての文を翻訳してください。\n",
                 "出力は JSON 配列のみとし、各要素は次のキーを必ず含むオブジェクトにしてください。\n",
                 '- "translated_text": 翻訳文の文字列。\n',
-                '- "translated_length": 翻訳文の UTF-16 コードユニット数。Python の len() と同じ定義で整数を返してください。\n',
+                '- "length_verification": {"result": "...", "status": "..."} を含めてください、En',
+                '- length_verification.result には エスケープした JSON 文字列 (例: "{\"source_length\": ...}") を入れてください。未エスケープの引用符が含まれる場合は応答が拒否されます、En',
+                '- "translated_length": 翻訳文の UTF-16 コードユニット数。Python の len() と同じ定義で整数を返してください、En',
                 '- "length_ratio": 原文に対する長さの比率 (translated_length / 原文の UTF-16 コードユニット数)。数値で返してください。\n',
                 "余分な説明やコメント、追加のテキストを含めないでください。\n",
             ]
@@ -2486,6 +2533,9 @@ def translate_range_contents(
                     reference_pairs_output: List[Dict[str, str]] = []
                     reported_translated_length: Optional[int] = None
                     reported_length_ratio: Optional[float] = None
+                    reported_source_length: Optional[int] = None
+                    length_verification_status: Optional[str] = None
+                    length_verification_details: Optional[Dict[str, Any]] = None
 
                     if isinstance(item, dict):
                         translation_value = (
@@ -2543,6 +2593,54 @@ def translate_range_contents(
                                 reference_pairs_output = cleaned_pairs
                         reported_translated_length = _coerce_non_negative_int(item.get("translated_length"))
                         reported_length_ratio = _coerce_ratio_value(item.get("length_ratio"))
+                        length_verification_payload = item.get("length_verification")
+                        if isinstance(length_verification_payload, dict):
+                            status_value = length_verification_payload.get("status")
+                            if isinstance(status_value, str):
+                                length_verification_status = status_value.strip()
+                            raw_result_payload = length_verification_payload.get("result")
+                            if isinstance(raw_result_payload, str):
+                                try:
+                                    parsed_verification = _parse_length_verification_payload(raw_result_payload)
+                                except json.JSONDecodeError as exc:
+                                    snippet_source = raw_result_payload
+                                    sanitized_snippet = re.sub(r"\s+", " ", snippet_source).strip()
+                                    truncated_snippet = (
+                                        sanitized_snippet[:180] + "..."
+                                        if len(sanitized_snippet) > 180
+                                        else sanitized_snippet
+                                    )
+                                    summary_text = truncated_snippet if truncated_snippet else "(空の応答)"
+                                    actions.log_progress(f"長さ検証 JSON の解析に失敗しました: {summary_text}")
+                                    _diff_debug(
+                                        f"length_verification parse failed err={exc} raw={_shorten_debug(snippet_source)}"
+                                    )
+                                else:
+                                    candidate = parsed_verification[0] if isinstance(parsed_verification, list) and parsed_verification else parsed_verification
+                                    if isinstance(candidate, dict):
+                                        length_verification_details = candidate
+                            elif isinstance(raw_result_payload, dict):
+                                length_verification_details = raw_result_payload
+                            elif isinstance(raw_result_payload, list) and raw_result_payload:
+                                candidate = raw_result_payload[0]
+                                if isinstance(candidate, dict):
+                                    length_verification_details = candidate
+                        if length_verification_details:
+                            if reported_translated_length is None:
+                                reported_translated_length = _coerce_non_negative_int(
+                                    length_verification_details.get("translated_length")
+                                    or length_verification_details.get("translation_length")
+                                )
+                            if reported_length_ratio is None:
+                                ratio_candidate = (
+                                    length_verification_details.get("length_ratio")
+                                    or length_verification_details.get("ratio")
+                                )
+                                reported_length_ratio = _coerce_ratio_value(ratio_candidate)
+                            reported_source_length = _coerce_non_negative_int(
+                                length_verification_details.get("source_length")
+                                or length_verification_details.get("original_length")
+                            )
                     elif isinstance(item, str):
                         translation_value = item
                     elif isinstance(item, (int, float)):
@@ -2649,6 +2747,12 @@ def translate_range_contents(
                         metric_entry["reported_translated_length"] = reported_translated_length
                     if reported_length_ratio is not None:
                         metric_entry["reported_length_ratio"] = reported_length_ratio
+                    if reported_source_length is not None:
+                        metric_entry["reported_source_length"] = reported_source_length
+                    if length_verification_status:
+                        metric_entry["length_verification_status"] = length_verification_status
+                    if length_verification_details is not None:
+                        metric_entry["length_verification_details"] = length_verification_details
                     if reported_length_delta is not None:
                         metric_entry["reported_length_delta"] = reported_length_delta
                     if reported_ratio_delta is not None:
