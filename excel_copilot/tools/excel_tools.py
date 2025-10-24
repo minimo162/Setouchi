@@ -1077,10 +1077,8 @@ def translate_range_contents(
         target_reference_urls: URLs to the target-language reference documents used for pairing.
         translation_output_range: Range where translated content, process notes, and reference pairs are written.
         overwrite_source: Whether to overwrite the source range directly.
-        length_ratio_limit: Optional upper bound for the ratio (translated UTF-16 length / source UTF-16 length)
-            enforced in translation-only mode. When None, no limit is applied.
-        length_ratio_min: Optional lower bound for the ratio (translated UTF-16 length / source UTF-16 length)
-            enforced in translation-only mode. When None, no lower bound is applied.
+        length_ratio_limit: Deprecated legacy argument retained for compatibility; the value is ignored.
+        length_ratio_min: Deprecated legacy argument retained for compatibility; the value is ignored.
         rows_per_batch: Optional cap for batch size when chunking the translation work.
         stop_event: Optional cancellation event set when the user interrupts the operation.
         output_mode: Controls whether contextual columns (process notes / reference pairs) are emitted.
@@ -1143,389 +1141,23 @@ def translate_range_contents(
         translation_block_width = (
             _MIN_CONTEXT_BLOCK_WIDTH if include_context_columns else 1
         )
-        effective_length_ratio_limit: Optional[float] = None
-        effective_length_ratio_min: Optional[float] = None
-        if length_ratio_limit is not None:
-            try:
-                candidate_limit = float(length_ratio_limit)
-            except (TypeError, ValueError):
-                raise ToolExecutionError("length_ratio_limit は数値で指定してください。") from None
-            if not math.isfinite(candidate_limit) or candidate_limit <= 0:
-                raise ToolExecutionError("length_ratio_limit には 0 より大きい有限の数値を指定してください。")
-            effective_length_ratio_limit = candidate_limit
-        if length_ratio_min is not None:
-            try:
-                candidate_min = float(length_ratio_min)
-            except (TypeError, ValueError):
-                raise ToolExecutionError("length_ratio_min は数値で指定してください。") from None
-            if not math.isfinite(candidate_min) or candidate_min < 0:
-                raise ToolExecutionError("length_ratio_min には 0 以上の有限の数値を指定してください。")
-            effective_length_ratio_min = candidate_min
-        if (
-            effective_length_ratio_min is not None
-            and effective_length_ratio_limit is not None
-            and effective_length_ratio_min > effective_length_ratio_limit
-        ):
-            raise ToolExecutionError("length_ratio_min は length_ratio_limit 以下にしてください。")
-        skip_length_recalibration = False
-        enforce_length_limit = (
-            output_mode == "translation_only"
-            and (
-                effective_length_ratio_limit is not None
-                or effective_length_ratio_min is not None
+
+        if length_ratio_limit is not None or length_ratio_min is not None:
+            actions.log_progress(
+                "length_ratio_limit / length_ratio_min は現在サポートを終了したため無視されます。"
             )
-        )
-        if enforce_length_limit and output_mode == "translation_only":
-            skip_length_recalibration = True
-            actions.log_progress("翻訳（通常）モードでは長さ再調整をスキップし、初回の翻訳結果を書き込みます。")
         length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
-        length_limit_messages: List[str] = []
-        length_retry_counts: Dict[Tuple[int, int], int] = {}
-        max_length_retries = 3
-        length_adjustment_failures: List[str] = []
 
         def _compute_length_ratio(source_units: int, translated_units: int) -> float:
             if source_units <= 0:
                 return 0.0 if translated_units <= 0 else math.inf
             return translated_units / source_units
 
-        def _ratio_violation_kind(ratio_value: float) -> Optional[str]:
-            if effective_length_ratio_min is not None and ratio_value < effective_length_ratio_min:
-                return "below"
-            if effective_length_ratio_limit is not None and ratio_value > effective_length_ratio_limit:
-                return "above"
-            return None
-
-        def _ratio_within_bounds(ratio_value: float) -> bool:
-            return _ratio_violation_kind(ratio_value) is None
-
-        def _format_ratio_bounds_for_display() -> str:
-            if (
-                effective_length_ratio_min is not None
-                and effective_length_ratio_limit is not None
-            ):
-                return f"{effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f}"
-            if effective_length_ratio_min is not None:
-                return f"{effective_length_ratio_min:.2f} 以上"
-            if effective_length_ratio_limit is not None:
-                return f"{effective_length_ratio_limit:.2f} 以下"
-            return ""
-
         def _format_ratio(value: float) -> str:
             if not math.isfinite(value):
                 return "∞"
             return f"{value:.2f}"
 
-
-        def _analyse_length_verification(
-            reported_source_length: Optional[int],
-            reported_translated_length: Optional[int],
-            reported_length_ratio: Optional[float],
-            length_verification_status: Optional[str],
-            length_verification_details: Optional[Dict[str, Any]],
-            verification_parse_error: Optional[str],
-            source_units: int,
-            translated_units: int,
-            ratio_value: float,
-        ) -> Dict[str, Any]:
-            verification_messages: List[str] = []
-            evaluation_issue = _evaluate_length_verification(
-                length_verification_status,
-                length_verification_details,
-                verification_parse_error,
-                source_units,
-                translated_units,
-                ratio_value,
-            )
-            if evaluation_issue:
-                verification_messages.append(evaluation_issue)
-
-            source_mismatch = (
-                reported_source_length is not None and reported_source_length != source_units
-            )
-            translated_mismatch = (
-                reported_translated_length is not None and reported_translated_length != translated_units
-            )
-            ratio_mismatch = (
-                reported_length_ratio is not None and abs(reported_length_ratio - ratio_value) > 1e-4
-            )
-
-            if source_mismatch:
-                verification_messages.append(
-                    f"source_length の報告値が実測と一致しません (reported {reported_source_length}, actual {source_units})"
-                )
-            if translated_mismatch:
-                verification_messages.append(
-                    f"translated_length の報告値が実測と一致しません (reported {reported_translated_length}, actual {translated_units})"
-                )
-            if ratio_mismatch:
-                verification_messages.append(
-                    f"length_ratio の報告値が実測と一致しません (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
-                )
-
-            if (
-                length_verification_status
-                and length_verification_status.strip().lower() != "verified"
-            ):
-                verification_messages.append(f"length_verification.status が verified ではありません: {length_verification_status}")
-
-            status_issue = bool(
-                length_verification_status
-                and length_verification_status.strip().lower() != "verified"
-            )
-            parse_error = verification_parse_error is not None
-            details_missing = bool(
-                length_verification_status and not length_verification_details
-            )
-
-            return {
-                "issue_message": " / ".join(verification_messages) if verification_messages else None,
-                "status_issue": status_issue,
-                "parse_error": parse_error,
-                "details_missing": details_missing,
-                "source_mismatch": source_mismatch,
-                "translated_mismatch": translated_mismatch,
-                "ratio_mismatch": ratio_mismatch,
-            }
-
-        def _should_autocorrect_length_metadata(
-            analysis: Dict[str, Any],
-            ratio_value: float,
-        ) -> bool:
-            if not analysis.get("issue_message"):
-                return False
-            if analysis.get("status_issue") or analysis.get("parse_error"):
-                return False
-            if _ratio_violation_kind(ratio_value):
-                return False
-            return any(
-                analysis.get(key)
-                for key in (
-                    "details_missing",
-                    "source_mismatch",
-                    "translated_mismatch",
-                    "ratio_mismatch",
-                )
-            )
-
-        def _autocorrect_length_metadata(
-            response_payload: Dict[str, Any],
-            source_units: int,
-            translated_units: int,
-            ratio_value: float,
-        ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-            if not isinstance(response_payload, dict):
-                return None
-
-            corrected_payload = dict(response_payload)
-            changed = False
-
-            if corrected_payload.get("translated_length") != translated_units:
-                corrected_payload["translated_length"] = translated_units
-                changed = True
-
-            existing_ratio = corrected_payload.get("length_ratio")
-            if (
-                not isinstance(existing_ratio, (int, float))
-                or not math.isfinite(float(existing_ratio))
-                or abs(float(existing_ratio) - ratio_value) > 1e-4
-            ):
-                corrected_payload["length_ratio"] = ratio_value
-                changed = True
-
-            length_verification_section = corrected_payload.get("length_verification")
-            if isinstance(length_verification_section, dict):
-                verification_dict = dict(length_verification_section)
-            else:
-                verification_dict = {}
-                changed = True
-
-            status_value = verification_dict.get("status")
-            if not isinstance(status_value, str) or not status_value.strip():
-                verification_dict["status"] = "verified"
-                changed = True
-            else:
-                verification_dict["status"] = status_value.strip()
-
-            verification_details = {
-                "source_length": source_units,
-                "translated_length": translated_units,
-                "length_ratio": ratio_value,
-            }
-            existing_verification_result = verification_dict.get("result")
-            if existing_verification_result != verification_details:
-                verification_dict["result"] = dict(verification_details)
-                changed = True
-
-            corrected_payload["length_verification"] = verification_dict
-            return corrected_payload if changed else None
-
-        def _coerce_non_negative_int(value: Any) -> Optional[int]:
-            if isinstance(value, bool):
-                return None
-            if isinstance(value, int):
-                return value if value >= 0 else None
-            if isinstance(value, float):
-                if not math.isfinite(value):
-                    return None
-                rounded = int(round(value))
-                if rounded < 0:
-                    return None
-                if abs(value - rounded) <= 0.5:
-                    return rounded
-                return None
-            if isinstance(value, str):
-                stripped = value.strip()
-                if not stripped:
-                    return None
-                try:
-                    numeric_value = float(stripped)
-                except ValueError:
-                    return None
-                return _coerce_non_negative_int(numeric_value)
-            return None
-
-        def _coerce_ratio_value(value: Any) -> Optional[float]:
-            if isinstance(value, bool):
-                return None
-            if isinstance(value, (int, float)):
-                numeric_value = float(value)
-                if not math.isfinite(numeric_value) or numeric_value < 0:
-                    return None
-                return numeric_value
-            if isinstance(value, str):
-                stripped = value.strip()
-                if not stripped:
-                    return None
-                try:
-                    numeric_value = float(stripped)
-                except ValueError:
-                    return None
-                if not math.isfinite(numeric_value) or numeric_value < 0:
-                    return None
-                return numeric_value
-            return None
-
-        def _extract_length_metadata_from_response(
-            payload: Mapping[str, Any],
-            *,
-            cell_reference_for_log: str,
-        ) -> Tuple[Optional[int], Optional[float], Optional[str], Optional[Dict[str, Any]], Optional[int], Optional[str]]:
-            reported_translated_length: Optional[int] = None
-            reported_length_ratio: Optional[float] = None
-            verification_status: Optional[str] = None
-            verification_details: Optional[Dict[str, Any]] = None
-            reported_source_length: Optional[int] = None
-            verification_parse_error: Optional[str] = None
-
-            if isinstance(payload, Mapping):
-                reported_translated_length = _coerce_non_negative_int(payload.get("translated_length"))
-                reported_length_ratio = _coerce_ratio_value(payload.get("length_ratio"))
-
-                length_verification_payload = payload.get("length_verification")
-                if isinstance(length_verification_payload, dict):
-                    status_value = length_verification_payload.get("status")
-                    if isinstance(status_value, str):
-                        verification_status = status_value.strip()
-                    raw_result_payload = length_verification_payload.get("result")
-                    if isinstance(raw_result_payload, str):
-                        try:
-                            parsed_verification = _parse_length_verification_payload(raw_result_payload)
-                        except json.JSONDecodeError as exc:
-                            sanitized_snippet = re.sub(r"\s+", " ", raw_result_payload).strip()
-                            truncated_snippet = (
-                                sanitized_snippet[:180] + "..." if len(sanitized_snippet) > 180 else sanitized_snippet
-                            )
-                            summary_text = truncated_snippet if truncated_snippet else "(空の応答)"
-                            actions.log_progress(
-                                f"長さ検証 JSON の解析に失敗しました ({cell_reference_for_log}): {summary_text}"
-                            )
-                            _diff_debug(
-                                f"length_verification parse failed err={exc} raw={_shorten_debug(raw_result_payload)}"
-                            )
-                            verification_parse_error = "length_verification.result が JSON として無効です。"
-                        else:
-                            candidate = (
-                                parsed_verification[0]
-                                if isinstance(parsed_verification, list) and parsed_verification
-                                else parsed_verification
-                            )
-                            if isinstance(candidate, dict):
-                                verification_details = candidate
-                                reported_source_length = _coerce_non_negative_int(
-                                    candidate.get("source_length") or candidate.get("original_length")
-                                )
-                                if reported_translated_length is None:
-                                    reported_translated_length = _coerce_non_negative_int(
-                                        candidate.get("translated_length") or candidate.get("translation_length")
-                                    )
-                                if reported_length_ratio is None:
-                                    reported_length_ratio = _coerce_ratio_value(
-                                        candidate.get("length_ratio") or candidate.get("ratio")
-                                    )
-                    elif isinstance(raw_result_payload, dict):
-                        verification_details = raw_result_payload
-                    elif isinstance(raw_result_payload, list) and raw_result_payload:
-                        candidate = raw_result_payload[0]
-                        if isinstance(candidate, dict):
-                            verification_details = candidate
-                elif isinstance(length_verification_payload, list) and length_verification_payload:
-                    candidate = length_verification_payload[0]
-                    if isinstance(candidate, dict):
-                        verification_details = candidate
-                elif isinstance(length_verification_payload, Mapping):
-                    verification_details = dict(length_verification_payload)
-            elif isinstance(payload, list) and payload:
-                candidate = payload[0]
-                if isinstance(candidate, Mapping):
-                    return _extract_length_metadata_from_response(
-                        candidate,
-                        cell_reference_for_log=cell_reference_for_log,
-                    )
-
-            return (
-                reported_translated_length,
-                reported_length_ratio,
-                verification_status,
-                verification_details,
-                reported_source_length,
-                verification_parse_error,
-            )
-
-        def _evaluate_length_verification(
-            status_value: Optional[str],
-            details: Optional[Dict[str, Any]],
-            parse_error: Optional[str],
-            source_units: int,
-            translated_units: int,
-            ratio_value: float,
-        ) -> Optional[str]:
-            if parse_error:
-                return parse_error
-            if status_value and status_value.strip().lower() != "verified":
-                return f"length_verification.status が verified ではありません: {status_value}"
-            if details is None:
-                if status_value:
-                    return "length_verification.result の詳細が欠落しています。"
-                return None
-
-            reported_source = _coerce_non_negative_int(details.get("source_length") or details.get("original_length"))
-            reported_translated = _coerce_non_negative_int(
-                details.get("translated_length") or details.get("translation_length")
-            )
-            reported_ratio = _coerce_ratio_value(details.get("length_ratio") or details.get("ratio"))
-
-            mismatches: List[str] = []
-            if reported_source is not None and reported_source != source_units:
-                mismatches.append(f"source_length={reported_source} (actual {source_units})")
-            if reported_translated is not None and reported_translated != translated_units:
-                mismatches.append(f"translated_length={reported_translated} (actual {translated_units})")
-            if reported_ratio is not None and abs(reported_ratio - ratio_value) > 1e-4:
-                mismatches.append(f"length_ratio={reported_ratio:.4f} (actual {ratio_value:.4f})")
-
-            if mismatches:
-                return "length_verification.result の値が実測と一致しません: " + ", ".join(mismatches)
-            return None
 
         def _repair_unescaped_length_verification_result(response_text: Any) -> Tuple[Any, Optional[str]]:
             if not isinstance(response_text, str):
@@ -1669,201 +1301,6 @@ def translate_range_contents(
                 return None, "json_decode_failed"
             return None, "no_json_found"
 
-        def _parse_length_verification_payload(result: Any) -> Optional[Dict[str, Any]]:
-            if isinstance(result, dict):
-                return result
-            if result is None:
-                return None
-            if not isinstance(result, str):
-                return None
-            raw_text = result.strip()
-            if not raw_text:
-                return None
-            try:
-                return json.loads(raw_text)
-            except json.JSONDecodeError as original_error:
-                candidates: List[str] = []
-                stripped = _strip_enclosing_quotes(raw_text)
-                if stripped and stripped != raw_text:
-                    candidates.append(stripped)
-                unescaped = _maybe_unescape_html_entities(raw_text)
-                if unescaped and unescaped != raw_text:
-                    candidates.append(unescaped)
-                    stripped_unescaped = _strip_enclosing_quotes(unescaped)
-                    if stripped_unescaped and stripped_unescaped not in candidates:
-                        candidates.append(stripped_unescaped)
-                for candidate in candidates:
-                    try:
-                        return json.loads(candidate)
-                    except json.JSONDecodeError:
-                        continue
-                try:
-                    literal_value = ast.literal_eval(raw_text)
-                except (ValueError, SyntaxError):
-                    literal_value = None
-                if isinstance(literal_value, str):
-                    try:
-                        return json.loads(literal_value)
-                    except json.JSONDecodeError:
-                        pass
-                elif isinstance(literal_value, (list, dict)):
-                    return literal_value
-                raise original_error
-
-        def _request_length_constrained_translation(
-            original_text: str,
-            supporting_context: Dict[str, Any],
-            current_translation: str,
-            current_length_units: int,
-            current_ratio_value: float,
-            attempt_index: int,
-            violation_kind: Optional[str],
-            verification_issue: Optional[str],
-            reported_translated_length: Optional[int],
-            reported_length_ratio: Optional[float],
-            retry_feedback: Optional[str] = None,
-            latest_length_units: Optional[int] = None,
-            latest_ratio_value: Optional[float] = None,
-        ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-            if not enforce_length_limit:
-                return None, None
-
-            source_units = _measure_utf16_length(original_text)
-            bounds_display = _format_ratio_bounds_for_display()
-            min_units = (
-                math.ceil(source_units * effective_length_ratio_min)
-                if effective_length_ratio_min is not None
-                else None
-            )
-            max_units = (
-                math.floor(source_units * effective_length_ratio_limit)
-                if effective_length_ratio_limit is not None
-                else None
-            )
-
-            instructions: List[str] = []
-            instructions.append('長さ再調整タスク: UTF-16 長さ制約に合わせて翻訳を修正してください。')
-            if retry_feedback:
-                instructions.append(f'- 前回応答で検出した問題: {retry_feedback}。必ず修正してください。')
-            if violation_kind == 'below':
-                instructions.append('- 現在の翻訳は下限を下回っています。重要な意味を保ちながら自然に情報を補ってください。')
-            elif violation_kind == 'above':
-                instructions.append('- 現在の翻訳は上限を超過しています。意図を損なわず簡潔にまとめてください。')
-            if verification_issue:
-                instructions.append(
-                    f'- length_verification の検証が失敗しました: {verification_issue}。翻訳と検証値を一致させてください。'
-                )
-
-            instructions.append(f'- 原文の UTF-16 長さは {source_units} です。Python の len() と同じ定義で再計測してください。')
-            observed_units = latest_length_units if latest_length_units is not None else current_length_units
-            observed_ratio = latest_ratio_value if latest_ratio_value is not None else current_ratio_value
-            instructions.append(f'- 現在の翻訳: UTF-16 長さ {observed_units}、倍率 {observed_ratio:.4f}。')
-
-            target_range_text: Optional[str] = None
-            if min_units is not None and max_units is not None:
-                target_range_text = f"{min_units}〜{max_units} ({bounds_display})"
-            elif min_units is not None:
-                target_range_text = f"{min_units} 以上"
-            elif max_units is not None:
-                target_range_text = f"{max_units} 以下"
-            if target_range_text:
-                instructions.append(f'- 目標レンジ: {target_range_text}。')
-
-            if violation_kind == 'below' and min_units is not None:
-                deficit = max(min_units - observed_units, 0)
-                instructions.append(f'- 下限まであと {deficit} です。自然な補足で不足分を埋めてください。')
-            elif violation_kind == 'above' and max_units is not None:
-                excess = max(observed_units - max_units, 0)
-                instructions.append(f'- 上限を {excess} 超えています。冗長な語句を整理してください。')
-
-            if reported_translated_length is not None:
-                instructions.append(f'- 応答が申告した translated_length: {reported_translated_length}。')
-            if reported_length_ratio is not None:
-                instructions.append(f'- 応答が申告した length_ratio: {reported_length_ratio:.4f}。')
-
-            instructions.extend(
-                [
-                    '- JSON only output. Do not include commentary, preambles, or code fences.',
-                    '- 余計な説明やコメント、追加のテキストを含めないでください。',
-                    '- 応答は {"translated_text": "...", "translated_length": number, "length_ratio": number, "length_verification": {"result": {"source_length": number, "translated_length": number, "length_ratio": number}, "status": "..."}} を 1 要素だけ含む JSON 配列で返してください。',
-                    '- "translated_length" と length_verification.result 内の "translated_length" には translated_text を len() で測った同じ整数を記入してください。',
-                    '- "length_ratio" と length_verification.result 内の "length_ratio" も同じ数値を用い、差異が出ないようにしてください。',
-                    '- length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} のような JSON オブジェクトを入れてください。',
-                    '- 応答前に Python の len() と同じ UTF-16 コードユニット長で再計測してください。',
-                    '- 応答前に Python の len() と同じ UTF-16 コードユニット長で再計測してください。',
-                    'source_texts(JSON):',
-                    json.dumps([original_text], ensure_ascii=False),
-                ]
-            )
-            if supporting_context and any(supporting_context.get(key) for key in ('source_sentences', 'reference_pairs')):
-                instructions.extend(
-                    [
-                        'supporting_data(JSON):',
-                        json.dumps([supporting_context], ensure_ascii=False),
-                    ]
-                )
-            instructions.extend(
-                [
-                    'current_translation(JSON):',
-                    json.dumps([current_translation], ensure_ascii=False),
-                ]
-            )
-            retry_prompt = "".join(instructions)
-            _ensure_not_stopped()
-
-            if violation_kind == 'above':
-                direction_hint = '長さ短縮'
-            elif violation_kind == 'below':
-                direction_hint = '長さ増加'
-            elif verification_issue:
-                direction_hint = '検証値修正'
-            else:
-                direction_hint = '翻訳調整'
-
-            target_hint = f'UTF-16 長さ {bounds_display}' if bounds_display else 'UTF-16 長さ'
-            actions.log_progress(
-                f'長さ再調整の再試行 {attempt_index} 回目: {target_hint} の範囲に {direction_hint} を促しています。'
-            )
-
-            def _map_json_error_to_feedback(parse_error: Optional[str], repair_status: Optional[str]) -> Optional[str]:
-                if parse_error in {'non_string', 'empty_response', 'no_json_marker'}:
-                    return 'JSON 形式で応答してください。'
-                if parse_error in {'json_decode_failed', 'no_json_found'}:
-                    return '有効な JSON 配列（または配列内のオブジェクト）を返してください。'
-                if repair_status in {'repaired', 'repair_failed'}:
-                    return 'length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} のような JSON オブジェクトを入れてください。'
-                return None
-
-            response = browser_manager.ask(retry_prompt, stop_event=stop_event)
-            repaired_response, repair_status = _repair_unescaped_length_verification_result(response)
-            parsed_payload, parse_error_code = _extract_first_json_payload(repaired_response)
-            if parsed_payload is None:
-                fallback_payload, fallback_error_code = _extract_first_json_payload(response)
-                parse_error_code = parse_error_code or fallback_error_code
-                parsed_payload = fallback_payload
-            feedback_hint = _map_json_error_to_feedback(parse_error_code, repair_status)
-
-            if parsed_payload is None:
-                if isinstance(response, str) and '応答が完了したと判断しました' in response:
-                    actions.log_progress("Length adjustment response ended with '応答が完了したと判断しました'; requesting another attempt.")
-                else:
-                    actions.log_progress(
-                        f"Length adjustment response was not valid JSON: {_shorten_debug(str(response))}"
-                    )
-                return None, feedback_hint or 'JSON 形式で応答してください。'
-
-            if isinstance(parsed_payload, list) and parsed_payload:
-                candidate = parsed_payload[0]
-            elif isinstance(parsed_payload, dict):
-                candidate = parsed_payload
-            else:
-                actions.log_progress('Length constraint adjustment response was not a JSON object; requesting another attempt.')
-                return None, feedback_hint or 'JSON オブジェクトを返してください。'
-
-            if isinstance(candidate, dict):
-                return candidate, feedback_hint
-            actions.log_progress('Length constraint adjustment response did not contain an object payload; requesting another attempt.')
-            return None, feedback_hint or 'JSON オブジェクトを返してください。'
 
         citation_should_include_explanations = writing_to_source_directly and include_context_columns
         out_rows = source_rows
@@ -2107,39 +1544,9 @@ def translate_range_contents(
                 '注意: "translated_length" と length_verification.result 内の "translated_length" は同一の再計測値を入れ、"length_ratio" も両方で同じ値にしてください。',
                 "禁止: 余分な説明、前置き、マークダウン、コードフェンス、複数の JSON ペイロード。",
             ]
-            if enforce_length_limit and (
-                effective_length_ratio_limit is not None or effective_length_ratio_min is not None
-            ):
-                prompt_lines.extend([
-                    '後続の "Source UTF-16 lengths (JSON)" に各原文の UTF-16 長さ S が与えられます。回答前に各アイテムごとに必ず S を用いて境界を計算し、訳文をその範囲に収めてください。',
-                ])
-                if effective_length_ratio_min is not None and effective_length_ratio_limit is not None:
-                    prompt_lines.append(
-                        f'境界: 下限 Lmin = ceil(S × {effective_length_ratio_min:.2f})、上限 Lmax = floor(S × {effective_length_ratio_limit:.2f})。'
-                    )
-                    prompt_lines.append(
-                        '検証: translated_length を自分で再計測し、Lmin ≤ translated_length ≤ Lmax を満たすまで表現を短縮／言い換え／要約／圧縮してから返答してください。'
-                    )
-                elif effective_length_ratio_limit is not None:
-                    prompt_lines.append(
-                        f'境界: 上限 Lmax = floor(S × {effective_length_ratio_limit:.2f})。'
-                    )
-                    prompt_lines.append(
-                        '検証: translated_length ≤ Lmax を満たすまで調整してから返答してください。'
-                    )
-                elif effective_length_ratio_min is not None:
-                    prompt_lines.append(
-                        f'境界: 下限 Lmin = ceil(S × {effective_length_ratio_min:.2f})。'
-                    )
-                    prompt_lines.append(
-                        '検証: translated_length ≥ Lmin を満たすまで調整してから返答してください。'
-                    )
-                prompt_lines.extend([
-                    "ヒント（短くする）: 冗長な修飾を削る／同義語で短語を選ぶ／二重表現の除去／受動→能動／定型句の簡略化。",
-                    "ヒント（長くする）: 意味を変えず主語・述語を明確化／略語を展開／必要最小限の接続語を追加。",
-                    "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
-                    "この翻訳専用モードでは後続の長さ再調整は行われないため、初回出力で必ず長さ制約を満たしてください。",
-                ])
+            prompt_lines.extend([
+                "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
+            ])
             prompt_preamble = "".join(prompt_lines)
 
         if references_requested or use_references:
@@ -2286,9 +1693,6 @@ def translate_range_contents(
                 "source_length": source_length_units,
                 "translated_length": translated_length_units,
                 "ratio": ratio_value,
-                "limit": effective_length_ratio_limit,
-                "retries": 0,
-                "status": "observed",
                 "cell_ref": cell_ref_for_metrics,
             }
             length_metrics[(local_row, col_idx)] = metric_entry
@@ -2873,13 +2277,6 @@ def translate_range_contents(
                     )
                     budget_adjustment_notified = True
 
-                source_lengths: Optional[List[int]] = None
-                source_lengths_json: Optional[str] = None
-                if enforce_length_limit and (
-                    effective_length_ratio_limit is not None or effective_length_ratio_min is not None
-                ):
-                    source_lengths = [_measure_utf16_length(text) for text in current_texts]
-                    source_lengths_json = json.dumps(source_lengths, ensure_ascii=False)
 
                 source_references_per_item = _extract_source_sentences_batch(current_texts)
                 reference_pairs_context = _pair_target_sentences_batch(
@@ -2914,11 +2311,6 @@ def translate_range_contents(
                         "Source sentences:",
                         texts_json,
                     ])
-                    if source_lengths_json is not None:
-                        prompt_sections.extend([
-                            "Source UTF-16 lengths (JSON):",
-                            source_lengths_json,
-                        ])
                     if include_supporting and has_supporting_data:
                         prompt_sections.extend([
                             "Supporting data (JSON):",
@@ -3007,12 +2399,6 @@ def translate_range_contents(
                     translation_value: Optional[str] = None
                     process_notes_jp = ""
                     reference_pairs_output: List[Dict[str, str]] = []
-                    reported_translated_length: Optional[int] = None
-                    reported_length_ratio: Optional[float] = None
-                    reported_source_length: Optional[int] = None
-                    length_verification_status: Optional[str] = None
-                    length_verification_details: Optional[Dict[str, Any]] = None
-
                     if isinstance(item, dict):
                         translation_value = (
                             item.get("translated_text")
@@ -3085,11 +2471,6 @@ def translate_range_contents(
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
                     translation_value = translation_value_raw
 
-                    if isinstance(item, dict):
-                        current_response_payload: Dict[str, Any] = dict(item)
-                    else:
-                        current_response_payload = {'translated_text': translation_value}
-
                     translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
                     cell_ref_for_metrics = _cell_reference(
                         output_start_row,
@@ -3097,242 +2478,11 @@ def translate_range_contents(
                         local_row,
                         translation_col_index_seed,
                     )
-
-                    (
-                        reported_translated_length,
-                        reported_length_ratio,
-                        length_verification_status,
-                        length_verification_details,
-                        reported_source_length,
-                        verification_parse_error,
-                    ) = _extract_length_metadata_from_response(
-                        current_response_payload,
-                        cell_reference_for_log=cell_ref_for_metrics,
-                    )
-
                     source_text_canonical = current_texts[item_index]
                     source_cell_value = source_text_canonical
                     source_length_units = _measure_utf16_length(source_cell_value)
                     translated_length_units = _measure_utf16_length(translation_value)
                     ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-
-                    analysis = _analyse_length_verification(
-                        reported_source_length,
-                        reported_translated_length,
-                        reported_length_ratio,
-                        length_verification_status,
-                        length_verification_details,
-                        verification_parse_error,
-                        source_length_units,
-                        translated_length_units,
-                        ratio_value,
-                    )
-                    verification_issue_message = analysis["issue_message"]
-
-                    if _should_autocorrect_length_metadata(analysis, ratio_value):
-                        corrected_payload = _autocorrect_length_metadata(
-                            current_response_payload,
-                            source_length_units,
-                            translated_length_units,
-                            ratio_value,
-                        )
-                        if corrected_payload is not None:
-                            current_response_payload = corrected_payload
-                            (
-                                reported_translated_length,
-                                reported_length_ratio,
-                                length_verification_status,
-                                length_verification_details,
-                                reported_source_length,
-                                verification_parse_error,
-                            ) = _extract_length_metadata_from_response(
-                                current_response_payload,
-                                cell_reference_for_log=cell_ref_for_metrics,
-                            )
-                            analysis = _analyse_length_verification(
-                                reported_source_length,
-                                reported_translated_length,
-                                reported_length_ratio,
-                                length_verification_status,
-                                length_verification_details,
-                                verification_parse_error,
-                                source_length_units,
-                                translated_length_units,
-                                ratio_value,
-                            )
-                            verification_issue_message = analysis["issue_message"]
-                            if not verification_issue_message:
-                                actions.log_progress(
-                                    f"length_verification metadata auto-corrected for {cell_ref_for_metrics}."
-                                )
-                            else:
-                                actions.log_progress(
-                                    f"length_verification metadata still inconsistent for {cell_ref_for_metrics}: {verification_issue_message}"
-                                )
-
-                    reported_length_delta: Optional[float] = None
-                    reported_ratio_delta: Optional[float] = None
-                    if reported_translated_length is not None:
-                        reported_length_delta = reported_translated_length - translated_length_units
-                    if reported_length_ratio is not None:
-                        reported_ratio_delta = reported_length_ratio - ratio_value
-                    retries_used = 0
-                    length_status = "observed"
-
-                    if enforce_length_limit:
-                        length_status = "ok"
-                        violation_kind = _ratio_violation_kind(ratio_value)
-                        if violation_kind == "above":
-                            actions.log_progress(
-                                f"Length ratio above limit at {cell_ref_for_metrics}: {ratio_value:.2f} (limit {effective_length_ratio_limit:.2f}). Requesting adjustment."
-                            )
-                        elif violation_kind == "below":
-                            actions.log_progress(
-                                f"Length ratio below minimum at {cell_ref_for_metrics}: {ratio_value:.2f} (minimum {effective_length_ratio_min:.2f}). Requesting adjustment."
-                            )
-                        context_payload = (
-                            translation_context[item_index] if item_index < len(translation_context) else {}
-                        )
-                        retry_feedback: Optional[str] = None
-                        if skip_length_recalibration and (violation_kind or verification_issue_message):
-                            actions.log_progress(
-                                f"長さ再調整をスキップしました ({cell_ref_for_metrics}); 初回翻訳を採用します。"
-                            )
-                        else:
-                            while (violation_kind or verification_issue_message) and retries_used < max_length_retries:
-                                retries_used += 1
-                                adjusted_payload, feedback_hint = _request_length_constrained_translation(
-                                    source_cell_value,
-                                    context_payload,
-                                    translation_value,
-                                    translated_length_units,
-                                    ratio_value,
-                                    retries_used,
-                                    violation_kind,
-                                    verification_issue_message,
-                                    reported_translated_length,
-                                    reported_length_ratio,
-                                    retry_feedback=retry_feedback,
-                                    latest_length_units=translated_length_units,
-                                    latest_ratio_value=ratio_value,
-                                )
-                                retry_feedback = feedback_hint
-                                if not adjusted_payload:
-                                    verification_issue_message = None
-                                    continue
-                                if not isinstance(adjusted_payload, dict):
-                                    retry_feedback = "JSON オブジェクトを返してください。"
-                                    verification_issue_message = None
-                                    actions.log_progress("Length constraint adjustment failed: response was not a JSON object; requesting another attempt.")
-                                    continue
-                                candidate_translation = adjusted_payload.get("translated_text")
-                                if not isinstance(candidate_translation, str):
-                                    retry_feedback = "'translated_text' キーに文字列を入れてください。"
-                                    verification_issue_message = None
-                                    actions.log_progress("Length constraint adjustment failed: 'translated_text' missing or not a string; requesting another attempt.")
-                                    continue
-                                candidate_value_raw = _maybe_unescape_html_entities(candidate_translation)
-                                if not isinstance(candidate_value_raw, str):
-                                    candidate_value_raw = str(candidate_value_raw)
-                                candidate_value_stripped = candidate_value_raw.strip()
-                                if not candidate_value_stripped:
-                                    retry_feedback = "translated_text を空にしないでください。"
-                                    verification_issue_message = None
-                                    actions.log_progress("Length constraint adjustment failed: translated_text was empty; requesting another attempt.")
-                                    continue
-                                translation_value = candidate_value_raw
-                                translation_value_stripped = candidate_value_stripped
-                                current_response_payload = adjusted_payload
-
-                                translated_length_units = _measure_utf16_length(translation_value)
-                                ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-                                violation_kind = _ratio_violation_kind(ratio_value)
-
-                                (
-                                    reported_translated_length,
-                                    reported_length_ratio,
-                                    length_verification_status,
-                                    length_verification_details,
-                                    reported_source_length,
-                                    verification_parse_error,
-                                ) = _extract_length_metadata_from_response(
-                                    current_response_payload,
-                                    cell_reference_for_log=cell_ref_for_metrics,
-                                )
-
-                                analysis = _analyse_length_verification(
-                                    reported_source_length,
-                                    reported_translated_length,
-                                    reported_length_ratio,
-                                    length_verification_status,
-                                    length_verification_details,
-                                    verification_parse_error,
-                                    source_length_units,
-                                    translated_length_units,
-                                    ratio_value,
-                                )
-                                verification_issue_message = analysis["issue_message"]
-
-                                if _should_autocorrect_length_metadata(analysis, ratio_value):
-                                    corrected_payload = _autocorrect_length_metadata(
-                                        current_response_payload,
-                                        source_length_units,
-                                        translated_length_units,
-                                        ratio_value,
-                                    )
-                                    if corrected_payload is not None:
-                                        current_response_payload = corrected_payload
-                                        (
-                                            reported_translated_length,
-                                            reported_length_ratio,
-                                            length_verification_status,
-                                            length_verification_details,
-                                            reported_source_length,
-                                            verification_parse_error,
-                                        ) = _extract_length_metadata_from_response(
-                                            current_response_payload,
-                                            cell_reference_for_log=cell_ref_for_metrics,
-                                        )
-                                        analysis = _analyse_length_verification(
-                                            reported_source_length,
-                                            reported_translated_length,
-                                            reported_length_ratio,
-                                            length_verification_status,
-                                            length_verification_details,
-                                            verification_parse_error,
-                                            source_length_units,
-                                            translated_length_units,
-                                            ratio_value,
-                                        )
-                                        verification_issue_message = analysis["issue_message"]
-                                        if not verification_issue_message:
-                                            actions.log_progress(
-                                                f"length_verification metadata auto-corrected for {cell_ref_for_metrics}."
-                                            )
-                                        else:
-                                            actions.log_progress(
-                                                f"length_verification metadata still inconsistent for {cell_ref_for_metrics}: {verification_issue_message}"
-                                            )
-                        length_retry_counts[(local_row, col_idx)] = retries_used
-                        if violation_kind:
-                            length_status = "above" if violation_kind == "above" else "below"
-                        elif verification_issue_message:
-                            length_status = "verification_error"
-                        else:
-                            length_status = "ok"
-                    else:
-                        length_retry_counts[(local_row, col_idx)] = 0
-
-                    reported_length_delta = (
-                        reported_translated_length - translated_length_units
-                        if reported_translated_length is not None
-                        else None
-                    )
-                    reported_ratio_delta = (
-                        reported_length_ratio - ratio_value
-                        if reported_length_ratio is not None
-                        else None
-                    )
                     if not translation_value:
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
@@ -3350,280 +2500,131 @@ def translate_range_contents(
                         "source_length": source_length_units,
                         "translated_length": translated_length_units,
                         "ratio": ratio_value,
-                        "limit": effective_length_ratio_limit,
-                        "min_limit": effective_length_ratio_min,
-                        "retries": retries_used,
-                        "status": length_status,
                         "cell_ref": cell_ref_for_metrics,
                     }
-                    if reported_translated_length is not None:
-                        metric_entry["reported_translated_length"] = reported_translated_length
-                    if reported_length_ratio is not None:
-                        metric_entry["reported_length_ratio"] = reported_length_ratio
-                    if reported_source_length is not None:
-                        metric_entry["reported_source_length"] = reported_source_length
-                    if length_verification_status:
-                        metric_entry["length_verification_status"] = length_verification_status
-                    if length_verification_details is not None:
-                        metric_entry["length_verification_details"] = length_verification_details
-                    if reported_length_delta is not None:
-                        metric_entry["reported_length_delta"] = reported_length_delta
-                    if reported_ratio_delta is not None:
-                        metric_entry["reported_ratio_delta"] = reported_ratio_delta
-                    if verification_issue_message:
-                        metric_entry["verification_issue"] = verification_issue_message
                     length_metrics[(local_row, col_idx)] = metric_entry
-                    if enforce_length_limit:
-                        if length_status in {"above", "below"}:
-                            limit_message = f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} (倍率 {_format_ratio(ratio_value)})"
-                            if reported_length_ratio is not None:
-                                limit_message += f" | AI申告 {_format_ratio(reported_length_ratio)}"
-                            if length_status == "above" and effective_length_ratio_limit is not None:
-                                limit_message += f" | 上限 {effective_length_ratio_limit:.2f}"
-                            if length_status == "below" and effective_length_ratio_min is not None:
-                                limit_message += f" | 下限 {effective_length_ratio_min:.2f}"
-                            length_limit_messages.append(limit_message)
-                        elif verification_issue_message:
-                            length_limit_messages.append(
-                                f"{cell_ref_for_metrics}: length verification failed ({verification_issue_message})."
-                            )
-                    skip_writing_due_to_length = (
-                        enforce_length_limit
-                        and not skip_length_recalibration
-                        and (
-                            length_status in {"above", "below"} or bool(verification_issue_message)
-                        )
-                    )
                     any_translation = True
-                    if skip_writing_due_to_length:
-                        if length_status in {"above", "below"}:
-                            bound_note = "above limit" if length_status == "above" else "below minimum"
-                            ratio_summary = _format_ratio(ratio_value)
-                            length_adjustment_failures.append(
-                                f"{cell_ref_for_metrics}: length ratio {ratio_summary} remains {bound_note} after retries."
-                            )
-                        else:
-                            failure_note = verification_issue_message or "length verification mismatch"
-                            length_adjustment_failures.append(
-                                f"{cell_ref_for_metrics}: {failure_note} after retries."
-                            )
-                        pending_cols = pending_columns_by_row.get(local_row)
-                        if pending_cols is not None:
-                            pending_cols.discard(col_idx)
-                            if not pending_cols:
-                                _finalize_row(local_row)
-                    else:
 
-                        if writing_to_source_directly:
-                            translation_col_index = translation_col_index_seed
+                    if writing_to_source_directly:
+                        translation_col_index = translation_col_index_seed
+                        explanation_col_index = None
+                        pair_start_index = None
+                        pair_end_index = None
+                    else:
+                        translation_col_index = translation_col_index_seed
+                        if include_context_columns:
+                            explanation_col_index = translation_col_index + 1
+                            pair_start_index = translation_col_index + 2
+                            pair_end_index = translation_col_index + translation_block_width - 1
+                        else:
                             explanation_col_index = None
                             pair_start_index = None
                             pair_end_index = None
-                        else:
-                            translation_col_index = translation_col_index_seed
-                            if include_context_columns:
-                                explanation_col_index = translation_col_index + 1
-                                pair_start_index = translation_col_index + 2
-                                pair_end_index = translation_col_index + translation_block_width - 1
-                            else:
-                                explanation_col_index = None
-                                pair_start_index = None
-                                pair_end_index = None
-    
-                        process_notes_text = (
-                            _maybe_unescape_html_entities(process_notes_jp).strip()
-                            if include_context_columns
-                            else ""
+
+                    process_notes_text = (
+                        _maybe_unescape_html_entities(process_notes_jp).strip()
+                        if include_context_columns
+                        else ""
+                    )
+                    context_pairs: List[Dict[str, str]] = []
+                    if include_context_columns:
+                        if reference_pairs_context and item_index < len(reference_pairs_context):
+                            context_pairs = [
+                                pair for pair in reference_pairs_context[item_index]
+                                if isinstance(pair, dict)
+                            ]
+                    reference_pairs_list: List[Dict[str, str]] = []
+                    if include_context_columns:
+                        reference_pairs_list = list(context_pairs)
+                        if reference_pairs_output:
+                            merged: List[Dict[str, str]] = []
+                            seen_keys: Set[Tuple[str, str]] = set()
+                            for candidate in reference_pairs_output:
+                                if not isinstance(candidate, dict):
+                                    continue
+                                src = candidate.get("source_sentence")
+                                tgt = candidate.get("target_sentence") or candidate.get("translated") or candidate.get("en")
+                                if not isinstance(src, str) or not isinstance(tgt, str):
+                                    continue
+                                key = (src.strip(), tgt.strip())
+                                if key in seen_keys:
+                                    continue
+                                seen_keys.add(key)
+                                merged.append(
+                                    {
+                                        "source_sentence": src.strip(),
+                                        "target_sentence": tgt.strip(),
+                                    }
+                                )
+                            for ctx_pair in context_pairs:
+                                src = ctx_pair.get("source_sentence") if isinstance(ctx_pair, dict) else None
+                                tgt = ctx_pair.get("target_sentence") if isinstance(ctx_pair, dict) else None
+                                if not isinstance(src, str) or not isinstance(tgt, str):
+                                    continue
+                                key = (src.strip(), tgt.strip())
+                                if key in seen_keys:
+                                    continue
+                                seen_keys.add(key)
+                                merged.append(
+                                    {
+                                        "source_sentence": src.strip(),
+                                        "target_sentence": tgt.strip(),
+                                    }
+                                )
+                            reference_pairs_list = merged
+                    existing_output_value = output_matrix[local_row][translation_col_index]
+                    if translation_value != existing_output_value:
+                        output_matrix[local_row][translation_col_index] = translation_value
+                        output_dirty = True
+                        row_dirty_flags[local_row] = True
+                    if include_context_columns:
+                        preview = translation_value_stripped or translation_value
+                        if len(preview) > 120:
+                            preview = preview[:117] + "..."
+                        actions.log_progress(f"翻訳結果プレビュー ({item_index + 1}/{len(current_texts)}): {preview}")
+                    if not writing_to_source_directly and overwrite_source:
+                        existing_source_value = source_matrix[local_row][col_idx]
+                        if translation_value != existing_source_value:
+                            source_matrix[local_row][col_idx] = translation_value
+                            source_dirty = True
+                            source_row_dirty_flags[local_row] = True
+
+                    sanitized_pairs: List[Dict[str, str]] = []
+                    if include_context_columns:
+                        seen_pair_keys: Set[Tuple[str, str]] = set()
+                        for pair in reference_pairs_list or []:
+                            if not isinstance(pair, dict):
+                                continue
+                            source_sentence = pair.get("source_sentence")
+                            target_sentence = pair.get("target_sentence")
+                            if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
+                                continue
+                            source_clean = source_sentence.strip()
+                            target_clean = target_sentence.strip()
+                            if not source_clean or not target_clean:
+                                continue
+                            key = (source_clean, target_clean)
+                            if key in seen_pair_keys:
+                                continue
+                            seen_pair_keys.add(key)
+                            sanitized_pairs.append({
+                                "source_sentence": source_clean,
+                                "target_sentence": target_clean,
+                            })
+                        if include_context_columns:
+                            expected_pairs = len(source_references_per_item[item_index]) if item_index < len(source_references_per_item) else 0
+                            actions.log_progress(
+                            f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): {len(sanitized_pairs)} 件 / source_sentences={expected_pairs}"
                         )
-                        context_pairs: List[Dict[str, str]] = []
-                        if include_context_columns:
-                            if reference_pairs_context and item_index < len(reference_pairs_context):
-                                context_pairs = [
-                                    pair for pair in reference_pairs_context[item_index]
-                                    if isinstance(pair, dict)
-                                ]
-                        reference_pairs_list: List[Dict[str, str]] = []
-                        if include_context_columns:
-                            reference_pairs_list = list(context_pairs)
-                            if reference_pairs_output:
-                                merged: List[Dict[str, str]] = []
-                                seen_keys: Set[Tuple[str, str]] = set()
-                                for candidate in reference_pairs_output:
-                                    if not isinstance(candidate, dict):
-                                        continue
-                                    src = candidate.get("source_sentence")
-                                    tgt = candidate.get("target_sentence") or candidate.get("translated") or candidate.get("en")
-                                    if not isinstance(src, str) or not isinstance(tgt, str):
-                                        continue
-                                    key = (src.strip(), tgt.strip())
-                                    if key in seen_keys:
-                                        continue
-                                    seen_keys.add(key)
-                                    merged.append(
-                                        {
-                                            "source_sentence": src.strip(),
-                                            "target_sentence": tgt.strip(),
-                                        }
-                                    )
-                                for ctx_pair in context_pairs:
-                                    src = ctx_pair.get("source_sentence") if isinstance(ctx_pair, dict) else None
-                                    tgt = ctx_pair.get("target_sentence") if isinstance(ctx_pair, dict) else None
-                                    if not isinstance(src, str) or not isinstance(tgt, str):
-                                        continue
-                                    key = (src.strip(), tgt.strip())
-                                    if key in seen_keys:
-                                        continue
-                                    seen_keys.add(key)
-                                    merged.append(
-                                        {
-                                            "source_sentence": src.strip(),
-                                            "target_sentence": tgt.strip(),
-                                        }
-                                    )
-                                reference_pairs_list = merged
-                        existing_output_value = output_matrix[local_row][translation_col_index]
-                        if translation_value != existing_output_value:
-                            output_matrix[local_row][translation_col_index] = translation_value
-                            output_dirty = True
-                            row_dirty_flags[local_row] = True
-                        if include_context_columns:
-                            preview = translation_value_stripped or translation_value
-                            if len(preview) > 120:
-                                preview = preview[:117] + "..."
-                            actions.log_progress(f"翻訳結果プレビュー ({item_index + 1}/{len(current_texts)}): {preview}")
-                        if not writing_to_source_directly and overwrite_source:
-                            existing_source_value = source_matrix[local_row][col_idx]
-                            if translation_value != existing_source_value:
-                                source_matrix[local_row][col_idx] = translation_value
-                                source_dirty = True
-                                source_row_dirty_flags[local_row] = True
-    
-                        sanitized_pairs: List[Dict[str, str]] = []
-                        if include_context_columns:
-                            seen_pair_keys: Set[Tuple[str, str]] = set()
-                            for pair in reference_pairs_list or []:
-                                if not isinstance(pair, dict):
-                                    continue
-                                source_sentence = pair.get("source_sentence")
-                                target_sentence = pair.get("target_sentence")
-                                if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
-                                    continue
-                                source_clean = source_sentence.strip()
-                                target_clean = target_sentence.strip()
-                                if not source_clean or not target_clean:
-                                    continue
-                                key = (source_clean, target_clean)
-                                if key in seen_pair_keys:
-                                    continue
-                                seen_pair_keys.add(key)
-                                sanitized_pairs.append({
-                                    "source_sentence": source_clean,
-                                    "target_sentence": target_clean,
-                                })
-                            if include_context_columns:
-                                expected_pairs = len(source_references_per_item[item_index]) if item_index < len(source_references_per_item) else 0
+                        if sanitized_pairs:
+                            for idx, pair in enumerate(sanitized_pairs, start=1):
                                 actions.log_progress(
-                                    f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): {len(sanitized_pairs)} 件 / source_sentences={expected_pairs}"
+                                    f"参照ペア[{item_index + 1}-{idx}]: {pair['source_sentence']} -> {pair['target_sentence']}"
                                 )
-                                if sanitized_pairs:
-                                    for idx, pair in enumerate(sanitized_pairs, start=1):
-                                        actions.log_progress(
-                                            f"参照ペア[{item_index + 1}-{idx}]: {pair['source_sentence']} -> {pair['target_sentence']}"
-                                        )
-                                else:
-                                    actions.log_progress(
-                                        f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): 0 件 (参照資料に一致する文が見つかりませんでした)"
-                                    )
-    
-                        formatted_pairs: List[str] = []
-                        if include_context_columns:
-                            for pair in sanitized_pairs:
-                                formatted_pairs.append(f"{pair['source_sentence']}\n---\n{pair['target_sentence']}")
-                            if not formatted_pairs:
-                                formatted_pairs = [_NO_QUOTES_PLACEHOLDER]
-    
-                        fallback_reason: Optional[str] = None
-                        if include_context_columns and use_references:
-                            default_explanation = "参照資料の内容を踏まえ、原文の意味と語調を保つように訳語を選定しました。"
-                            if not process_notes_text:
-                                process_notes_text = default_explanation
-                                fallback_reason = "process_notes_jp が欠落していたため既定の説明文を補いました。"
-                            elif not JAPANESE_CHAR_PATTERN.search(process_notes_text):
-                                process_notes_text = default_explanation
-                                fallback_reason = "process_notes_jp に日本語が含まれていなかったため既定の説明文を補いました。"
-                            elif len(process_notes_text) < 20:
-                                process_notes_text = (
-                                    process_notes_text + "。原文の語調と用語整合性を確認して訳語を決定しました。"
-                                ).strip()
-                                if len(process_notes_text) < 20 or not JAPANESE_CHAR_PATTERN.search(process_notes_text):
-                                    process_notes_text = default_explanation
-                                    fallback_reason = "process_notes_jp が短すぎたため既定の説明文を補いました。"
-                                else:
-                                    fallback_reason = "process_notes_jp が短かったため補足説明を追加しました。"
-    
-                            if fallback_reason:
-                                absolute_row = source_start_row + local_row
-                                absolute_col = source_start_col + col_idx
-                                cell_ref = _build_range_reference(
-                                    absolute_row,
-                                    absolute_row,
-                                    absolute_col,
-                                    absolute_col,
-                                )
-                                if target_sheet:
-                                    cell_ref = f"{target_sheet}!{cell_ref}"
-                                explanation_fallback_notes.append(f"{cell_ref}: {fallback_reason}")
-    
-                        if include_context_columns:
-                            if use_references:
-                                if not process_notes_text:
-                                    raise ToolExecutionError("Translation response must include a 'process_notes_jp' string for each item.")
-                                if not JAPANESE_CHAR_PATTERN.search(process_notes_text):
-                                    raise ToolExecutionError("process_notes_jp の記載は必ず日本語で行ってください。")
-                                if len(process_notes_text) < 20:
-                                    raise ToolExecutionError("process_notes_jp には翻訳判断を具体的に説明してください (20文字以上)。")
-                            if pair_start_index is not None:
-                                allowed_pairs = max_reference_pairs_per_item
-                                if allowed_pairs < len(formatted_pairs):
-                                    raise ToolExecutionError(
-                                        f"translation_output_range does not have enough columns to record {len(formatted_pairs)} reference pairs. "
-                                        f"Provide at least {len(formatted_pairs)} pair columns (currently {allowed_pairs})."
-                                    )
-    
-                        if explanation_col_index is not None and include_context_columns:
-                            if output_matrix[local_row][explanation_col_index] != process_notes_text:
-                                output_matrix[local_row][explanation_col_index] = process_notes_text
-                                output_dirty = True
-                                row_dirty_flags[local_row] = True
-                        if include_context_columns and pair_start_index is not None and pair_end_index is not None:
-                            total_pair_slots = pair_end_index - pair_start_index + 1
-                            for offset in range(total_pair_slots):
-                                absolute_col = pair_start_index + offset
-                                desired_value = formatted_pairs[offset] if offset < len(formatted_pairs) else ""
-                                if output_matrix[local_row][absolute_col] != desired_value:
-                                    output_matrix[local_row][absolute_col] = desired_value
-                                    output_dirty = True
-                                    row_dirty_flags[local_row] = True
-    
-                        evidence_record = {
-                            "process_notes": process_notes_text,
-                            "reference_pairs": sanitized_pairs,
-                            "reference_pair_lines": formatted_pairs,
-                        }
-    
-                        if use_references:
-                            if citation_mode in {"paired_columns", "translation_triplets"}:
-                                chunk_cell_evidences[(local_row, col_idx)] = evidence_record
-                            elif citation_mode == "per_cell":
-                                chunk_cell_evidences[(local_row, col_idx)] = evidence_record
-                            elif citation_mode == "single_column":
-                                row_evidence_details.setdefault(local_row, []).append(evidence_record)
-    
-                        pending_cols = pending_columns_by_row.get(local_row)
-                        if pending_cols is not None:
-                            pending_cols.discard(col_idx)
-                            if not pending_cols:
-                                _finalize_row(local_row)
+                        else:
+                            actions.log_progress(
+                                f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): 0 件 (参照資料に一致する文が見つかりませんでした)"
+                            )
 
                         if not include_context_columns:
                             translation_cache[source_text_canonical] = {
@@ -3759,14 +2760,6 @@ def translate_range_contents(
         if include_context_columns and explanation_fallback_notes:
             messages.insert(0, "process_notes_jp が不足していたセルに既定の説明文を補いました: " + " / ".join(explanation_fallback_notes))
 
-        if length_adjustment_failures:
-            bounds_text = _format_ratio_bounds_for_display() or "configured range"
-            failure_summary = "; ".join(length_adjustment_failures[:5])
-            if len(length_adjustment_failures) > 5:
-                failure_summary += "; ..."
-            raise ToolExecutionError(
-                f"Length ratio adjustment failed for {len(length_adjustment_failures)} cell(s) (expected {bounds_text}): {failure_summary}"
-            )
         write_messages: List[str] = []
 
         if range_adjustment_note:
@@ -3779,45 +2772,14 @@ def translate_range_contents(
 
         if include_context_columns and length_metrics:
             total_length_entries = len(length_metrics)
-            if enforce_length_limit:
-                above_entries = [
-                    entry for entry in length_metrics.values() if entry.get("status") == "above"
-                ]
-                below_entries = [
-                    entry for entry in length_metrics.values() if entry.get("status") == "below"
-                ]
-                if above_entries or below_entries:
-                    detail_items = length_limit_messages[:10]
-                    detail_text = "; ".join(detail_items) if detail_items else ""
-                    summary_parts: List[str] = []
-                    if above_entries and effective_length_ratio_limit is not None:
-                        summary_parts.append(
-                            f"上限 {effective_length_ratio_limit:.2f} 超過 {len(above_entries)}/{total_length_entries}件"
-                        )
-                    if below_entries and effective_length_ratio_min is not None:
-                        summary_parts.append(
-                            f"下限 {effective_length_ratio_min:.2f} 未達 {len(below_entries)}/{total_length_entries}件"
-                        )
-                    if not summary_parts:
-                        summary_parts.append(
-                            f"制限範囲外 {len(above_entries) + len(below_entries)}/{total_length_entries}件"
-                        )
-                    message = "文字数倍率チェック: " + " / ".join(summary_parts)
-                    if detail_text:
-                        message += f" 詳細: {detail_text}"
-                    write_messages.append(message)
-                else:
-                    range_text = _format_ratio_bounds_for_display() or "設定範囲"
-                    write_messages.append(f"文字数倍率チェック: 全{total_length_entries}件が{range_text}内でした。")
-            else:
-                sample_entries = sorted(length_metrics.values(), key=lambda entry: entry.get("cell_ref", ""))[:5]
-                preview = [
-                    f"{entry['cell_ref']}: ×{_format_ratio(entry['ratio'])}"
-                    for entry in sample_entries
-                    if entry.get('cell_ref')
-                ]
-                if preview:
-                    write_messages.append("翻訳文字数メトリクス: " + "; ".join(preview))
+            sample_entries = sorted(length_metrics.values(), key=lambda entry: entry.get("cell_ref", ""))[:5]
+            preview = [
+                f"{entry['cell_ref']}: ×{_format_ratio(entry['ratio'])}"
+                for entry in sample_entries
+                if entry.get('cell_ref')
+            ]
+            if preview:
+                write_messages.append("翻訳文字数メトリクス: " + "; ".join(preview))
 
         _ensure_not_stopped()
 
@@ -3858,8 +2820,7 @@ def translate_range_without_references(
 ) -> str:
     """Translate ranges without using external reference material.
 
-    Optionally enforces a UTF-16 ベースの文字数倍率制限を適用できます。
-    Supports defining both upper (length_ratio_limit) and lower (length_ratio_min) bounds."""
+    length_ratio_limit / length_ratio_min は後方互換性のために受け付けますが、現在は無視されます。"""
     if rows_per_batch is not None and rows_per_batch < 1:
         raise ToolExecutionError("rows_per_batch must be at least 1 when provided.")
 
@@ -3915,8 +2876,8 @@ def translate_range_with_references(
         citation_output_range: Optional range for structured citation output.
         overwrite_source: Whether to overwrite the source cells directly.
         stop_event: Optional cancellation event set when the user interrupts execution.
-        length_ratio_limit: Optional upper bound for UTF-16 length ratio enforced in translation-only mode.
-        length_ratio_min: Optional lower bound for UTF-16 length ratio enforced in translation-only mode.
+        length_ratio_limit: Deprecated legacy argument retained for compatibility; the value is ignored.
+        length_ratio_min: Deprecated legacy argument retained for compatibility; the value is ignored.
     """
     normalized_source_refs = source_reference_urls or reference_urls
     if not normalized_source_refs and not target_reference_urls:
