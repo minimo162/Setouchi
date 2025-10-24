@@ -1711,6 +1711,9 @@ def translate_range_contents(
             verification_issue: Optional[str],
             reported_translated_length: Optional[int],
             reported_length_ratio: Optional[float],
+            retry_feedback: Optional[str] = None,
+            latest_length_units: Optional[int] = None,
+            latest_ratio_value: Optional[float] = None,
         ) -> Optional[Dict[str, Any]]:
             if not enforce_length_limit:
                 return None
@@ -1730,6 +1733,8 @@ def translate_range_contents(
 
             instructions: List[str] = []
             instructions.append('長さ再調整タスク: UTF-16 長さ制約に合わせて翻訳を修正してください。')
+            if retry_feedback:
+                instructions.append(f'- 前回応答で検出した問題: {retry_feedback}。必ず修正してください。')
             if violation_kind == 'below':
                 instructions.append('- 現在の翻訳は下限を下回っています。重要な意味を保ちながら自然に情報を補ってください。')
             elif violation_kind == 'above':
@@ -1740,7 +1745,9 @@ def translate_range_contents(
                 )
 
             instructions.append(f'- 原文の UTF-16 長さは {source_units} です。Python の len() と同じ定義で再計測してください。')
-            instructions.append(f'- 現在の翻訳: UTF-16 長さ {current_length_units}、倍率 {current_ratio_value:.2f}。')
+            observed_units = latest_length_units if latest_length_units is not None else current_length_units
+            observed_ratio = latest_ratio_value if latest_ratio_value is not None else current_ratio_value
+            instructions.append(f'- 現在の翻訳: UTF-16 長さ {observed_units}、倍率 {observed_ratio:.4f}。')
 
             target_range_text: Optional[str] = None
             if min_units is not None and max_units is not None:
@@ -1753,10 +1760,10 @@ def translate_range_contents(
                 instructions.append(f'- 目標レンジ: {target_range_text}。')
 
             if violation_kind == 'below' and min_units is not None:
-                deficit = max(min_units - current_length_units, 0)
+                deficit = max(min_units - observed_units, 0)
                 instructions.append(f'- 下限まであと {deficit} です。自然な補足で不足分を埋めてください。')
             elif violation_kind == 'above' and max_units is not None:
-                excess = max(current_length_units - max_units, 0)
+                excess = max(observed_units - max_units, 0)
                 instructions.append(f'- 上限を {excess} 超えています。冗長な語句を整理してください。')
 
             if reported_translated_length is not None:
@@ -3125,6 +3132,7 @@ def translate_range_contents(
                         context_payload = (
                             translation_context[item_index] if item_index < len(translation_context) else {}
                         )
+                        retry_feedback: Optional[str] = None
                         while (violation_kind or verification_issue_message) and retries_used < max_length_retries:
                             retries_used += 1
                             adjusted_payload = _request_length_constrained_translation(
@@ -3138,23 +3146,35 @@ def translate_range_contents(
                                 verification_issue_message,
                                 reported_translated_length,
                                 reported_length_ratio,
+                                retry_feedback=retry_feedback,
+                                latest_length_units=translated_length_units,
+                                latest_ratio_value=ratio_value,
                             )
+                            retry_feedback = None
                             if not adjusted_payload:
-                                actions.log_progress("Length constraint adjustment returned no JSON payload; retrying if attempts remain.")
+                                retry_feedback = "JSON 形式で応答してください。"
+                                verification_issue_message = None
+                                actions.log_progress("Length constraint adjustment failed: no JSON payload returned; requesting another attempt.")
                                 continue
                             if not isinstance(adjusted_payload, dict):
-                                actions.log_progress("Length constraint adjustment response was not a JSON object; retrying if attempts remain.")
+                                retry_feedback = "JSON オブジェクトを返してください。"
+                                verification_issue_message = None
+                                actions.log_progress("Length constraint adjustment failed: response was not a JSON object; requesting another attempt.")
                                 continue
                             candidate_translation = adjusted_payload.get("translated_text")
                             if not isinstance(candidate_translation, str):
-                                actions.log_progress("Length adjustment response missing 'translated_text'; requesting another attempt.")
+                                retry_feedback = "'translated_text' キーに文字列を入れてください。"
+                                verification_issue_message = None
+                                actions.log_progress("Length constraint adjustment failed: 'translated_text' missing or not a string; requesting another attempt.")
                                 continue
                             candidate_value_raw = _maybe_unescape_html_entities(candidate_translation)
                             if not isinstance(candidate_value_raw, str):
                                 candidate_value_raw = str(candidate_value_raw)
                             candidate_value_stripped = candidate_value_raw.strip()
                             if not candidate_value_stripped:
-                                actions.log_progress("再調整された翻訳が空文字だったため、これ以上の再試行を中止します。")
+                                retry_feedback = "translated_text を空にしないでください。"
+                                verification_issue_message = None
+                                actions.log_progress("Length constraint adjustment failed: translated_text was empty; requesting another attempt.")
                                 continue
                             translation_value = candidate_value_raw
                             translation_value_stripped = candidate_value_stripped
