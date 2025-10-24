@@ -80,8 +80,8 @@ class FakeBrowserManager:
                 "translated_length": 6,
                 "length_ratio": 1.2,
                 "length_verification": {
-                    "result": json.dumps({"source_length": 5, "translated_length": 6, "ratio": 1.2}),
-                    "status": "ok",
+                    "result": json.dumps({"source_length": 5, "translated_length": 6, "length_ratio": 1.2}),
+                    "status": "verified",
                 },
             }
         ]
@@ -133,7 +133,7 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn(("Sheet1", "B1"), actions.writes)
         self.assertEqual(actions.writes[("Sheet1", "B1")], [["Test  "]])
-        self.assertEqual(len(browser.prompts), 1)
+        self.assertEqual(len(browser.prompts), 2)
 
     def test_prompt_includes_explicit_json_encoding_guidance(self) -> None:
         actions = FakeActions()
@@ -154,6 +154,113 @@ class TranslationLengthRatioTests(unittest.TestCase):
             any("json.dumps" in prompt and "length_verification.result" in prompt for prompt in browser.prompts),
             "Translation prompt should instruct the model to use json.dumps-style escaping.",
         )
+
+    def test_length_verification_mismatch_triggers_retry(self) -> None:
+        actions = FakeActions()
+        actions._data["Sheet1"]["A1"] = "テスト  "
+        source_units = len(actions._data["Sheet1"]["A1"])
+
+        bad_payload = [
+            {
+                "translated_text": "abcde",
+                "translated_length": 3,  # incorrect metadata
+                "length_ratio": 1.0,
+                "length_verification": {
+                    "result": json.dumps(
+                        {
+                            "source_length": source_units,
+                            "translated_length": 3,
+                            "length_ratio": 1.0,
+                        }
+                    ),
+                    "status": "verified",
+                },
+            }
+        ]
+        good_ratio = 5 / source_units
+        good_payload = [
+            {
+                "translated_text": "abcde",
+                "translated_length": 5,
+                "length_ratio": good_ratio,
+                "length_verification": {
+                    "result": json.dumps(
+                        {
+                            "source_length": source_units,
+                            "translated_length": 5,
+                            "length_ratio": good_ratio,
+                        }
+                    ),
+                    "status": "verified",
+                },
+            }
+        ]
+        browser = FakeBrowserManager(
+            responses=[
+                json.dumps(bad_payload, ensure_ascii=False),
+                json.dumps(good_payload, ensure_ascii=False),
+            ]
+        )
+
+        result = excel_tools.translate_range_without_references(
+            actions=actions,
+            browser_manager=browser,
+            cell_range="Sheet1!A1:A1",
+            sheet_name="Sheet1",
+            translation_output_range="Sheet1!B1:B1",
+            overwrite_source=False,
+            length_ratio_limit=2.5,
+            rows_per_batch=1,
+        )
+
+        self.assertTrue(result)
+        self.assertIn(("Sheet1", "B1"), actions.writes)
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["abcde"]])
+        self.assertEqual(len(browser.prompts), 2, "Mismatch should trigger exactly one retry.")
+        self.assertTrue(
+            any("length_verification" in prompt for prompt in browser.prompts[1:]),
+            "Retry prompt should mention length verification failure.",
+        )
+
+    def test_length_verification_mismatch_raises_after_max_retries(self) -> None:
+        actions = FakeActions()
+        actions._data["Sheet1"]["A1"] = "テスト  "
+        source_units = len(actions._data["Sheet1"]["A1"])
+
+        bad_payload = [
+            {
+                "translated_text": "abcde",
+                "translated_length": 3,
+                "length_ratio": 1.0,
+                "length_verification": {
+                    "result": json.dumps(
+                        {
+                            "source_length": source_units,
+                            "translated_length": 3,
+                            "length_ratio": 1.0,
+                        }
+                    ),
+                    "status": "verified",
+                },
+            }
+        ]
+        responses = [json.dumps(bad_payload, ensure_ascii=False)] * 4
+        browser = FakeBrowserManager(responses=responses)
+
+        with self.assertRaises(excel_tools.ToolExecutionError):
+            excel_tools.translate_range_without_references(
+                actions=actions,
+                browser_manager=browser,
+                cell_range="Sheet1!A1:A1",
+                sheet_name="Sheet1",
+                translation_output_range="Sheet1!B1:B1",
+                overwrite_source=False,
+                length_ratio_limit=2.5,
+                rows_per_batch=1,
+            )
+
+        self.assertNotIn(("Sheet1", "B1"), actions.writes)
+        self.assertEqual(len(browser.prompts), 4, "Should attempt initial call plus three retries.")
 
 if __name__ == "__main__":
     unittest.main()

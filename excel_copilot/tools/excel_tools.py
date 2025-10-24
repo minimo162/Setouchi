@@ -7,7 +7,7 @@ import math
 import os
 import string
 from threading import Event
-from typing import List, Any, Optional, Dict, Tuple, Set
+from typing import List, Any, Optional, Dict, Tuple, Set, Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -1203,7 +1203,7 @@ def translate_range_contents(
         length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
         length_limit_messages: List[str] = []
         length_retry_counts: Dict[Tuple[int, int], int] = {}
-        max_length_retries = 2
+        max_length_retries = 3
         length_adjustment_failures: List[str] = []
 
         def _compute_length_ratio(source_units: int, translated_units: int) -> float:
@@ -1282,6 +1282,127 @@ def translate_range_contents(
                 if not math.isfinite(numeric_value) or numeric_value < 0:
                     return None
                 return numeric_value
+            return None
+
+        def _extract_length_metadata_from_response(
+            payload: Mapping[str, Any],
+            *,
+            cell_reference_for_log: str,
+        ) -> Tuple[Optional[int], Optional[float], Optional[str], Optional[Dict[str, Any]], Optional[int], Optional[str]]:
+            reported_translated_length: Optional[int] = None
+            reported_length_ratio: Optional[float] = None
+            verification_status: Optional[str] = None
+            verification_details: Optional[Dict[str, Any]] = None
+            reported_source_length: Optional[int] = None
+            verification_parse_error: Optional[str] = None
+
+            if isinstance(payload, Mapping):
+                reported_translated_length = _coerce_non_negative_int(payload.get("translated_length"))
+                reported_length_ratio = _coerce_ratio_value(payload.get("length_ratio"))
+
+                length_verification_payload = payload.get("length_verification")
+                if isinstance(length_verification_payload, dict):
+                    status_value = length_verification_payload.get("status")
+                    if isinstance(status_value, str):
+                        verification_status = status_value.strip()
+                    raw_result_payload = length_verification_payload.get("result")
+                    if isinstance(raw_result_payload, str):
+                        try:
+                            parsed_verification = _parse_length_verification_payload(raw_result_payload)
+                        except json.JSONDecodeError as exc:
+                            sanitized_snippet = re.sub(r"\s+", " ", raw_result_payload).strip()
+                            truncated_snippet = (
+                                sanitized_snippet[:180] + "..." if len(sanitized_snippet) > 180 else sanitized_snippet
+                            )
+                            summary_text = truncated_snippet if truncated_snippet else "(空の応答)"
+                            actions.log_progress(
+                                f"長さ検証 JSON の解析に失敗しました ({cell_reference_for_log}): {summary_text}"
+                            )
+                            _diff_debug(
+                                f"length_verification parse failed err={exc} raw={_shorten_debug(raw_result_payload)}"
+                            )
+                            verification_parse_error = "length_verification.result が JSON として無効です。"
+                        else:
+                            candidate = (
+                                parsed_verification[0]
+                                if isinstance(parsed_verification, list) and parsed_verification
+                                else parsed_verification
+                            )
+                            if isinstance(candidate, dict):
+                                verification_details = candidate
+                                reported_source_length = _coerce_non_negative_int(
+                                    candidate.get("source_length") or candidate.get("original_length")
+                                )
+                                if reported_translated_length is None:
+                                    reported_translated_length = _coerce_non_negative_int(
+                                        candidate.get("translated_length") or candidate.get("translation_length")
+                                    )
+                                if reported_length_ratio is None:
+                                    reported_length_ratio = _coerce_ratio_value(
+                                        candidate.get("length_ratio") or candidate.get("ratio")
+                                    )
+                    elif isinstance(raw_result_payload, dict):
+                        verification_details = raw_result_payload
+                    elif isinstance(raw_result_payload, list) and raw_result_payload:
+                        candidate = raw_result_payload[0]
+                        if isinstance(candidate, dict):
+                            verification_details = candidate
+                elif isinstance(length_verification_payload, list) and length_verification_payload:
+                    candidate = length_verification_payload[0]
+                    if isinstance(candidate, dict):
+                        verification_details = candidate
+                elif isinstance(length_verification_payload, Mapping):
+                    verification_details = dict(length_verification_payload)
+            elif isinstance(payload, list) and payload:
+                candidate = payload[0]
+                if isinstance(candidate, Mapping):
+                    return _extract_length_metadata_from_response(
+                        candidate,
+                        cell_reference_for_log=cell_reference_for_log,
+                    )
+
+            return (
+                reported_translated_length,
+                reported_length_ratio,
+                verification_status,
+                verification_details,
+                reported_source_length,
+                verification_parse_error,
+            )
+
+        def _evaluate_length_verification(
+            status_value: Optional[str],
+            details: Optional[Dict[str, Any]],
+            parse_error: Optional[str],
+            source_units: int,
+            translated_units: int,
+            ratio_value: float,
+        ) -> Optional[str]:
+            if parse_error:
+                return parse_error
+            if status_value and status_value.strip().lower() != "verified":
+                return f"length_verification.status が verified ではありません: {status_value}"
+            if details is None:
+                if status_value:
+                    return "length_verification.result の詳細が欠落しています。"
+                return None
+
+            reported_source = _coerce_non_negative_int(details.get("source_length") or details.get("original_length"))
+            reported_translated = _coerce_non_negative_int(
+                details.get("translated_length") or details.get("translation_length")
+            )
+            reported_ratio = _coerce_ratio_value(details.get("length_ratio") or details.get("ratio"))
+
+            mismatches: List[str] = []
+            if reported_source is not None and reported_source != source_units:
+                mismatches.append(f"source_length={reported_source} (actual {source_units})")
+            if reported_translated is not None and reported_translated != translated_units:
+                mismatches.append(f"translated_length={reported_translated} (actual {translated_units})")
+            if reported_ratio is not None and abs(reported_ratio - ratio_value) > 1e-4:
+                mismatches.append(f"length_ratio={reported_ratio:.4f} (actual {ratio_value:.4f})")
+
+            if mismatches:
+                return "length_verification.result の値が実測と一致しません: " + ", ".join(mismatches)
             return None
 
         def _repair_unescaped_length_verification_result(response_text: Any) -> Any:
@@ -1407,92 +1528,107 @@ def translate_range_contents(
             original_text: str,
             supporting_context: Dict[str, Any],
             current_translation: str,
+            current_length_units: int,
+            current_ratio_value: float,
             attempt_index: int,
             violation_kind: Optional[str],
-        ) -> Optional[str]:
+            verification_issue: Optional[str],
+            reported_translated_length: Optional[int],
+            reported_length_ratio: Optional[float],
+        ) -> Optional[Dict[str, Any]]:
             if not enforce_length_limit:
                 return None
+
             source_units = _measure_utf16_length(original_text)
             bounds_display = _format_ratio_bounds_for_display()
-            constraint_directive = ""
-            ratio_check_directive = ""
-            if (
-                effective_length_ratio_min is not None
-                and effective_length_ratio_limit is not None
-            ):
-                constraint_directive = (
-                    f"- 制約: 翻訳文の UTF-16 長さは原文の {effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} 倍に収めてください。"
-                )
-                ratio_check_directive = (
-                    f"- 原文の UTF-16 長さは {source_units} です。Python の len() で長さを測り、倍率が {effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} の範囲内であることを確認してください。"
-                )
-            elif effective_length_ratio_limit is not None:
-                constraint_directive = (
-                    f"- 制約: 翻訳文の UTF-16 長さは原文の {effective_length_ratio_limit:.2f} 倍以内にしてください。"
-                )
-                ratio_check_directive = (
-                    f"- 原文の UTF-16 長さは {source_units} です。Python の len() で長さを測り、倍率が {effective_length_ratio_limit:.2f} 以下であることを確認してください。"
-                )
-            elif effective_length_ratio_min is not None:
-                constraint_directive = (
-                    f"- 制約: 翻訳文の UTF-16 長さは原文の {effective_length_ratio_min:.2f} 倍以上にしてください。"
-                )
-                ratio_check_directive = (
-                    f"- 原文の UTF-16 長さは {source_units} です。Python の len() で長さを測り、倍率が {effective_length_ratio_min:.2f} 以上であることを確認してください。"
-                )
-            if violation_kind == "below":
-                task_description = (
-                    "長さ再調整タスク: 現在の英語訳を伸ばし、UTF-16 長さの基準を満たしてください。"
-                )
-            else:
-                task_description = (
-                    "長さ再調整タスク: 現在の英語訳を短くし、UTF-16 長さの基準を満たしてください。"
-                )
-            instructions = [task_description]
-            if constraint_directive:
-                instructions.append(constraint_directive)
-            if ratio_check_directive:
-                instructions.append(ratio_check_directive)
-            if violation_kind == "below":
+            min_units = (
+                math.ceil(source_units * effective_length_ratio_min)
+                if effective_length_ratio_min is not None
+                else None
+            )
+            max_units = (
+                math.floor(source_units * effective_length_ratio_limit)
+                if effective_length_ratio_limit is not None
+                else None
+            )
+
+            instructions: List[str] = []
+            instructions.append('長さ再調整タスク: UTF-16 長さ制約に合わせて翻訳を修正してください。')
+            if violation_kind == 'below':
+                instructions.append('- 現在の翻訳は下限を下回っています。重要な意味を保ちながら自然に情報を補ってください。')
+            elif violation_kind == 'above':
+                instructions.append('- 現在の翻訳は上限を超過しています。意図を損なわず簡潔にまとめてください。')
+            if verification_issue:
                 instructions.append(
-                    "- 原文の意味を保ちながら簡潔な語句を追加し、長さを増やしてください。"
+                    f'- length_verification の検証が失敗しました: {verification_issue}。翻訳と検証値を一致させてください。'
                 )
-            else:
-                instructions.append(
-                    "- 原文の意味を保ちながら冗長な表現を削り、短く整えてください。"
-                )
-            instructions.extend([
-                "- 原文の意図と重要情報は保持してください。",
-                '- 応答は {"translated_text": "...", "translated_length": number, "length_ratio": number, "length_verification": {"result": "...", "status": "..."}} を 1 要素だけ含む JSON 配列で返してください。',
-                '- "translated_length" と length_verification.result 内の "translated_length" は、translated_text を len() で測った同じ数値を必ず用いてください。',
-                '- "length_ratio" と length_verification.result 内の "length_ratio" も同じ計算値を使い、差異が出ないようにしてください。',
-                '- length_verification.result には json.dumps などでエスケープ済みの JSON 文字列を入れてください。二重引用符は "{\"source_length\": 123, \"translated_length\": 240}" のように必ずエスケープしてください。',
-                '- 応答前に Python の len() と同じ UTF-16 コードユニット長で計測してください。',
-                "",
-                "source_texts(JSON):",
+
+            instructions.append(f'- 原文の UTF-16 長さは {source_units} です。Python の len() と同じ定義で再計測してください。')
+            instructions.append(f'- 現在の翻訳: UTF-16 長さ {current_length_units}、倍率 {current_ratio_value:.2f}。')
+
+            target_range_text: Optional[str] = None
+            if min_units is not None and max_units is not None:
+                target_range_text = f"{min_units}〜{max_units} ({bounds_display})"
+            elif min_units is not None:
+                target_range_text = f"{min_units} 以上"
+            elif max_units is not None:
+                target_range_text = f"{max_units} 以下"
+            if target_range_text:
+                instructions.append(f'- 目標レンジ: {target_range_text}。')
+
+            if violation_kind == 'below' and min_units is not None:
+                deficit = max(min_units - current_length_units, 0)
+                instructions.append(f'- 下限まであと {deficit} です。自然な補足で不足分を埋めてください。')
+            elif violation_kind == 'above' and max_units is not None:
+                excess = max(current_length_units - max_units, 0)
+                instructions.append(f'- 上限を {excess} 超えています。冗長な語句を整理してください。')
+
+            if reported_translated_length is not None:
+                instructions.append(f'- 応答が申告した translated_length: {reported_translated_length}。')
+            if reported_length_ratio is not None:
+                instructions.append(f'- 応答が申告した length_ratio: {reported_length_ratio:.4f}。')
+
+            instructions.extend(
+                [
+                    '- 原文の意図と重要情報は保持してください。',
+                    '- 応答は {"translated_text": "...", "translated_length": number, "length_ratio": number, "length_verification": {"result": "...", "status": "..."}} を 1 要素だけ含む JSON 配列で返してください。',
+                    '- "translated_length" と length_verification.result 内の "translated_length" には translated_text を len() で測った同じ整数を記入してください。',
+                    '- "length_ratio" と length_verification.result 内の "length_ratio" も同じ数値を用い、差異が出ないようにしてください。',
+                    '- length_verification.result には json.dumps 等でエスケープ済みの JSON 文字列を入れ、二重引用符は必ずエスケープしてください (例: "{"source_length": 123, "translated_length": 240}")。',
+                    '- 応答前に Python の len() と同じ UTF-16 コードユニット長で計測してください。',
+                    '',
+                    'source_texts(JSON):',
                     json.dumps([original_text], ensure_ascii=False),
-            ])
-            if supporting_context and any(
-                supporting_context.get(key) for key in ("source_sentences", "reference_pairs")
-            ):
+                ]
+            )
+            if supporting_context and any(supporting_context.get(key) for key in ('source_sentences', 'reference_pairs')):
                 instructions.extend(
                     [
-                        "supporting_data(JSON):",
+                        'supporting_data(JSON):',
                         json.dumps([supporting_context], ensure_ascii=False),
                     ]
                 )
             instructions.extend(
                 [
-                    "current_translation(JSON):",
+                    'current_translation(JSON):',
                     json.dumps([current_translation], ensure_ascii=False),
                 ]
             )
-            retry_prompt = "\n".join(instructions) + "\n"
+            retry_prompt = "".join(instructions) + ""
             _ensure_not_stopped()
-            direction_hint = ("短く" if violation_kind == "above" else "長く" if violation_kind == "below" else "調整後の")
-            target_hint = f"UTF-16 倍率 {bounds_display}" if bounds_display else "UTF-16 倍率"
+
+            if violation_kind == 'above':
+                direction_hint = '短く調整'
+            elif violation_kind == 'below':
+                direction_hint = '長く調整'
+            elif verification_issue:
+                direction_hint = '検証情報を修正'
+            else:
+                direction_hint = '調整後の訳を取得'
+
+            target_hint = f'UTF-16 倍率 {bounds_display}' if bounds_display else 'UTF-16 倍率'
             actions.log_progress(
-                f"長さ倍率の再試行 {attempt_index} 回目: {target_hint} を目指して {direction_hint}訳を依頼します。"
+                f'長さ倍率の再試行 {attempt_index} 回目: {target_hint} を目標に {direction_hint} を依頼します。'
             )
             response = browser_manager.ask(retry_prompt, stop_event=stop_event)
             try:
@@ -1502,24 +1638,16 @@ def translate_range_contents(
             except json.JSONDecodeError:
                 return None
 
-            candidate_value: Optional[str] = None
             if isinstance(parsed_payload, list) and parsed_payload:
                 candidate = parsed_payload[0]
-                if isinstance(candidate, dict):
-                    raw_value = (
-                        candidate.get("translated_text")
-                        or candidate.get("translation")
-                        or candidate.get("text")
-                    )
-                    if isinstance(raw_value, str):
-                        candidate_value = raw_value
-                elif isinstance(candidate, str):
-                    candidate_value = candidate
             elif isinstance(parsed_payload, dict):
-                raw_value = parsed_payload.get("translated_text")
-                if isinstance(raw_value, str):
-                    candidate_value = raw_value
-            return candidate_value
+                candidate = parsed_payload
+            else:
+                return None
+
+            if isinstance(candidate, dict):
+                return candidate
+            return None
         citation_should_include_explanations = writing_to_source_directly and include_context_columns
         out_rows = source_rows
         out_cols = source_cols if writing_to_source_directly else source_cols * translation_block_width
@@ -2693,56 +2821,6 @@ def translate_range_contents(
                                         "target_sentence": target_clean,
                                     })
                                 reference_pairs_output = cleaned_pairs
-                        reported_translated_length = _coerce_non_negative_int(item.get("translated_length"))
-                        reported_length_ratio = _coerce_ratio_value(item.get("length_ratio"))
-                        length_verification_payload = item.get("length_verification")
-                        if isinstance(length_verification_payload, dict):
-                            status_value = length_verification_payload.get("status")
-                            if isinstance(status_value, str):
-                                length_verification_status = status_value.strip()
-                            raw_result_payload = length_verification_payload.get("result")
-                            if isinstance(raw_result_payload, str):
-                                try:
-                                    parsed_verification = _parse_length_verification_payload(raw_result_payload)
-                                except json.JSONDecodeError as exc:
-                                    snippet_source = raw_result_payload
-                                    sanitized_snippet = re.sub(r"\s+", " ", snippet_source).strip()
-                                    truncated_snippet = (
-                                        sanitized_snippet[:180] + "..."
-                                        if len(sanitized_snippet) > 180
-                                        else sanitized_snippet
-                                    )
-                                    summary_text = truncated_snippet if truncated_snippet else "(空の応答)"
-                                    actions.log_progress(f"長さ検証 JSON の解析に失敗しました: {summary_text}")
-                                    _diff_debug(
-                                        f"length_verification parse failed err={exc} raw={_shorten_debug(snippet_source)}"
-                                    )
-                                else:
-                                    candidate = parsed_verification[0] if isinstance(parsed_verification, list) and parsed_verification else parsed_verification
-                                    if isinstance(candidate, dict):
-                                        length_verification_details = candidate
-                            elif isinstance(raw_result_payload, dict):
-                                length_verification_details = raw_result_payload
-                            elif isinstance(raw_result_payload, list) and raw_result_payload:
-                                candidate = raw_result_payload[0]
-                                if isinstance(candidate, dict):
-                                    length_verification_details = candidate
-                        if length_verification_details:
-                            if reported_translated_length is None:
-                                reported_translated_length = _coerce_non_negative_int(
-                                    length_verification_details.get("translated_length")
-                                    or length_verification_details.get("translation_length")
-                                )
-                            if reported_length_ratio is None:
-                                ratio_candidate = (
-                                    length_verification_details.get("length_ratio")
-                                    or length_verification_details.get("ratio")
-                                )
-                                reported_length_ratio = _coerce_ratio_value(ratio_candidate)
-                            reported_source_length = _coerce_non_negative_int(
-                                length_verification_details.get("source_length")
-                                or length_verification_details.get("original_length")
-                            )
                     elif isinstance(item, str):
                         translation_value = item
                     elif isinstance(item, (int, float)):
@@ -2761,6 +2839,11 @@ def translate_range_contents(
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
                     translation_value = translation_value_raw
 
+                    if isinstance(item, dict):
+                        current_response_payload: Dict[str, Any] = dict(item)
+                    else:
+                        current_response_payload = {'translated_text': translation_value}
+
                     translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
                     cell_ref_for_metrics = _cell_reference(
                         output_start_row,
@@ -2769,11 +2852,57 @@ def translate_range_contents(
                         translation_col_index_seed,
                     )
 
+                    (
+                        reported_translated_length,
+                        reported_length_ratio,
+                        length_verification_status,
+                        length_verification_details,
+                        reported_source_length,
+                        verification_parse_error,
+                    ) = _extract_length_metadata_from_response(
+                        current_response_payload,
+                        cell_reference_for_log=cell_ref_for_metrics,
+                    )
+
                     source_text_canonical = current_texts[item_index]
                     source_cell_value = source_text_canonical
                     source_length_units = _measure_utf16_length(source_cell_value)
                     translated_length_units = _measure_utf16_length(translation_value)
                     ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+
+                    verification_messages: List[str] = []
+                    verification_issue_message = None
+                    evaluation_issue = _evaluate_length_verification(
+                        length_verification_status,
+                        length_verification_details,
+                        verification_parse_error,
+                        source_length_units,
+                        translated_length_units,
+                        ratio_value,
+                    )
+                    if evaluation_issue:
+                        verification_messages.append(evaluation_issue)
+                    if reported_source_length is not None and reported_source_length != source_length_units:
+                        verification_messages.append(
+                            f"source_length が実測値と一致しません (reported {reported_source_length}, actual {source_length_units})"
+                        )
+                    if (
+                        reported_translated_length is not None
+                        and reported_translated_length != translated_length_units
+                    ):
+                        verification_messages.append(
+                            f"translated_length が実測値と一致しません (reported {reported_translated_length}, actual {translated_length_units})"
+                        )
+                    if (
+                        reported_length_ratio is not None
+                        and abs(reported_length_ratio - ratio_value) > 1e-4
+                    ):
+                        verification_messages.append(
+                            f"length_ratio が実測値と一致しません (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
+                        )
+                    if verification_messages:
+                        verification_issue_message = " / ".join(verification_messages)
+
                     reported_length_delta: Optional[float] = None
                     reported_ratio_delta: Optional[float] = None
                     if reported_translated_length is not None:
@@ -2797,34 +2926,111 @@ def translate_range_contents(
                         context_payload = (
                             translation_context[item_index] if item_index < len(translation_context) else {}
                         )
-                        while violation_kind and retries_used < max_length_retries:
+                        while (violation_kind or verification_issue_message) and retries_used < max_length_retries:
                             retries_used += 1
-                            adjusted = _request_length_constrained_translation(
+                            adjusted_payload = _request_length_constrained_translation(
                                 source_cell_value,
                                 context_payload,
                                 translation_value,
+                                translated_length_units,
+                                ratio_value,
                                 retries_used,
                                 violation_kind,
+                                verification_issue_message,
+                                reported_translated_length,
+                                reported_length_ratio,
                             )
-                            if not adjusted:
-                                actions.log_progress("Length ratio adjustment failed; stopping further retries for this cell.")
+                            if not adjusted_payload or not isinstance(adjusted_payload, dict):
+                                actions.log_progress("Length constraint adjustment failed; stopping further retries for this cell.")
                                 break
-                            adjusted = adjusted.strip()
-                            if not adjusted:
+                            candidate_translation = adjusted_payload.get("translated_text")
+                            if not isinstance(candidate_translation, str):
+                                actions.log_progress("Length adjustment response missing 'translated_text'; stopping retries for this cell.")
+                                break
+                            candidate_value_raw = _maybe_unescape_html_entities(candidate_translation)
+                            if not isinstance(candidate_value_raw, str):
+                                candidate_value_raw = str(candidate_value_raw)
+                            candidate_value_stripped = candidate_value_raw.strip()
+                            if not candidate_value_stripped:
                                 actions.log_progress("再調整された翻訳が空文字だったため、これ以上の再試行を中止します。")
                                 break
-                            translation_value = adjusted
+                            translation_value = candidate_value_raw
+                            translation_value_stripped = candidate_value_stripped
+                            current_response_payload = adjusted_payload
+
                             translated_length_units = _measure_utf16_length(translation_value)
                             ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+
+                            (
+                                reported_translated_length,
+                                reported_length_ratio,
+                                length_verification_status,
+                                length_verification_details,
+                                reported_source_length,
+                                verification_parse_error,
+                            ) = _extract_length_metadata_from_response(
+                                current_response_payload,
+                                cell_reference_for_log=cell_ref_for_metrics,
+                            )
+
+                            verification_messages = []
+                            evaluation_issue = _evaluate_length_verification(
+                                length_verification_status,
+                                length_verification_details,
+                                verification_parse_error,
+                                source_length_units,
+                                translated_length_units,
+                                ratio_value,
+                            )
+                            if evaluation_issue:
+                                verification_messages.append(evaluation_issue)
+                            if (
+                                reported_source_length is not None
+                                and reported_source_length != source_length_units
+                            ):
+                                verification_messages.append(
+                                    f"source_length が実測値と一致しません (reported {reported_source_length}, actual {source_length_units})"
+                                )
+                            if (
+                                reported_translated_length is not None
+                                and reported_translated_length != translated_length_units
+                            ):
+                                verification_messages.append(
+                                    f"translated_length が実測値と一致しません (reported {reported_translated_length}, actual {translated_length_units})"
+                                )
+                            if (
+                                reported_length_ratio is not None
+                                and abs(reported_length_ratio - ratio_value) > 1e-4
+                            ):
+                                verification_messages.append(
+                                    f"length_ratio が実測値と一致しません (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
+                                )
+                            verification_issue_message = (
+                                " / ".join(verification_messages) if verification_messages else None
+                            )
+
                             violation_kind = _ratio_violation_kind(ratio_value)
+
                         length_retry_counts[(local_row, col_idx)] = retries_used
                         if violation_kind:
                             length_status = "above" if violation_kind == "above" else "below"
+                        elif verification_issue_message:
+                            length_status = "verification_error"
                         else:
                             length_status = "ok"
                     else:
                         length_retry_counts[(local_row, col_idx)] = 0
 
+                    reported_length_delta = (
+                        reported_translated_length - translated_length_units
+                        if reported_translated_length is not None
+                        else None
+                    )
+                    reported_ratio_delta = (
+                        reported_length_ratio - ratio_value
+                        if reported_length_ratio is not None
+                        else None
+                    )
                     if not translation_value:
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
@@ -2862,23 +3068,39 @@ def translate_range_contents(
                         metric_entry["reported_length_delta"] = reported_length_delta
                     if reported_ratio_delta is not None:
                         metric_entry["reported_ratio_delta"] = reported_ratio_delta
+                    if verification_issue_message:
+                        metric_entry["verification_issue"] = verification_issue_message
                     length_metrics[(local_row, col_idx)] = metric_entry
-                    if enforce_length_limit and length_status in {"above", "below"}:
-                        limit_message = f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} (倍率 {_format_ratio(ratio_value)})"
-                        if reported_length_ratio is not None:
-                            limit_message += f" | AI申告 {_format_ratio(reported_length_ratio)}"
-                        if length_status == "above" and effective_length_ratio_limit is not None:
-                            limit_message += f" | 上限 {effective_length_ratio_limit:.2f}"
-                        if length_status == "below" and effective_length_ratio_min is not None:
-                            limit_message += f" | 下限 {effective_length_ratio_min:.2f}"
-                        length_limit_messages.append(limit_message)
-                    skip_writing_due_to_length = enforce_length_limit and length_status in {"above", "below"}
+                    if enforce_length_limit:
+                        if length_status in {"above", "below"}:
+                            limit_message = f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} (倍率 {_format_ratio(ratio_value)})"
+                            if reported_length_ratio is not None:
+                                limit_message += f" | AI申告 {_format_ratio(reported_length_ratio)}"
+                            if length_status == "above" and effective_length_ratio_limit is not None:
+                                limit_message += f" | 上限 {effective_length_ratio_limit:.2f}"
+                            if length_status == "below" and effective_length_ratio_min is not None:
+                                limit_message += f" | 下限 {effective_length_ratio_min:.2f}"
+                            length_limit_messages.append(limit_message)
+                        elif verification_issue_message:
+                            length_limit_messages.append(
+                                f"{cell_ref_for_metrics}: length verification failed ({verification_issue_message})."
+                            )
+                    skip_writing_due_to_length = enforce_length_limit and (
+                        length_status in {"above", "below"} or bool(verification_issue_message)
+                    )
+                    any_translation = True
                     if skip_writing_due_to_length:
-                        bound_note = "above limit" if length_status == "above" else "below minimum"
-                        ratio_summary = _format_ratio(ratio_value)
-                        length_adjustment_failures.append(
-                            f"{cell_ref_for_metrics}: length ratio {ratio_summary} remains {bound_note} after retries."
-                        )
+                        if length_status in {"above", "below"}:
+                            bound_note = "above limit" if length_status == "above" else "below minimum"
+                            ratio_summary = _format_ratio(ratio_value)
+                            length_adjustment_failures.append(
+                                f"{cell_ref_for_metrics}: length ratio {ratio_summary} remains {bound_note} after retries."
+                            )
+                        else:
+                            failure_note = verification_issue_message or "length verification mismatch"
+                            length_adjustment_failures.append(
+                                f"{cell_ref_for_metrics}: {failure_note} after retries."
+                            )
                         pending_cols = pending_columns_by_row.get(local_row)
                         if pending_cols is not None:
                             pending_cols.discard(col_idx)
@@ -2969,8 +3191,6 @@ def translate_range_contents(
                                 source_matrix[local_row][col_idx] = translation_value
                                 source_dirty = True
                                 source_row_dirty_flags[local_row] = True
-    
-                        any_translation = True
     
                         sanitized_pairs: List[Dict[str, str]] = []
                         if include_context_columns:
