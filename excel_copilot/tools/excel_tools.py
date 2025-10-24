@@ -1421,32 +1421,32 @@ def translate_range_contents(
                 and effective_length_ratio_limit is not None
             ):
                 constraint_directive = (
-                    f"- Constraint: translated UTF-16 length must stay within {effective_length_ratio_min:.2f}-{effective_length_ratio_limit:.2f}x of the source."
+                    f"- 制約: 翻訳文の UTF-16 長さは原文の {effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} 倍に収めてください。"
                 )
                 ratio_check_directive = (
-                    f"- The source UTF-16 length is {source_units}. Measure translations with len() and keep the ratio within {effective_length_ratio_min:.2f}-{effective_length_ratio_limit:.2f}."
+                    f"- 原文の UTF-16 長さは {source_units} です。Python の len() で長さを測り、倍率が {effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} の範囲内であることを確認してください。"
                 )
             elif effective_length_ratio_limit is not None:
                 constraint_directive = (
-                    f"- Constraint: translated UTF-16 length must be at most {effective_length_ratio_limit:.2f}x the source."
+                    f"- 制約: 翻訳文の UTF-16 長さは原文の {effective_length_ratio_limit:.2f} 倍以内にしてください。"
                 )
                 ratio_check_directive = (
-                    f"- The source UTF-16 length is {source_units}. Measure translations with len() and keep the ratio at or below {effective_length_ratio_limit:.2f}."
+                    f"- 原文の UTF-16 長さは {source_units} です。Python の len() で長さを測り、倍率が {effective_length_ratio_limit:.2f} 以下であることを確認してください。"
                 )
             elif effective_length_ratio_min is not None:
                 constraint_directive = (
-                    f"- Constraint: translated UTF-16 length must be at least {effective_length_ratio_min:.2f}x the source."
+                    f"- 制約: 翻訳文の UTF-16 長さは原文の {effective_length_ratio_min:.2f} 倍以上にしてください。"
                 )
                 ratio_check_directive = (
-                    f"- The source UTF-16 length is {source_units}. Measure translations with len() and keep the ratio at or above {effective_length_ratio_min:.2f}."
+                    f"- 原文の UTF-16 長さは {source_units} です。Python の len() で長さを測り、倍率が {effective_length_ratio_min:.2f} 以上であることを確認してください。"
                 )
             if violation_kind == "below":
                 task_description = (
-                    "Length adjustment task: extend the current English translation so it satisfies the UTF-16 length guideline."
+                    "長さ再調整タスク: 現在の英語訳を伸ばし、UTF-16 長さの基準を満たしてください。"
                 )
             else:
                 task_description = (
-                    "Length adjustment task: shorten the current English translation so it satisfies the UTF-16 length guideline."
+                    "長さ再調整タスク: 現在の英語訳を短くし、UTF-16 長さの基準を満たしてください。"
                 )
             instructions = [task_description]
             if constraint_directive:
@@ -1455,17 +1455,17 @@ def translate_range_contents(
                 instructions.append(ratio_check_directive)
             if violation_kind == "below":
                 instructions.append(
-                    "- Add concise wording that preserves the original meaning while increasing the length."
+                    "- 原文の意味を保ちながら簡潔な語句を追加し、長さを増やしてください。"
                 )
             else:
                 instructions.append(
-                    "- Remove redundant wording and choose concise phrasing so the translation becomes shorter."
+                    "- 原文の意味を保ちながら冗長な表現を削り、短く整えてください。"
                 )
             instructions.extend([
-                "- Preserve the source intent and critical information.",
-                "- Return a JSON array with one object: {\"translated_text\": \"...\", \"translated_length\": number, \"length_ratio\": number, \"length_verification\": {\"result\": \"...\", \"status\": \"...\"}}.",
-                "- Provide a string produced by JSON encoding (for example, json.dumps) inside length_verification.result. Every double quote must be escaped, e.g. \"{\\\"source_length\\\": 123, \\\"translated_length\\\": 240}\".",
-                "- Measure lengths with Python len() semantics on UTF-16 code units before replying.",
+                "- 原文の意図と重要情報は保持してください。",
+                "- 応答は {\"translated_text\": \"...\", \"translated_length\": number, \"length_ratio\": number, \"length_verification\": {\"result\": \"...\", \"status\": \"...\"}} を 1 要素だけ含む JSON 配列で返してください。",
+                "- length_verification.result には json.dumps などでエスケープ済みの JSON 文字列を入れてください。二重引用符は \"{\\\"source_length\\\": 123, \\\"translated_length\\\": 240}\" のように必ずエスケープしてください。",
+                "- 応答前に Python の len() と同じ UTF-16 コードユニット長で計測してください。",
                 "",
                 "source_texts(JSON):",
                     json.dumps([original_text], ensure_ascii=False),
@@ -1487,10 +1487,10 @@ def translate_range_contents(
             )
             retry_prompt = "\n".join(instructions) + "\n"
             _ensure_not_stopped()
-            direction_hint = ("shorter" if violation_kind == "above" else "longer" if violation_kind == "below" else "balanced")
-            target_hint = f"UTF-16 ratio {bounds_display}" if bounds_display else "UTF-16 ratio"
+            direction_hint = ("短く" if violation_kind == "above" else "長く" if violation_kind == "below" else "調整後の")
+            target_hint = f"UTF-16 倍率 {bounds_display}" if bounds_display else "UTF-16 倍率"
             actions.log_progress(
-                f"Length ratio retry {attempt_index}: requesting a {direction_hint} translation toward {target_hint}."
+                f"長さ倍率の再試行 {attempt_index} 回目: {target_hint} を目指して {direction_hint}訳を依頼します。"
             )
             response = browser_manager.ask(retry_prompt, stop_event=stop_event)
             try:
