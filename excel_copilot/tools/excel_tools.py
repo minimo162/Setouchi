@@ -1285,6 +1285,12 @@ def translate_range_contents(
                     f"length_ratio ???????l???v??????? (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
                 )
 
+            if (
+                length_verification_status
+                and length_verification_status.strip().lower() != "verified"
+            ):
+                verification_messages.append("length_verification.status �� verified �ł͂���܂���: {length_verification_status}")
+
             status_issue = bool(
                 length_verification_status
                 and length_verification_status.strip().lower() != "verified"
@@ -1329,7 +1335,7 @@ def translate_range_contents(
             source_units: int,
             translated_units: int,
             ratio_value: float,
-        ) -> Optional[Dict[str, Any]]:
+        ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
             if not isinstance(response_payload, dict):
                 return None
 
@@ -1543,13 +1549,18 @@ def translate_range_contents(
                 return "length_verification.result の値が実測と一致しません: " + ", ".join(mismatches)
             return None
 
-        def _repair_unescaped_length_verification_result(response_text: Any) -> Any:
-            if not isinstance(response_text, str) or '"length_verification"' not in response_text:
-                return response_text
+        def _repair_unescaped_length_verification_result(response_text: Any) -> Tuple[Any, Optional[str]]:
+            if not isinstance(response_text, str):
+                return response_text, "non_string"
+            if '"length_verification"' not in response_text:
+                return response_text, "no_length_verification_section"
 
             cursor = 0
             text = response_text
             marker_token = '"length_verification"'
+            attempted_repair = False
+            repair_applied = False
+            repair_failed = False
 
             while cursor < len(text):
                 marker_index = text.find(marker_token, cursor)
@@ -1599,12 +1610,14 @@ def translate_range_contents(
                     continue
 
                 inner_payload = text[inner_start_index : closing_brace_index + 1]
+                attempted_repair = True
                 try:
                     parsed_payload = json.loads(inner_payload)
                 except json.JSONDecodeError:
                     try:
                         parsed_payload = ast.literal_eval(inner_payload)
                     except (ValueError, SyntaxError):
+                        repair_failed = True
                         cursor = closing_brace_index + 1
                         continue
                 if not isinstance(parsed_payload, (dict, list)):
@@ -1617,9 +1630,17 @@ def translate_range_contents(
                     + safe_payload
                     + text[closing_quote_index + 1 :]
                 )
+                if safe_payload != inner_payload:
+                    repair_applied = True
                 cursor = value_quote_index + len(safe_payload)
 
-            return text
+            if repair_applied:
+                return text, "repaired"
+            if repair_failed:
+                return text, "repair_failed"
+            if attempted_repair:
+                return text, "repair_not_needed"
+            return text, "no_length_verification_section"
 
         def _strip_json_code_fences(text: str) -> str:
             if not isinstance(text, str):
@@ -1635,29 +1656,40 @@ def translate_range_contents(
                 content = content[:-3].rstrip()
             return content
 
-        def _extract_first_json_payload(response_text: Any) -> Optional[Any]:
+        def _extract_first_json_payload(response_text: Any) -> Tuple[Optional[Any], Optional[str]]:
             if not isinstance(response_text, str):
-                return None
+                return None, "non_string"
             cleaned = _strip_json_code_fences(response_text)
             decoder = json.JSONDecoder()
             index = 0
             length = len(cleaned)
+            found_candidate = False
+            decode_error_occurred = False
             while index < length:
                 char = cleaned[index]
                 if char in ("{", "["):
+                    found_candidate = True
                     try:
                         payload, end_index = decoder.raw_decode(cleaned, index)
                     except json.JSONDecodeError:
+                        decode_error_occurred = True
                         index += 1
                         continue
                     else:
                         remaining = cleaned[end_index:].lstrip()
                         if remaining.startswith(("```", "{", "[")):
-                            # 余分な JSON 断片が続く場合でも最初のものだけ返す
+                            # 長い JSON 断片が続く場合は先頭のものを返す
                             pass
-                        return payload
+                        return payload, None
                 index += 1
-            return None
+            stripped = cleaned.strip()
+            if not stripped:
+                return None, "empty_response"
+            if not found_candidate:
+                return None, "no_json_marker"
+            if decode_error_occurred:
+                return None, "json_decode_failed"
+            return None, "no_json_found"
 
         def _parse_length_verification_payload(result: Any) -> Optional[Dict[str, Any]]:
             if isinstance(result, dict):
@@ -1714,9 +1746,9 @@ def translate_range_contents(
             retry_feedback: Optional[str] = None,
             latest_length_units: Optional[int] = None,
             latest_ratio_value: Optional[float] = None,
-        ) -> Optional[Dict[str, Any]]:
+        ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
             if not enforce_length_limit:
-                return None
+                return None, None
 
             source_units = _measure_utf16_length(original_text)
             bounds_display = _format_ratio_bounds_for_display()
@@ -1774,12 +1806,12 @@ def translate_range_contents(
             instructions.extend(
                 [
                     '- JSON only output. Do not include commentary, preambles, or code fences.',
-                    '- 原文の意図と重要情報は保持してください。',
+                    '- 余分な説明やコメント、追加のテキストを含めないでください。',
                     '- 応答は {"translated_text": "...", "translated_length": number, "length_ratio": number, "length_verification": {"result": "...", "status": "..."}} を 1 要素だけ含む JSON 配列で返してください。',
                     '- "translated_length" と length_verification.result 内の "translated_length" には translated_text を len() で測った同じ整数を記入してください。',
                     '- "length_ratio" と length_verification.result 内の "length_ratio" も同じ数値を用い、差異が出ないようにしてください。',
-                    '- length_verification.result には json.dumps 等でエスケープ済みの JSON 文字列を入れ、二重引用符は必ずエスケープしてください (例: "{"source_length": 123, "translated_length": 240}")。',
-                    '- 応答前に Python の len() と同じ UTF-16 コードユニット長で計測してください。',
+                    '- length_verification.result には json.dumps などで得られるエスケープ済み JSON 文字列を入れてください (例: "{"source_length": 123, "translated_length": 240}")。',
+                    '- 応答前に Python の len() と同じ UTF-16 コードユニット長で再計測してください。',
                     '',
                     'source_texts(JSON):',
                     json.dumps([original_text], ensure_ascii=False),
@@ -1798,45 +1830,63 @@ def translate_range_contents(
                     json.dumps([current_translation], ensure_ascii=False),
                 ]
             )
-            retry_prompt = "".join(instructions) + ""
+            retry_prompt = "".join(instructions)
             _ensure_not_stopped()
 
             if violation_kind == 'above':
-                direction_hint = '短く調整'
+                direction_hint = '長さ短縮'
             elif violation_kind == 'below':
-                direction_hint = '長く調整'
+                direction_hint = '長さ増加'
             elif verification_issue:
-                direction_hint = '検証情報を修正'
+                direction_hint = '検証値修正'
             else:
-                direction_hint = '調整後の訳を取得'
+                direction_hint = '翻訳調整'
 
-            target_hint = f'UTF-16 倍率 {bounds_display}' if bounds_display else 'UTF-16 倍率'
+            target_hint = f'UTF-16 長さ {bounds_display}' if bounds_display else 'UTF-16 長さ'
             actions.log_progress(
-                f'長さ倍率の再試行 {attempt_index} 回目: {target_hint} を目標に {direction_hint} を依頼します。'
+                f'長さ再調整の再試行 {attempt_index} 回目: {target_hint} の範囲に {direction_hint} を促しています。'
             )
+
+            def _map_json_error_to_feedback(parse_error: Optional[str], repair_status: Optional[str]) -> Optional[str]:
+                if parse_error in {'non_string', 'empty_response', 'no_json_marker'}:
+                    return 'JSON 形式で応答してください。'
+                if parse_error in {'json_decode_failed', 'no_json_found'}:
+                    return '有効な JSON 配列（または配列内のオブジェクト）を返してください。'
+                if repair_status in {'repaired', 'repair_failed'}:
+                    return 'length_verification.result にはエスケープ済みの JSON 文字列を入れてください。'
+                return None
+
             response = browser_manager.ask(retry_prompt, stop_event=stop_event)
-            parsed_payload = _extract_first_json_payload(
-                _repair_unescaped_length_verification_result(response)
-            ) or _extract_first_json_payload(response)
+            repaired_response, repair_status = _repair_unescaped_length_verification_result(response)
+            parsed_payload, parse_error_code = _extract_first_json_payload(repaired_response)
             if parsed_payload is None:
-                if "応答が完了したと判断しました" in response:
+                fallback_payload, fallback_error_code = _extract_first_json_payload(response)
+                parse_error_code = parse_error_code or fallback_error_code
+                parsed_payload = fallback_payload
+            feedback_hint = _map_json_error_to_feedback(parse_error_code, repair_status)
+
+            if parsed_payload is None:
+                if isinstance(response, str) and '応答が完了したと判断しました' in response:
                     actions.log_progress("Length adjustment response ended with '応答が完了したと判断しました'; requesting another attempt.")
                 else:
                     actions.log_progress(
-                        f"Length adjustment response was not valid JSON: {_shorten_debug(response)}"
+                        f"Length adjustment response was not valid JSON: {_shorten_debug(str(response))}"
                     )
-                return None
+                return None, feedback_hint or 'JSON 形式で応答してください。'
 
             if isinstance(parsed_payload, list) and parsed_payload:
                 candidate = parsed_payload[0]
             elif isinstance(parsed_payload, dict):
                 candidate = parsed_payload
             else:
-                return None
+                actions.log_progress('Length constraint adjustment response was not a JSON object; requesting another attempt.')
+                return None, feedback_hint or 'JSON オブジェクトを返してください。'
 
             if isinstance(candidate, dict):
-                return candidate
-            return None
+                return candidate, feedback_hint
+            actions.log_progress('Length constraint adjustment response did not contain an object payload; requesting another attempt.')
+            return None, feedback_hint or 'JSON オブジェクトを返してください。'
+
         citation_should_include_explanations = writing_to_source_directly and include_context_columns
         out_rows = source_rows
         out_cols = source_cols if writing_to_source_directly else source_cols * translation_block_width
@@ -2909,9 +2959,13 @@ def translate_range_contents(
                 _ensure_not_stopped()
                 response = browser_manager.ask(final_prompt, stop_event=stop_event)
 
-                parsed_payload = _extract_first_json_payload(
-                    _repair_unescaped_length_verification_result(response)
-                ) or _extract_first_json_payload(response)
+                repaired_response, repair_status = _repair_unescaped_length_verification_result(response)
+                parsed_payload, parse_error_code = _extract_first_json_payload(repaired_response)
+                if parsed_payload is None:
+                    fallback_payload, fallback_error_code = _extract_first_json_payload(response)
+                    parse_error_code = parse_error_code or fallback_error_code
+                    parsed_payload = fallback_payload
+
                 if parsed_payload is None:
                     fallback_prompt_parts = [
                         prompt_preamble,
@@ -2926,12 +2980,16 @@ def translate_range_contents(
                     final_prompt = "\n".join(fallback_prompt_parts) + "\n"
                     _ensure_not_stopped()
                     response = browser_manager.ask(final_prompt, stop_event=stop_event)
-                    parsed_payload = _extract_first_json_payload(
-                        _repair_unescaped_length_verification_result(response)
-                    ) or _extract_first_json_payload(response)
+                    repaired_response, repair_status = _repair_unescaped_length_verification_result(response)
+                    parsed_payload, parse_error_code = _extract_first_json_payload(repaired_response)
                     if parsed_payload is None:
+                        fallback_payload, fallback_error_code = _extract_first_json_payload(response)
+                        parse_error_code = parse_error_code or fallback_error_code
+                        parsed_payload = fallback_payload
+                    if parsed_payload is None:
+                        error_label = parse_error_code or repair_status or "unknown"
                         raise ToolExecutionError(
-                            f"Failed to parse translation response as JSON: {response}"
+                            f"Failed to parse translation response as JSON ({error_label}): {response}"
                         )
 
                 if not isinstance(parsed_payload, list) or len(parsed_payload) != len(current_texts):
@@ -3135,7 +3193,7 @@ def translate_range_contents(
                         retry_feedback: Optional[str] = None
                         while (violation_kind or verification_issue_message) and retries_used < max_length_retries:
                             retries_used += 1
-                            adjusted_payload = _request_length_constrained_translation(
+                            adjusted_payload, feedback_hint = _request_length_constrained_translation(
                                 source_cell_value,
                                 context_payload,
                                 translation_value,
@@ -3150,11 +3208,9 @@ def translate_range_contents(
                                 latest_length_units=translated_length_units,
                                 latest_ratio_value=ratio_value,
                             )
-                            retry_feedback = None
+                            retry_feedback = feedback_hint
                             if not adjusted_payload:
-                                retry_feedback = "JSON 形式で応答してください。"
                                 verification_issue_message = None
-                                actions.log_progress("Length constraint adjustment failed: no JSON payload returned; requesting another attempt.")
                                 continue
                             if not isinstance(adjusted_payload, dict):
                                 retry_feedback = "JSON オブジェクトを返してください。"
@@ -3182,6 +3238,7 @@ def translate_range_contents(
 
                             translated_length_units = _measure_utf16_length(translation_value)
                             ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                            violation_kind = _ratio_violation_kind(ratio_value)
 
                             (
                                 reported_translated_length,
@@ -3248,9 +3305,6 @@ def translate_range_contents(
                                         actions.log_progress(
                                             f"length_verification metadata still inconsistent for {cell_ref_for_metrics}: {verification_issue_message}"
                                         )
-
-                            violation_kind = _ratio_violation_kind(ratio_value)
-
                         length_retry_counts[(local_row, col_idx)] = retries_used
                         if violation_kind:
                             length_status = "above" if violation_kind == "above" else "below"
