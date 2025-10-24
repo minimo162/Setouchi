@@ -2093,46 +2093,55 @@ def translate_range_contents(
             ]
             prompt_preamble = "".join(prompt_parts)
         else:
+
+            # translation_only 用プロンプト（初回から長さ厳守）
             prompt_lines = [
                 f"以下の日本語テキストを {target_language} に翻訳してください。",
-                "入力列の順序を維持し、すべての文を翻訳してください。",
-                "出力は JSON 配列のみとし、各要素は次のキーを必ず含むオブジェクトにしてください。",
-                '- "translated_text": 翻訳文の文字列です。',
-                '- "length_verification": {"result": "...", "status": "..."} を含めてください。',
-                '- length_verification.result には Python の json.dumps で得られるエスケープ済み JSON 文字列 (例: "{\"source_length\": 67, \"translated_length\": 142}") を入れてください。未エスケープの引用符やバックスラッシュ不足があると応答は無効です。',
-                '- "translated_length": 翻訳文の UTF-16 コードユニット数。Python の len() と同じ定義で整数を返してください。',
-                '- "translated_length" と length_verification.result 内の "translated_length" は、translated_text を len() で測った同じ数値を必ず用いてください。',
-                '- "length_ratio": 原文に対する長さの比率 (translated_length / 原文の UTF-16 コードユニット数)。数値で返してください。',
-                '- "length_ratio" と length_verification.result 内の "length_ratio" は同じ計算値を使い、差異が出ないようにしてください。',
-                "余分な説明やコメント、追加のテキストを含めないでください。",
+                "重要: 再調整は行いません。初回の回答だけで各訳文の長さを指定レンジに必ず収めてください。",
+                "出力は JSON 配列のみ。各要素は次のキーを必ず含めます：",
+                '- "translated_text": 訳文の文字列（空文字列不可）。',
+                '- "translated_length": 訳文の UTF-16 コードユニット数（Python の len() と同じ定義、整数）。',
+                '- "length_ratio": translated_length / 原文の UTF-16 長さ（数値）。',
+                '- "length_verification": {"result": "...", "status": "verified"}。',
+                'length_verification.result には json.dumps によるエスケープ済み JSON 文字列を入れてください（例: "{\"source_length\": 67, \"translated_length\": 142, \"length_ratio\": 2.12}"）。',
+                '注意: "translated_length" と length_verification.result 内の "translated_length" は同一の再計測値を入れ、"length_ratio" も両方で同じ値にしてください。',
+                "禁止: 余分な説明、前置き、マークダウン、コードフェンス、複数の JSON ペイロード。",
             ]
             if enforce_length_limit and (
                 effective_length_ratio_limit is not None or effective_length_ratio_min is not None
             ):
                 prompt_lines.extend([
-                    '原文ごとの UTF-16 コードユニット数は後続の "Source UTF-16 lengths (JSON)" に示します。',
-                    '各訳文について Python の len() を想定した UTF-16 コードユニット数を計測し、その値を "translated_length" に整数で記入してください。',
-                    'length_verification.result 内の "translated_length" も同じ値をそのまま記入し、差異が出ないようにしてください。',
+                    '後続の "Source UTF-16 lengths (JSON)" に各原文の UTF-16 長さ S が与えられます。回答前に各アイテムごとに必ず S を用いて境界を計算し、訳文をその範囲に収めてください。',
                 ])
                 if effective_length_ratio_min is not None and effective_length_ratio_limit is not None:
                     prompt_lines.append(
-                        f'"length_ratio" には translated_length を原文の UTF-16 コードユニット数で割った比率を記入し、{effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} の範囲内であることを出力前に必ず確認してください。'
+                        f'境界: 下限 Lmin = ceil(S × {effective_length_ratio_min:.2f})、上限 Lmax = floor(S × {effective_length_ratio_limit:.2f})。'
+                    )
+                    prompt_lines.append(
+                        '検証: translated_length を自分で再計測し、Lmin ≤ translated_length ≤ Lmax を満たすまで表現を短縮／言い換え／要約／圧縮してから返答してください。'
                     )
                 elif effective_length_ratio_limit is not None:
                     prompt_lines.append(
-                        f'"length_ratio" には translated_length を原文の UTF-16 コードユニット数で割った比率を記入し、{effective_length_ratio_limit:.2f} 以下であることを出力前に必ず確認してください。'
+                        f'境界: 上限 Lmax = floor(S × {effective_length_ratio_limit:.2f})。'
+                    )
+                    prompt_lines.append(
+                        '検証: translated_length ≤ Lmax を満たすまで調整してから返答してください。'
                     )
                 elif effective_length_ratio_min is not None:
                     prompt_lines.append(
-                        f'"length_ratio" には translated_length を原文の UTF-16 コードユニット数で割った比率を記入し、{effective_length_ratio_min:.2f} 以上であることを出力前に必ず確認してください。'
+                        f'境界: 下限 Lmin = ceil(S × {effective_length_ratio_min:.2f})。'
+                    )
+                    prompt_lines.append(
+                        '検証: translated_length ≥ Lmin を満たすまで調整してから返答してください。'
                     )
                 prompt_lines.extend([
-                    'length_verification.result 内の "length_ratio" も同じ計算値を使用し、出力オブジェクト内の "length_ratio" と一致させてください。',
-                    "この翻訳専用モードでは後続の長さ再調整は行われないため、初回出力で必ず長さ制約を満たす翻訳文を返してください。",
-                    "制約から外れそうな場合は回答前に自分で表現を調整し、len() で再計測してから返信してください。",
-                    "意味と重要な情報を保ちながら、冗長な表現を削ったり簡潔な語を選んで長さを制御してください。",
+                    "ヒント（短くする）: 冗長な修飾を削る／同義語で短語を選ぶ／二重表現の除去／受動→能動／定型句の簡略化。",
+                    "ヒント（長くする）: 意味を変えず主語・述語を明確化／略語を展開／必要最小限の接続語を追加。",
+                    "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
+                    "この翻訳専用モードでは後続の長さ再調整は行われないため、初回出力で必ず長さ制約を満たしてください。",
                 ])
             prompt_preamble = "".join(prompt_lines)
+
         if references_requested or use_references:
             rows_per_batch = 1
         batch_size = rows_per_batch if rows_per_batch is not None else 1
