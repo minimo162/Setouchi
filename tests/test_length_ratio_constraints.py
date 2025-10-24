@@ -77,16 +77,9 @@ class FakeBrowserManager:
         payload = [
             {
                 "translated_text": "Test  ",
+                "source_length": 5,
                 "translated_length": 6,
                 "length_ratio": 1.2,
-                "length_verification": {
-                    "result": {
-                        "source_length": 5,
-                        "translated_length": 6,
-                        "length_ratio": 1.2,
-                    },
-                    "status": "verified",
-                },
             }
         ]
         return json.dumps(payload, ensure_ascii=False)
@@ -117,7 +110,7 @@ class TranslationLengthRatioTests(unittest.TestCase):
     def test_unescaped_length_verification_result_is_repaired(self) -> None:
         actions = FakeActions()
         malformed_response = (
-            '[{"translated_text": "Test  ", "translated_length": 6, "length_ratio": 1.2, '
+            '[{"translated_text": "Test  ", "source_length": 5, "translated_length": 6, "length_ratio": 1.2, '
             '"length_verification": {"result": "{"source_length": 5, "translated_length": 6, "length_ratio": 1.2}", '
             '"status": "ok"}}]'
         )
@@ -137,7 +130,7 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn(("Sheet1", "B1"), actions.writes)
         self.assertEqual(actions.writes[("Sheet1", "B1")], [["Test  "]])
-        self.assertEqual(len(browser.prompts), 2)
+        self.assertEqual(len(browser.prompts), 1)
 
     def test_prompt_includes_explicit_json_encoding_guidance(self) -> None:
         actions = FakeActions()
@@ -156,14 +149,15 @@ class TranslationLengthRatioTests(unittest.TestCase):
 
         self.assertTrue(
             any(
-                "length_verification.result" in prompt
-                and '{"source_length": number, "translated_length": number, "length_ratio": number}' in prompt
+                '"source_length"' in prompt
+                and '"translated_length"' in prompt
+                and '"length_ratio"' in prompt
                 for prompt in browser.prompts
             ),
-            "Translation prompt should instruct the model to embed length_verification.result as a JSON オブジェクト.",
+            "Translation prompt should instruct the model to output source_length/translated_length/length_ratio fields.",
         )
 
-    def test_length_verification_metadata_mismatch_is_auto_corrected(self) -> None:
+    def test_length_metadata_mismatch_is_auto_corrected(self) -> None:
         actions = FakeActions()
         actions._data["Sheet1"]["A1"] = "テスト  "
         source_units = len(actions._data["Sheet1"]["A1"])
@@ -171,16 +165,9 @@ class TranslationLengthRatioTests(unittest.TestCase):
         bad_payload = [
             {
                 "translated_text": "abcde",
+                "source_length": source_units,
                 "translated_length": 3,  # incorrect metadata
                 "length_ratio": 1.0,
-                "length_verification": {
-                    "result": {
-                        "source_length": source_units,
-                        "translated_length": 3,
-                        "length_ratio": 1.0,
-                    },
-                    "status": "verified",
-                },
             }
         ]
         browser = FakeBrowserManager(
@@ -221,32 +208,18 @@ class TranslationLengthRatioTests(unittest.TestCase):
         bad_payload = [
             {
                 "translated_text": "abcdefghij",
+                "source_length": source_units,
                 "translated_length": 3,
                 "length_ratio": 1.0,
-                "length_verification": {
-                    "result": {
-                        "source_length": source_units,
-                        "translated_length": 3,
-                        "length_ratio": 1.0,
-                    },
-                    "status": "verified",
-                },
             }
         ]
         good_ratio = 4 / source_units
         good_payload = [
             {
                 "translated_text": "abcd",
+                "source_length": source_units,
                 "translated_length": 4,
                 "length_ratio": good_ratio,
-                "length_verification": {
-                    "result": {
-                        "source_length": source_units,
-                        "translated_length": 4,
-                        "length_ratio": good_ratio,
-                    },
-                    "status": "verified",
-                },
             }
         ]
         browser = FakeBrowserManager(
@@ -272,11 +245,11 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertEqual(actions.writes[("Sheet1", "B1")], [["abcd"]])
         self.assertEqual(len(browser.prompts), 2, "Length ratio violation should trigger exactly one retry.")
         self.assertTrue(
-            any("length_verification" in prompt for prompt in browser.prompts[1:]),
-            "Retry prompt should mention length verification failure.",
+            any("translated_length と length_ratio" in prompt for prompt in browser.prompts[1:]),
+            "Retry prompt should mention length ratio adjustment.",
         )
 
-    def test_length_verification_mismatch_raises_after_max_retries(self) -> None:
+    def test_length_ratio_mismatch_raises_after_max_retries(self) -> None:
         actions = FakeActions()
         actions._data["Sheet1"]["A1"] = "テスト  "
         source_units = len(actions._data["Sheet1"]["A1"])
@@ -284,16 +257,9 @@ class TranslationLengthRatioTests(unittest.TestCase):
         bad_payload = [
             {
                 "translated_text": "abcdefghij",
+                "source_length": source_units,
                 "translated_length": 3,
                 "length_ratio": 1.0,
-                "length_verification": {
-                    "result": {
-                        "source_length": source_units,
-                        "translated_length": 3,
-                        "length_ratio": 1.0,
-                    },
-                    "status": "verified",
-                },
             }
         ]
         responses = [json.dumps(bad_payload, ensure_ascii=False)] * 4

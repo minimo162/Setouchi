@@ -1209,6 +1209,78 @@ def translate_range_contents(
                 return "∞"
             return f"{value:.2f}"
 
+        _METADATA_RATIO_TOLERANCE = 0.01
+
+        def _coerce_int(value: Any) -> Optional[int]:
+            if isinstance(value, bool):
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                if not math.isfinite(value):
+                    return None
+                rounded = int(round(value))
+                if abs(value - rounded) < 1e-6:
+                    return rounded
+                return None
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if not cleaned:
+                    return None
+                try:
+                    if "." in cleaned or "e" in cleaned.lower():
+                        candidate = float(cleaned)
+                        if not math.isfinite(candidate):
+                            return None
+                        rounded = int(round(candidate))
+                        if abs(candidate - rounded) < 1e-6:
+                            return rounded
+                        return None
+                    return int(cleaned)
+                except ValueError:
+                    return None
+            return None
+
+        def _coerce_float(value: Any) -> Optional[float]:
+            if isinstance(value, bool):
+                return None
+            if isinstance(value, (int, float)):
+                if not math.isfinite(float(value)):
+                    return None
+                return float(value)
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if not cleaned:
+                    return None
+                try:
+                    candidate = float(cleaned)
+                except ValueError:
+                    return None
+                if not math.isfinite(candidate):
+                    return None
+                return candidate
+            return None
+
+        def _extract_reported_length_metadata(payload_item: Mapping[str, Any]) -> Tuple[Optional[int], Optional[int], Optional[float]]:
+            reported_source = _coerce_int(payload_item.get("source_length"))
+            reported_translated = _coerce_int(payload_item.get("translated_length"))
+            reported_ratio = _coerce_float(payload_item.get("length_ratio"))
+            if (
+                reported_source is None
+                or reported_translated is None
+                or reported_ratio is None
+            ) and isinstance(payload_item.get("length_verification"), Mapping):
+                verification = payload_item.get("length_verification")
+                result_mapping = verification.get("result") if isinstance(verification.get("result"), Mapping) else None  # type: ignore[assignment]
+                if isinstance(result_mapping, Mapping):
+                    if reported_source is None:
+                        reported_source = _coerce_int(result_mapping.get("source_length"))
+                    if reported_translated is None:
+                        reported_translated = _coerce_int(result_mapping.get("translated_length"))
+                    if reported_ratio is None:
+                        reported_ratio = _coerce_float(result_mapping.get("length_ratio"))
+            return reported_source, reported_translated, reported_ratio
+
 
         def _repair_unescaped_length_verification_result(response_text: Any) -> Tuple[Any, Optional[str]]:
             if not isinstance(response_text, str):
@@ -1572,11 +1644,12 @@ def translate_range_contents(
                 f"自然な {target_language} の文章になるよう文法を整えて構いませんが、原文と参照ペアに含まれない情報や語釈を追加しないでください。\n",
                 "出力は JSON 配列のみです。各要素には次のキーを必ず含めてください。\n",
                 f"- \"translated_text\": {target_language} での翻訳文。\n",
-                "- \"process_notes_jp\": 日本語で数文の翻訳メモ。訳語の根拠や参照ペアの使い方を簡潔に記述してください。\n",
-                '- "length_verification": {"result": "...", "status": "..."} を含めてください。',
-                '- length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} のような JSON オブジェクトを入れてください。',
-                "- \"reference_pairs\": 実際に参考にしたペアの配列。利用しなかった場合は空配列を返してください。\n",
-                "余分なコメントやマークダウンを付けず、純粋な JSON だけを返してください。\n",
+                "- \"source_length\": 原文の UTF-16 コードユニット数（整数）。\n",
+                "- \"translated_length\": 訳文の UTF-16 コードユニット数（整数）。\n",
+                "- \"length_ratio\": translated_length / source_length（数値）。\n",
+                "- \"process_notes_jp\": 日本語で数行の翻訳メモ。訳語の根拠や参照ペアの使い方を簡潔に記述してください。\n",
+                "- \"reference_pairs\": 実際に参照したペアの配列。利用しなかった場合は空配列を返してください。\n",
+                "余計なコメントやマークダウンを付けず、純粋な JSON だけを返してください。\n",
                 "以下に日本語原文の配列、続いて参照ペアの配列を示します。\n",
             ]
             prompt_preamble = "".join(prompt_parts)
@@ -1584,15 +1657,14 @@ def translate_range_contents(
 
             # translation_only 用プロンプト（初回で制約を満たす）
             prompt_lines = [
-                f"以下の日本語テキストを {target_language} に翻訳してください。",
-                "重要: 後続の長さ再調整は行いません。初回の回答で文字数制約を必ず満たしてください。",
-                "出力は JSON 配列のみ。各要素には次のキーを含めてください:",
-                '- "translated_text": 訳文（空文字列不可）。',
-                '- "translated_length": 訳文の UTF-16 コードユニット数（Python の len() と同じ定義、整数）。',
-                '- "length_ratio": translated_length / 原文の UTF-16 長さ（数値）。',
-                '- "length_verification": {"result": {...}, "status": "verified"}。',
-                '- length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} を記入し、訳文の実測値と一致させてください。',
-                "禁止: 余分な説明、前置き、マークダウン、複数の JSON ペイロード。",
+                f"以下の日本語テキストを {target_language} に翻訳してください。\n",
+                "重要: 後続の長さ調整は行いません。1回の回答で文字数制約を必ず満たしてください。\n",
+                "出力は JSON 配列のみ。各要素には次のキーを含めてください:\n",
+                '- "translated_text": 訳文。空文字列は不可。\n',
+                '- "source_length": 原文の UTF-16 コードユニット数（整数）。\n',
+                '- "translated_length": 訳文の UTF-16 コードユニット数（整数）。\n',
+                '- "length_ratio": translated_length / source_length（数値）。\n',
+                "禁止: 余計な説明、前置き、マークダウン、複数の JSON ペイロード。\n",
             ]
             if enforce_length_limit:
                 bounds_text = _format_ratio_bounds_for_display()
@@ -2443,282 +2515,387 @@ def translate_range_contents(
                             empty_indexes.append(idx)
                     return empty_indexes
 
-                parsed_payload = _obtain_translation_payload(extra_notice=None)
-                empty_retry_count = 0
-                max_empty_retries = 2
+
+                length_retry_count = 0
+                extra_ratio_notice: Optional[str] = None
+                max_length_retries = 3
+
                 while True:
-                    empty_indexes = _find_empty_translation_indexes(parsed_payload)
-                    if not empty_indexes:
-                        break
-                    if empty_retry_count >= max_empty_retries:
-                        raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
-                    empty_retry_count += 1
-                    actions.log_progress(
-                        f"翻訳応答に空の translated_text が含まれていたため再リクエストします（再試行 {empty_retry_count}/{max_empty_retries}）。"
-                    )
-                    retry_notice = (
-                        "前回の応答で translated_text が空の項目がありました。すべての translated_text フィールドに非空の翻訳文を必ず返してください。"
-                    )
-                    parsed_payload = _obtain_translation_payload(extra_notice=retry_notice)
+                    parsed_payload = _obtain_translation_payload(extra_ratio_notice)
+                    extra_ratio_notice = None
 
-                for item_index, (item, position_group) in enumerate(zip(parsed_payload, current_position_groups)):
-                    if not position_group:
-                        continue
-                    local_row, col_idx = position_group[0]
-                    translation_value: Optional[str] = None
-                    process_notes_jp = ""
-                    reference_pairs_output: List[Dict[str, str]] = []
-                    if isinstance(item, dict):
-                        translation_value = (
-                            item.get("translated_text")
-                            or item.get("translation")
-                            or item.get("output")
+                    empty_retry_count = 0
+                    while True:
+                        empty_indexes = _find_empty_translation_indexes(parsed_payload)
+                        if not empty_indexes:
+                            break
+                        if empty_retry_count >= max_empty_retries:
+                            raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+                        empty_retry_count += 1
+                        actions.log_progress(
+                            f"翻訳応答に空の translated_text が含まれているため再リクエストします（再試行 {empty_retry_count}/{max_empty_retries}）。"
                         )
-                        if include_context_columns:
-                            evidence_dict = item.get("evidence") if isinstance(item.get("evidence"), dict) else None
-                            raw_process_notes = (
-                                item.get("process_notes_jp")
-                                or item.get("process_notes")
-                                or
-                                item.get("explanation_jp")
-                                or item.get("explanation")
+                        retry_notice = (
+                            "前回の応答で translated_text が空の項目がありました。すべての translated_text フィールドに非空の翻訳文を記入してください。"
+                        )
+                        parsed_payload = _obtain_translation_payload(extra_notice=retry_notice)
+
+                    pending_updates: List[Dict[str, Any]] = []
+                    metadata_corrections: List[str] = []
+                    ratio_violations_local: List[Dict[str, Any]] = []
+
+                    for item_index, (item, position_group) in enumerate(zip(parsed_payload, current_position_groups)):
+                        if not position_group:
+                            continue
+                        local_row, col_idx = position_group[0]
+                        translation_value: Optional[str] = None
+                        process_notes_jp = ""
+                        reference_pairs_output: List[Dict[str, str]] = []
+                        if isinstance(item, dict):
+                            translation_value = (
+                                item.get("translated_text")
+                                or item.get("translation")
+                                or item.get("output")
                             )
-                            if raw_process_notes is None and evidence_dict:
+                            if include_context_columns:
+                                evidence_dict = item.get("evidence") if isinstance(item.get("evidence"), dict) else None
                                 raw_process_notes = (
-                                    evidence_dict.get("process_notes_jp")
-                                    or evidence_dict.get("process_notes")
-                                    or evidence_dict.get("explanation_jp")
-                                    or evidence_dict.get("explanation")
+                                    item.get("process_notes_jp")
+                                    or item.get("process_notes")
+                                    or item.get("explanation_jp")
+                                    or item.get("explanation")
                                 )
-                            if isinstance(raw_process_notes, (str, int, float)):
-                                process_notes_source_value = str(raw_process_notes)
-                                sanitized_process_notes = _sanitize_evidence_value(process_notes_source_value)
-                                if sanitized_process_notes:
-                                    process_notes_jp = sanitized_process_notes
-                                else:
-                                    process_notes_jp = process_notes_source_value.strip()
+                                if raw_process_notes is None and evidence_dict:
+                                    raw_process_notes = (
+                                        evidence_dict.get("process_notes_jp")
+                                        or evidence_dict.get("process_notes")
+                                        or evidence_dict.get("explanation_jp")
+                                        or evidence_dict.get("explanation")
+                                    )
+                                if isinstance(raw_process_notes, (str, int, float)):
+                                    process_notes_source_value = str(raw_process_notes)
+                                    sanitized_process_notes = _sanitize_evidence_value(process_notes_source_value)
+                                    if sanitized_process_notes:
+                                        process_notes_jp = sanitized_process_notes
+                                    else:
+                                        process_notes_jp = process_notes_source_value.strip()
 
-                            raw_pairs_candidate = item.get("reference_pairs") or item.get("pairs")
-                            if raw_pairs_candidate is None and evidence_dict:
-                                raw_pairs_candidate = (
-                                    evidence_dict.get("reference_pairs")
-                                    or evidence_dict.get("pairs")
-                                )
-                            if isinstance(raw_pairs_candidate, list):
-                                cleaned_pairs: List[Dict[str, str]] = []
-                                for pair in raw_pairs_candidate:
-                                    if not isinstance(pair, dict):
-                                        continue
-                                    source_sentence = pair.get("source_sentence") or pair.get("jp") or ""
-                                    target_sentence = pair.get("target_sentence") or pair.get("translated") or pair.get("en") or ""
-                                    if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
-                                        continue
-                                    source_clean = source_sentence.strip()
-                                    target_clean = _strip_reference_urls_from_quote(target_sentence.strip())
-                                    if not source_clean or not target_clean:
-                                        continue
-                                    cleaned_pairs.append({
-                                        "source_sentence": source_clean,
-                                        "target_sentence": target_clean,
-                                    })
-                                reference_pairs_output = cleaned_pairs
-                    elif isinstance(item, str):
-                        translation_value = item
-                    elif isinstance(item, (int, float)):
-                        translation_value = str(item)
+                                raw_pairs_candidate = item.get("reference_pairs") or item.get("pairs")
+                                if raw_pairs_candidate is None and evidence_dict:
+                                    raw_pairs_candidate = (
+                                        evidence_dict.get("reference_pairs")
+                                        or evidence_dict.get("pairs")
+                                    )
+                                if isinstance(raw_pairs_candidate, list):
+                                    cleaned_pairs: List[Dict[str, str]] = []
+                                    for pair in raw_pairs_candidate:
+                                        if not isinstance(pair, dict):
+                                            continue
+                                        source_sentence = pair.get("source_sentence") or pair.get("jp") or ""
+                                        target_sentence = pair.get("target_sentence") or pair.get("translated") or pair.get("en") or ""
+                                        if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
+                                            continue
+                                        source_clean = source_sentence.strip()
+                                        target_clean = _strip_reference_urls_from_quote(target_sentence.strip())
+                                        if not source_clean or not target_clean:
+                                            continue
+                                        cleaned_pairs.append({
+                                            "source_sentence": source_clean,
+                                            "target_sentence": target_clean,
+                                        })
+                                    reference_pairs_output = cleaned_pairs
+                        elif isinstance(item, str):
+                            translation_value = item
+                        elif isinstance(item, (int, float)):
+                            translation_value = str(item)
 
-                    if not isinstance(translation_value, str):
-                        raise ToolExecutionError(
-                            "Translation response must include a 'translated_text' string for each item."
+                        if not isinstance(translation_value, str):
+                            raise ToolExecutionError(
+                                "Translation response must include a 'translated_text' string for each item."
+                            )
+
+                        translation_value_raw = _maybe_unescape_html_entities(translation_value)
+                        if not isinstance(translation_value_raw, str):
+                            translation_value_raw = str(translation_value_raw)
+                        translation_value_stripped = translation_value_raw.strip()
+                        if not translation_value_stripped:
+                            raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+                        translation_value = translation_value_raw
+
+                        translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
+                        cell_ref_for_metrics = _cell_reference(
+                            output_start_row,
+                            output_start_col,
+                            local_row,
+                            translation_col_index_seed,
                         )
+                        source_text_canonical = current_texts[item_index]
+                        source_cell_value = source_text_canonical
+                        source_length_units = _measure_utf16_length(source_cell_value)
+                        translated_length_units = _measure_utf16_length(translation_value)
+                        ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
 
-                    translation_value_raw = _maybe_unescape_html_entities(translation_value)
-                    if not isinstance(translation_value_raw, str):
-                        translation_value_raw = str(translation_value_raw)
-                    translation_value_stripped = translation_value_raw.strip()
-                    if not translation_value_stripped:
-                        raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
-                    translation_value = translation_value_raw
+                        source_value_for_comparison = source_cell_value.strip()
+                        if translation_value_stripped == source_value_for_comparison and _contains_japanese(translation_value_stripped):
+                            raise ToolExecutionError(
+                                "翻訳結果が原文テキストと同一で日本語のままです。翻訳が完了していません。"
+                            )
+                        if target_language and target_language.lower().startswith("english") and _contains_japanese(translation_value_stripped):
+                            raise ToolExecutionError(
+                                "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
+                            )
 
-                    translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
-                    cell_ref_for_metrics = _cell_reference(
-                        output_start_row,
-                        output_start_col,
-                        local_row,
-                        translation_col_index_seed,
-                    )
-                    source_text_canonical = current_texts[item_index]
-                    source_cell_value = source_text_canonical
-                    source_length_units = _measure_utf16_length(source_cell_value)
-                    translated_length_units = _measure_utf16_length(translation_value)
-                    ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-                    if not translation_value:
-                        raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
-
-                    source_value_for_comparison = source_cell_value.strip()
-                    if translation_value_stripped == source_value_for_comparison and _contains_japanese(translation_value_stripped):
-                        raise ToolExecutionError(
-                            "翻訳結果が元のテキストと同一で日本語のままです。翻訳が完了していません。"
+                        violation_kind: Optional[str] = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
+                        reported_source_length, reported_translated_length, reported_ratio = (
+                            _extract_reported_length_metadata(item) if isinstance(item, Mapping) else (None, None, None)
                         )
-                    if target_language and target_language.lower().startswith("english") and _contains_japanese(translation_value_stripped):
-                        raise ToolExecutionError(
-                            "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
+                        metadata_fragments: List[str] = []
+                        if reported_source_length is not None and reported_source_length != source_length_units:
+                            metadata_fragments.append(f"source_length {reported_source_length} -> {source_length_units}")
+                        if reported_translated_length is not None and reported_translated_length != translated_length_units:
+                            metadata_fragments.append(f"translated_length {reported_translated_length} -> {translated_length_units}")
+                        if (
+                            reported_ratio is not None
+                            and math.isfinite(reported_ratio)
+                            and abs(reported_ratio - ratio_value) > _METADATA_RATIO_TOLERANCE
+                        ):
+                            metadata_fragments.append(
+                                f"length_ratio {_format_ratio(reported_ratio)} -> {_format_ratio(ratio_value)}"
+                            )
+                        if metadata_fragments:
+                            metadata_corrections.append(
+                                f"{cell_ref_for_metrics}: length metadata auto-corrected ({', '.join(metadata_fragments)})"
+                            )
+
+                        process_notes_text = (
+                            _maybe_unescape_html_entities(process_notes_jp).strip()
+                            if include_context_columns
+                            else ""
                         )
-
-                    violation_kind: Optional[str] = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
-                    if enforce_length_limit and violation_kind:
-                        limit_parts: List[str] = []
-                        if effective_length_ratio_min is not None:
-                            limit_parts.append(f"下限 {effective_length_ratio_min:.2f}")
-                        if effective_length_ratio_limit is not None:
-                            limit_parts.append(f"上限 {effective_length_ratio_limit:.2f}")
-                        limit_text = "/".join(limit_parts) if limit_parts else "設定範囲"
-                        length_limit_violations.append(
-                            f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} "
-                            f"(倍率 {_format_ratio(ratio_value)}) が {limit_text} を満たしていません"
-                        )
-
-                    metric_entry: Dict[str, Any] = {
-                        "source_length": source_length_units,
-                        "translated_length": translated_length_units,
-                        "ratio": ratio_value,
-                        "cell_ref": cell_ref_for_metrics,
-                        "limit": effective_length_ratio_limit,
-                        "min_limit": effective_length_ratio_min,
-                        "status": violation_kind or "ok",
-                    }
-                    length_metrics[(local_row, col_idx)] = metric_entry
-                    any_translation = True
-
-                    if writing_to_source_directly:
-                        translation_col_index = translation_col_index_seed
-                        explanation_col_index = None
-                        pair_start_index = None
-                        pair_end_index = None
-                    else:
-                        translation_col_index = translation_col_index_seed
-                        if include_context_columns:
-                            explanation_col_index = translation_col_index + 1
-                            pair_start_index = translation_col_index + 2
-                            pair_end_index = translation_col_index + translation_block_width - 1
-                        else:
-                            explanation_col_index = None
-                            pair_start_index = None
-                            pair_end_index = None
-
-                    process_notes_text = (
-                        _maybe_unescape_html_entities(process_notes_jp).strip()
-                        if include_context_columns
-                        else ""
-                    )
-                    context_pairs: List[Dict[str, str]] = []
-                    if include_context_columns:
-                        if reference_pairs_context and item_index < len(reference_pairs_context):
+                        context_pairs: List[Dict[str, str]] = []
+                        if include_context_columns and reference_pairs_context and item_index < len(reference_pairs_context):
                             context_pairs = [
                                 pair for pair in reference_pairs_context[item_index]
                                 if isinstance(pair, dict)
                             ]
-                    reference_pairs_list: List[Dict[str, str]] = []
-                    if include_context_columns:
-                        reference_pairs_list = list(context_pairs)
-                        if reference_pairs_output:
-                            merged: List[Dict[str, str]] = []
-                            seen_keys: Set[Tuple[str, str]] = set()
-                            for candidate in reference_pairs_output:
-                                if not isinstance(candidate, dict):
-                                    continue
-                                src = candidate.get("source_sentence")
-                                tgt = candidate.get("target_sentence") or candidate.get("translated") or candidate.get("en")
-                                if not isinstance(src, str) or not isinstance(tgt, str):
-                                    continue
-                                key = (src.strip(), tgt.strip())
-                                if key in seen_keys:
-                                    continue
-                                seen_keys.add(key)
-                                merged.append(
-                                    {
-                                        "source_sentence": src.strip(),
-                                        "target_sentence": tgt.strip(),
-                                    }
-                                )
-                            for ctx_pair in context_pairs:
-                                src = ctx_pair.get("source_sentence") if isinstance(ctx_pair, dict) else None
-                                tgt = ctx_pair.get("target_sentence") if isinstance(ctx_pair, dict) else None
-                                if not isinstance(src, str) or not isinstance(tgt, str):
-                                    continue
-                                key = (src.strip(), tgt.strip())
-                                if key in seen_keys:
-                                    continue
-                                seen_keys.add(key)
-                                merged.append(
-                                    {
-                                        "source_sentence": src.strip(),
-                                        "target_sentence": tgt.strip(),
-                                    }
-                                )
-                            reference_pairs_list = merged
-                    existing_output_value = output_matrix[local_row][translation_col_index]
-                    if translation_value != existing_output_value:
-                        output_matrix[local_row][translation_col_index] = translation_value
-                        output_dirty = True
-                        row_dirty_flags[local_row] = True
-                    if include_context_columns:
-                        preview = translation_value_stripped or translation_value
-                        if len(preview) > 120:
-                            preview = preview[:117] + "..."
-                        actions.log_progress(f"翻訳結果プレビュー ({item_index + 1}/{len(current_texts)}): {preview}")
-                    if not writing_to_source_directly and overwrite_source:
-                        existing_source_value = source_matrix[local_row][col_idx]
-                        if translation_value != existing_source_value:
-                            source_matrix[local_row][col_idx] = translation_value
-                            source_dirty = True
-                            source_row_dirty_flags[local_row] = True
-
-                    sanitized_pairs: List[Dict[str, str]] = []
-                    if include_context_columns:
-                        seen_pair_keys: Set[Tuple[str, str]] = set()
-                        for pair in reference_pairs_list or []:
-                            if not isinstance(pair, dict):
-                                continue
-                            source_sentence = pair.get("source_sentence")
-                            target_sentence = pair.get("target_sentence")
-                            if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
-                                continue
-                            source_clean = source_sentence.strip()
-                            target_clean = target_sentence.strip()
-                            if not source_clean or not target_clean:
-                                continue
-                            key = (source_clean, target_clean)
-                            if key in seen_pair_keys:
-                                continue
-                            seen_pair_keys.add(key)
-                            sanitized_pairs.append({
-                                "source_sentence": source_clean,
-                                "target_sentence": target_clean,
-                            })
+                        reference_pairs_list: List[Dict[str, str]] = []
                         if include_context_columns:
-                            expected_pairs = len(source_references_per_item[item_index]) if item_index < len(source_references_per_item) else 0
-                            actions.log_progress(
-                            f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): {len(sanitized_pairs)} 件 / source_sentences={expected_pairs}"
-                        )
-                        if sanitized_pairs:
-                            for idx, pair in enumerate(sanitized_pairs, start=1):
-                                actions.log_progress(
-                                    f"参照ペア[{item_index + 1}-{idx}]: {pair['source_sentence']} -> {pair['target_sentence']}"
-                                )
-                        else:
-                            actions.log_progress(
-                                f"参照ペア整理結果 ({item_index + 1}/{len(current_texts)}): 0 件 (参照資料に一致する文が見つかりませんでした)"
+                            reference_pairs_list = list(context_pairs)
+                            if reference_pairs_output:
+                                merged: List[Dict[str, str]] = []
+                                seen_keys: Set[Tuple[str, str]] = set()
+                                for candidate in reference_pairs_output:
+                                    if not isinstance(candidate, dict):
+                                        continue
+                                    src = candidate.get("source_sentence")
+                                    tgt = candidate.get("target_sentence") or candidate.get("translated") or candidate.get("en")
+                                    if not isinstance(src, str) or not isinstance(tgt, str):
+                                        continue
+                                    key = (src.strip(), tgt.strip())
+                                    if key in seen_keys:
+                                        continue
+                                    seen_keys.add(key)
+                                    merged.append(
+                                        {
+                                            "source_sentence": src.strip(),
+                                            "target_sentence": tgt.strip(),
+                                        }
+                                    )
+                                for ctx_pair in context_pairs:
+                                    src = ctx_pair.get("source_sentence") if isinstance(ctx_pair, dict) else None
+                                    tgt = ctx_pair.get("target_sentence") if isinstance(ctx_pair, dict) else None
+                                    if not isinstance(src, str) or not isinstance(tgt, str):
+                                        continue
+                                    key = (src.strip(), tgt.strip())
+                                    if key in seen_keys:
+                                        continue
+                                    seen_keys.add(key)
+                                    merged.append(
+                                        {
+                                            "source_sentence": src.strip(),
+                                            "target_sentence": tgt.strip(),
+                                        }
+                                    )
+                                reference_pairs_list = merged
+
+                        sanitized_pairs: List[Dict[str, str]] = []
+                        if include_context_columns:
+                            seen_pair_keys: Set[Tuple[str, str]] = set()
+                            for pair in reference_pairs_list or []:
+                                if not isinstance(pair, dict):
+                                    continue
+                                source_sentence = pair.get("source_sentence")
+                                target_sentence = pair.get("target_sentence")
+                                if not isinstance(source_sentence, str) or not isinstance(target_sentence, str):
+                                    continue
+                                source_clean = source_sentence.strip()
+                                target_clean = target_sentence.strip()
+                                if not source_clean or not target_clean:
+                                    continue
+                                key = (source_clean, target_clean)
+                                if key in seen_pair_keys:
+                                    continue
+                                seen_pair_keys.add(key)
+                                sanitized_pairs.append({
+                                    "source_sentence": source_clean,
+                                    "target_sentence": target_clean,
+                                })
+
+                        if enforce_length_limit and violation_kind:
+                            ratio_violations_local.append(
+                                {
+                                    "cell_ref": cell_ref_for_metrics,
+                                    "ratio": ratio_value,
+                                    "kind": violation_kind,
+                                    "source_units": source_length_units,
+                                    "translated_units": translated_length_units,
+                                }
                             )
 
+                        pending_updates.append(
+                            {
+                                "local_row": local_row,
+                                "col_idx": col_idx,
+                                "position_group": position_group,
+                                "translation_value": translation_value,
+                                "translation_value_stripped": translation_value_stripped,
+                                "process_notes_text": process_notes_text,
+                                "reference_pairs_list": reference_pairs_list,
+                                "sanitized_pairs": sanitized_pairs,
+                                "source_text_canonical": source_text_canonical,
+                                "source_length_units": source_length_units,
+                                "translated_length_units": translated_length_units,
+                                "ratio_value": ratio_value,
+                                "violation_kind": violation_kind,
+                                "cell_ref": cell_ref_for_metrics,
+                                "reported_source_length": reported_source_length,
+                                "reported_translated_length": reported_translated_length,
+                                "reported_ratio": reported_ratio,
+                                "item_index": item_index,
+                                "total_items": len(current_texts),
+                                "expected_pair_count": len(source_references_per_item[item_index]) if include_context_columns and item_index < len(source_references_per_item) else 0,
+                            }
+                        )
+
+                    if enforce_length_limit and ratio_violations_local:
+                        if length_retry_count >= max_length_retries:
+                            violation_messages = "; ".join(
+                                f"{entry['cell_ref']}: {_format_ratio(entry['ratio'])}" for entry in ratio_violations_local[:5]
+                            )
+                            raise ToolExecutionError(
+                                f"Length ratio constraint violation persisted after {max_length_retries} retries: {violation_messages}"
+                            )
+                        length_retry_count += 1
+                        notice_lines = [
+                            "前回の応答で以下の項目が文字数制約を満たしていません。",
+                            "各訳文を調整し、translated_length と length_ratio を制約内に収めてください。",
+                        ]
+                        for entry in ratio_violations_local:
+                            direction = "上限" if entry["kind"] == "above" else "下限"
+                            notice_lines.append(
+                                f"- {entry['cell_ref']}: 実測倍率 {_format_ratio(entry['ratio'])} が{direction}を外れています "
+                                f"(原文 {entry['source_units']}、訳文 {entry['translated_units']})。"
+                            )
+                        extra_ratio_notice = "\n".join(notice_lines)
+                        actions.log_progress(
+                            f"翻訳応答が長さ制約を満たしていません（再リクエスト {length_retry_count}/{max_length_retries}）。"
+                        )
+                        continue
+
+                    for message in metadata_corrections:
+                        actions.log_progress(message)
+
+                    for update in pending_updates:
+                        local_row = update["local_row"]
+                        col_idx = update["col_idx"]
+                        position_group = update["position_group"]
+                        translation_value = update["translation_value"]
+                        translation_value_stripped = update["translation_value_stripped"]
+                        translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
+                        if writing_to_source_directly:
+                            translation_col_index = translation_col_index_seed
+                            explanation_col_index = None
+                            pair_start_index = None
+                            pair_end_index = None
+                        else:
+                            translation_col_index = translation_col_index_seed
+                            if include_context_columns:
+                                explanation_col_index = translation_col_index + 1
+                                pair_start_index = translation_col_index + 2
+                                pair_end_index = translation_col_index + translation_block_width - 1
+                            else:
+                                explanation_col_index = None
+                                pair_start_index = None
+                                pair_end_index = None
+
+                        existing_output_value = output_matrix[local_row][translation_col_index]
+                        if translation_value != existing_output_value:
+                            output_matrix[local_row][translation_col_index] = translation_value
+                            output_dirty = True
+                            row_dirty_flags[local_row] = True
+                        if include_context_columns:
+                            preview = translation_value_stripped or translation_value
+                            if len(preview) > 120:
+                                preview = preview[:117] + "..."
+                            actions.log_progress(
+                                f"翻訳結果プレビュー ({update['item_index'] + 1}/{update['total_items']}): {preview}"
+                            )
+                        if not writing_to_source_directly and overwrite_source:
+                            existing_source_value = source_matrix[local_row][col_idx]
+                            if translation_value != existing_source_value:
+                                source_matrix[local_row][col_idx] = translation_value
+                                source_dirty = True
+                                source_row_dirty_flags[local_row] = True
+
+                        if include_context_columns:
+                            sanitized_pairs = update["sanitized_pairs"]
+                            expected_pairs = update["expected_pair_count"]
+                            actions.log_progress(
+                                f"参照ペア整理結果 ({update['item_index'] + 1}/{update['total_items']}): {len(sanitized_pairs)} 件 / source_sentences={expected_pairs}"
+                            )
+                            if sanitized_pairs:
+                                for idx_pair, pair in enumerate(sanitized_pairs, start=1):
+                                    actions.log_progress(
+                                        f"参照ペア[{update['item_index'] + 1}-{idx_pair}]: {pair['source_sentence']} -> {pair['target_sentence']}"
+                                    )
+                            else:
+                                actions.log_progress(
+                                    f"参照ペア整理結果 ({update['item_index'] + 1}/{update['total_items']}): 0 件 (参照資料に一致する文が見つかりませんでした)"
+                                )
+
                         if not include_context_columns:
-                            translation_cache[source_text_canonical] = {
+                            translation_cache[update["source_text_canonical"]] = {
                                 "translation": translation_value,
                             }
-                            cached_entry = translation_cache[source_text_canonical]
+                            cached_entry = translation_cache[update["source_text_canonical"]]
                             for extra_position in position_group[1:]:
                                 extra_row, extra_col = extra_position
-                                _apply_cached_translation(extra_row, extra_col, source_text_canonical, cached_entry)
+                                _apply_cached_translation(extra_row, extra_col, update["source_text_canonical"], cached_entry)
+
+                        metric_entry = {
+                            "source_length": update["source_length_units"],
+                            "translated_length": update["translated_length_units"],
+                            "ratio": update["ratio_value"],
+                            "cell_ref": update["cell_ref"],
+                            "limit": effective_length_ratio_limit,
+                            "min_limit": effective_length_ratio_min,
+                            "status": update["violation_kind"] or "ok",
+                            "reported_source_length": update["reported_source_length"],
+                            "reported_translated_length": update["reported_translated_length"],
+                            "reported_ratio": update["reported_ratio"],
+                        }
+                        length_metrics[(local_row, col_idx)] = metric_entry
+                        any_translation = True
+
+                        pending_cols = pending_columns_by_row.get(local_row)
+                        if pending_cols is not None:
+                            pending_cols.discard(col_idx)
+                            if not pending_cols:
+                                _finalize_row(local_row)
+
+                    if pending_updates:
+                        _flush_pending_segments()
+                    break
             if use_references and citation_matrix is not None:
                 if citation_mode == "paired_columns":
                     for local_row in range(row_start, row_end):
