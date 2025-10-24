@@ -16,7 +16,7 @@ import pyperclip
 import sys
 import re
 from pathlib import Path
-from typing import Optional, Callable, List, Tuple, Union
+from typing import Optional, Callable, List, Tuple, Union, Dict, Any
 from threading import Event
 
 from ..config import (
@@ -55,6 +55,7 @@ class BrowserCopilotManager:
         self._chat_sessions_started = 0
         self._active_copilot_mode: Optional[str] = None
         self._last_gpt_mode_confirmed_at: Optional[float] = None
+        self._chat_transcript_sink: Optional[Callable[[str, str, Optional[Dict[str, Any]]], None]] = None
 
     def __enter__(self):
         self.start()
@@ -62,6 +63,27 @@ class BrowserCopilotManager:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    def set_chat_transcript_sink(
+        self,
+        sink: Optional[Callable[[str, str, Optional[Dict[str, Any]]], None]],
+    ) -> None:
+        """Register a callback for prompt/response transcripts."""
+        self._chat_transcript_sink = sink
+
+    def _dispatch_chat_transcript(
+        self,
+        role: str,
+        text: Optional[str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self._chat_transcript_sink:
+            return
+        try:
+            payload_text = "" if text is None else str(text)
+            self._chat_transcript_sink(role, payload_text, metadata or {})
+        except Exception:
+            self._logger.debug("Failed to dispatch chat transcript event.", exc_info=True)
 
     def start(self):
         """Playwrightを起動し、Copilotページに接続・初期化する"""
@@ -1547,6 +1569,10 @@ class BrowserCopilotManager:
         """プロンプトを送信し、Copilotからの応答をクリップボード経由で取得する"""
         if not self.page:
             raise ConnectionError("ブラウザが初期化されていません。start()を呼び出してください。")
+        self._dispatch_chat_transcript("prompt", prompt)
+
+
+
 
         def _ensure_not_stopped():
             if stop_event and stop_event.is_set():
@@ -1556,6 +1582,16 @@ class BrowserCopilotManager:
                 except Exception:
                     pass
                 raise UserStopRequested("ユーザーによる中断が要求されました。")
+
+
+        def _finalize_response(value: str) -> str:
+
+            self._dispatch_chat_transcript("response", value)
+
+            return value
+
+
+
 
         prompt_submitted = False
         try:
@@ -1606,6 +1642,7 @@ class BrowserCopilotManager:
                     )
                     duplication_noted = True
                 return collapsed
+
 
             normalized_current = _collapse_candidate(normalized_current)
 
@@ -1708,19 +1745,26 @@ class BrowserCopilotManager:
                 sanitized = (captured or "").strip()
                 if not sanitized:
                     return True
+
                 lowered = sanitized.lower()
                 prompt_sample = (prompt or "").strip().lower()[:40]
                 if prompt_sample and lowered.startswith(prompt_sample):
                     return True
+
                 if lowered.startswith("system:") or lowered.startswith("user:"):
                     return True
+
                 if lowered.startswith("[translation mode request]") or lowered.startswith("[translation review mode request]"):
                     return True
+
                 if lowered.endswith("assistant:"):
                     return True
+
                 if prompt and sanitized == prompt.strip():
                     return True
+
                 return False
+
 
             response_text = None
             while True:
@@ -1729,7 +1773,8 @@ class BrowserCopilotManager:
                 total_buttons = copy_buttons.count()
                 if total_buttons <= initial_copy_button_count:
                     if time.monotonic() >= deadline:
-                        return "エラー: 新しい応答のコピーボタンが見つかりませんでした。"
+                        return _finalize_response("エラー: 新しい応答のコピーボタンが見つかりませんでした。")
+
                     time.sleep(0.4)
                     continue
 
@@ -1759,24 +1804,30 @@ class BrowserCopilotManager:
                     break
 
                 if time.monotonic() >= deadline:
-                    return "エラー: Copilotからの応答を取得できませんでした。"
+                    return _finalize_response("エラー: Copilotからの応答を取得できませんでした。")
+
                 time.sleep(0.5)
 
             print("応答が完了したと判断しました。")
             if response_text is None:
-                return "エラー: Copilotからの応答を取得できませんでした。"
+                return _finalize_response("エラー: Copilotからの応答を取得できませんでした。")
+
 
             thought_pos = response_text.find("Thought:")
             if thought_pos != -1:
-                return response_text[thought_pos:]
-            return response_text
+                return _finalize_response(response_text[thought_pos:])
+
+            return _finalize_response(response_text)
+
 
         except PlaywrightTimeoutError:
-            return "エラー: Copilotからの応答がタイムアウトしました。応答に時間がかかりすぎるか、Copilotが応答不能になっている可能性があります。"
+            return _finalize_response("エラー: Copilotからの応答がタイムアウトしました。応答に時間がかかりすぎるか、Copilotが応答不能になっている可能性があります。")
+
         except UserStopRequested:
             raise
         except Exception as e:
-            return f"エラー: ブラウザ操作中に予期せぬエラーが発生しました: {e}"
+            return _finalize_response(f"エラー: ブラウザ操作中に予期せぬエラーが発生しました: {e}")
+
         finally:
             if prompt_submitted:
                 self._chat_sessions_started += 1

@@ -37,6 +37,8 @@ class ResponseType(str, Enum):
     ACTION = "action"
     OBSERVATION = "observation"
     FINAL_ANSWER = "final_answer"
+    CHAT_PROMPT = "chat_prompt"
+    CHAT_RESPONSE = "chat_response"
     SHUTDOWN_COMPLETE = "shutdown_complete"
 
 

@@ -1830,7 +1830,12 @@ class CopilotApp:
         except Exception as e:
             print(f"UI\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f: {e}")
 
-    _CHAT_VISIBLE_TYPES = {"user", ResponseType.FINAL_ANSWER.value}
+    _CHAT_VISIBLE_TYPES = {
+        "user",
+        ResponseType.FINAL_ANSWER.value,
+        ResponseType.CHAT_PROMPT.value,
+        ResponseType.CHAT_RESPONSE.value,
+    }
 
     def _add_message(
         self,

@@ -89,6 +89,24 @@ class ChatMessage(ft.ResponsiveRow):
                 "title": "Answer",
                 "border_color": ft.Colors.with_opacity(0.22, palette["tertiary"]),
             },
+            "chat_prompt": {
+                "bgcolor": palette["secondary_container"],
+                "icon": ft.Icons.CONTENT_PASTE,
+                "icon_color": palette["on_secondary_container"],
+                "icon_bgcolor": ft.Colors.with_opacity(0.18, palette["secondary"]),
+                "text_style": {"color": palette["on_secondary_container"], "size": 13},
+                "title": "Copilot Prompt",
+                "border_color": ft.Colors.with_opacity(0.22, palette["secondary"]),
+            },
+            "chat_response": {
+                "gradient_factory": _final_answer_gradient,
+                "icon": ft.Icons.SMART_TOY_OUTLINED,
+                "icon_color": palette["inverse_on_surface"],
+                "icon_bgcolor": ft.Colors.with_opacity(0.24, palette["tertiary"]),
+                "text_style": {"color": palette["inverse_on_surface"], "size": 14},
+                "title": "Copilot Response",
+                "border_color": ft.Colors.with_opacity(0.24, palette["tertiary"]),
+            },
             "info": {
                 "text_style": {"color": palette["on_surface_variant"], "size": 12},
                 "icon": ft.Icons.INFO_OUTLINE,
@@ -280,12 +298,12 @@ class ChatMessage(ft.ResponsiveRow):
         )
 
         bubble_and_icon_row = ft.Row(
-            [icon_container, message_bubble] if msg_type_value != "user" else [message_bubble, icon_container],
+            [icon_container, message_bubble] if msg_type_value not in {"user", "chat_prompt"} else [message_bubble, icon_container],
             vertical_alignment=ft.CrossAxisAlignment.START,
             spacing=16,
         )
 
-        if msg_type_value == "user":
+        if msg_type_value in {"user", "chat_prompt"}:
             self.controls = [
                 ft.Column(col={"sm": 2, "md": 4}),
                 ft.Column(col={"sm": 10, "md": 8}, controls=[bubble_and_icon_row]),

@@ -136,6 +136,7 @@ class CopilotWorker:
                 slow_mo_ms=COPILOT_SLOW_MO_MS,
             )
             self.browser_manager.start()
+            self.browser_manager.set_chat_transcript_sink(self._handle_chat_transcript_event)
             _logger.info("BrowserCopilotManager start completed.")
 
             self._emit_response(ResponseMessage(ResponseType.STATUS, "\u30d5\u30a9\u30fc\u30e0\u7528\u30c4\u30fc\u30eb\u3092\u521d\u671f\u5316\u3057\u3066\u3044\u307e\u3059..."))
@@ -375,6 +376,24 @@ class CopilotWorker:
         if text:
             self._emit_response(ResponseMessage(ResponseType.STATUS, text))
 
+    def _handle_chat_transcript_event(
+        self,
+        role: str,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        normalized_role = (role or "").strip().lower()
+        if normalized_role == "prompt":
+            event_type = ResponseType.CHAT_PROMPT
+        elif normalized_role == "response":
+            event_type = ResponseType.CHAT_RESPONSE
+        else:
+            return
+        payload_text = text if isinstance(text, str) else ("" if text is None else str(text))
+        payload_metadata = dict(metadata or {}) if metadata else {}
+        self._emit_response(ResponseMessage(event_type, payload_text, payload_metadata))
+
+
     def _finalize_task(self) -> None:
         stop_requested = self.stop_event.is_set()
         if stop_requested:
@@ -401,6 +420,7 @@ class CopilotWorker:
     def _cleanup(self):
         _logger.info("Worker cleanup starting...")
         if self.browser_manager:
+            self.browser_manager.set_chat_transcript_sink(None)
             self.browser_manager.close()
         _logger.info("Worker cleanup completed.")
         try:
