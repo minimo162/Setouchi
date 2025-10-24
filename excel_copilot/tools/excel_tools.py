@@ -2944,62 +2944,102 @@ def translate_range_contents(
                     or use_references
                 )
 
-                final_prompt_parts = [
-                    prompt_preamble,
-                    "Source sentences:",
-                    texts_json,
-                ]
-                if source_lengths_json is not None:
-                    final_prompt_parts.extend([
-                        "Source UTF-16 lengths (JSON):",
-                        source_lengths_json,
-                    ])
-                if has_supporting_data:
-                    final_prompt_parts.extend([
-                        "Supporting data (JSON):",
-                        translation_context_json,
-                    ])
-                final_prompt = "\n".join(final_prompt_parts) + "\n"
-                _ensure_not_stopped()
-                response = browser_manager.ask(final_prompt, stop_event=stop_event)
-
-                repaired_response, repair_status = _repair_unescaped_length_verification_result(response)
-                parsed_payload, parse_error_code = _extract_first_json_payload(repaired_response)
-                if parsed_payload is None:
-                    fallback_payload, fallback_error_code = _extract_first_json_payload(response)
-                    parse_error_code = parse_error_code or fallback_error_code
-                    parsed_payload = fallback_payload
-
-                if parsed_payload is None:
-                    fallback_prompt_parts = [
-                        prompt_preamble,
+                def _run_translation_request(
+                    extra_notice: Optional[str],
+                    include_supporting: bool,
+                ) -> Tuple[Optional[List[Any]], Any, Optional[str], Optional[str]]:
+                    prompt_sections: List[str] = [prompt_preamble]
+                    if extra_notice:
+                        prompt_sections.append(extra_notice)
+                    prompt_sections.extend([
                         "Source sentences:",
                         texts_json,
-                    ]
+                    ])
                     if source_lengths_json is not None:
-                        fallback_prompt_parts.extend([
+                        prompt_sections.extend([
                             "Source UTF-16 lengths (JSON):",
                             source_lengths_json,
                         ])
-                    final_prompt = "\n".join(fallback_prompt_parts) + "\n"
+                    if include_supporting and has_supporting_data:
+                        prompt_sections.extend([
+                            "Supporting data (JSON):",
+                            translation_context_json,
+                        ])
+                    prompt_text = "\n".join(prompt_sections) + "\n"
                     _ensure_not_stopped()
-                    response = browser_manager.ask(final_prompt, stop_event=stop_event)
-                    repaired_response, repair_status = _repair_unescaped_length_verification_result(response)
-                    parsed_payload, parse_error_code = _extract_first_json_payload(repaired_response)
-                    if parsed_payload is None:
-                        fallback_payload, fallback_error_code = _extract_first_json_payload(response)
-                        parse_error_code = parse_error_code or fallback_error_code
-                        parsed_payload = fallback_payload
-                    if parsed_payload is None:
-                        error_label = parse_error_code or repair_status or "unknown"
-                        raise ToolExecutionError(
-                            f"Failed to parse translation response as JSON ({error_label}): {response}"
-                        )
+                    response_local = browser_manager.ask(prompt_text, stop_event=stop_event)
+                    repaired_response_local, repair_status_local = _repair_unescaped_length_verification_result(response_local)
+                    parsed_payload_local, parse_error_code_local = _extract_first_json_payload(repaired_response_local)
+                    if parsed_payload_local is None:
+                        fallback_payload_local, fallback_error_code_local = _extract_first_json_payload(response_local)
+                        parse_error_code_local = parse_error_code_local or fallback_error_code_local
+                        parsed_payload_local = fallback_payload_local
+                    return parsed_payload_local, response_local, parse_error_code_local, repair_status_local
 
-                if not isinstance(parsed_payload, list) or len(parsed_payload) != len(current_texts):
-                    raise ToolExecutionError(
-                        "Translation response must be a list with one entry per source text."
+                def _obtain_translation_payload(extra_notice: Optional[str]) -> List[Any]:
+                    parsed_payload_local, response_local, parse_error_code_local, repair_status_local = _run_translation_request(
+                        extra_notice,
+                        include_supporting=True,
                     )
+                    if parsed_payload_local is None and has_supporting_data:
+                        parsed_payload_local, response_local, parse_error_code_local, repair_status_local = _run_translation_request(
+                            extra_notice,
+                            include_supporting=False,
+                        )
+                    if parsed_payload_local is None:
+                        error_label_local = parse_error_code_local or repair_status_local or "unknown"
+                        raise ToolExecutionError(
+                            f"Failed to parse translation response as JSON ({error_label_local}): {response_local}"
+                        )
+                    if not isinstance(parsed_payload_local, list) or len(parsed_payload_local) != len(current_texts):
+                        raise ToolExecutionError(
+                            "Translation response must be a list with one entry per source text."
+                        )
+                    return parsed_payload_local
+
+                def _find_empty_translation_indexes(payload: List[Any]) -> List[int]:
+                    empty_indexes: List[int] = []
+                    for idx, payload_item in enumerate(payload):
+                        candidate: Optional[Any]
+                        if isinstance(payload_item, dict):
+                            candidate = (
+                                payload_item.get("translated_text")
+                                or payload_item.get("translation")
+                                or payload_item.get("output")
+                            )
+                        elif isinstance(payload_item, str):
+                            candidate = payload_item
+                        elif isinstance(payload_item, (int, float)):
+                            candidate = str(payload_item)
+                        else:
+                            candidate = None
+                        if candidate is None:
+                            empty_indexes.append(idx)
+                            continue
+                        candidate_raw = _maybe_unescape_html_entities(candidate)
+                        if not isinstance(candidate_raw, str):
+                            candidate_raw = str(candidate_raw)
+                        if not candidate_raw.strip():
+                            empty_indexes.append(idx)
+                    return empty_indexes
+
+                parsed_payload = _obtain_translation_payload(extra_notice=None)
+                empty_retry_count = 0
+                max_empty_retries = 2
+                while True:
+                    empty_indexes = _find_empty_translation_indexes(parsed_payload)
+                    if not empty_indexes:
+                        break
+                    if empty_retry_count >= max_empty_retries:
+                        raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+                    empty_retry_count += 1
+                    actions.log_progress(
+                        f"翻訳応答に空の translated_text が含まれていたため再リクエストします（再試行 {empty_retry_count}/{max_empty_retries}）。"
+                    )
+                    retry_notice = (
+                        "前回の応答で translated_text が空の項目がありました。すべての translated_text フィールドに非空の翻訳文を必ず返してください。"
+                    )
+                    parsed_payload = _obtain_translation_payload(extra_notice=retry_notice)
 
                 for item_index, (item, position_group) in enumerate(zip(parsed_payload, current_position_groups)):
                     if not position_group:
