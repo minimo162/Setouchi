@@ -1621,6 +1621,44 @@ def translate_range_contents(
 
             return text
 
+        def _strip_json_code_fences(text: str) -> str:
+            if not isinstance(text, str):
+                return text
+            stripped = text.strip()
+            if not stripped.startswith("```"):
+                return stripped
+            fence_match = re.match(r"^```(?:json)?\s*", stripped, re.IGNORECASE)
+            if not fence_match:
+                return stripped
+            content = stripped[fence_match.end():]
+            if content.endswith("```"):
+                content = content[:-3].rstrip()
+            return content
+
+        def _extract_first_json_payload(response_text: Any) -> Optional[Any]:
+            if not isinstance(response_text, str):
+                return None
+            cleaned = _strip_json_code_fences(response_text)
+            decoder = json.JSONDecoder()
+            index = 0
+            length = len(cleaned)
+            while index < length:
+                char = cleaned[index]
+                if char in ("{", "["):
+                    try:
+                        payload, end_index = decoder.raw_decode(cleaned, index)
+                    except json.JSONDecodeError:
+                        index += 1
+                        continue
+                    else:
+                        remaining = cleaned[end_index:].lstrip()
+                        if remaining.startswith(("```", "{", "[")):
+                            # 余分な JSON 断片が続く場合でも最初のものだけ返す
+                            pass
+                        return payload
+                index += 1
+            return None
+
         def _parse_length_verification_payload(result: Any) -> Optional[Dict[str, Any]]:
             if isinstance(result, dict):
                 return result
@@ -1728,6 +1766,7 @@ def translate_range_contents(
 
             instructions.extend(
                 [
+                    '- JSON only output. Do not include commentary, preambles, or code fences.',
                     '- 原文の意図と重要情報は保持してください。',
                     '- 応答は {"translated_text": "...", "translated_length": number, "length_ratio": number, "length_verification": {"result": "...", "status": "..."}} を 1 要素だけ含む JSON 配列で返してください。',
                     '- "translated_length" と length_verification.result 内の "translated_length" には translated_text を len() で測った同じ整数を記入してください。',
@@ -1769,11 +1808,16 @@ def translate_range_contents(
                 f'長さ倍率の再試行 {attempt_index} 回目: {target_hint} を目標に {direction_hint} を依頼します。'
             )
             response = browser_manager.ask(retry_prompt, stop_event=stop_event)
-            try:
-                match = re.search(r"{.*}|\[.*\]", response, re.DOTALL)
-                json_payload = match.group(0) if match else response
-                parsed_payload = json.loads(json_payload)
-            except json.JSONDecodeError:
+            parsed_payload = _extract_first_json_payload(
+                _repair_unescaped_length_verification_result(response)
+            ) or _extract_first_json_payload(response)
+            if parsed_payload is None:
+                if "応答が完了したと判断しました" in response:
+                    actions.log_progress("Length adjustment response ended with '応答が完了したと判断しました'; requesting another attempt.")
+                else:
+                    actions.log_progress(
+                        f"Length adjustment response was not valid JSON: {_shorten_debug(response)}"
+                    )
                 return None
 
             if isinstance(parsed_payload, list) and parsed_payload:
@@ -2858,12 +2902,10 @@ def translate_range_contents(
                 _ensure_not_stopped()
                 response = browser_manager.ask(final_prompt, stop_event=stop_event)
 
-                try:
-                    match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
-                    json_payload = match.group(0) if match else response
-                    json_payload = _repair_unescaped_length_verification_result(json_payload)
-                    parsed_payload = json.loads(json_payload)
-                except json.JSONDecodeError:
+                parsed_payload = _extract_first_json_payload(
+                    _repair_unescaped_length_verification_result(response)
+                ) or _extract_first_json_payload(response)
+                if parsed_payload is None:
                     fallback_prompt_parts = [
                         prompt_preamble,
                         "Source sentences:",
@@ -2877,15 +2919,13 @@ def translate_range_contents(
                     final_prompt = "\n".join(fallback_prompt_parts) + "\n"
                     _ensure_not_stopped()
                     response = browser_manager.ask(final_prompt, stop_event=stop_event)
-                    try:
-                        match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
-                        json_payload = match.group(0) if match else response
-                        json_payload = _repair_unescaped_length_verification_result(json_payload)
-                        parsed_payload = json.loads(json_payload)
-                    except json.JSONDecodeError as exc:
+                    parsed_payload = _extract_first_json_payload(
+                        _repair_unescaped_length_verification_result(response)
+                    ) or _extract_first_json_payload(response)
+                    if parsed_payload is None:
                         raise ToolExecutionError(
                             f"Failed to parse translation response as JSON: {response}"
-                        ) from exc
+                        )
 
                 if not isinstance(parsed_payload, list) or len(parsed_payload) != len(current_texts):
                     raise ToolExecutionError(
@@ -3057,6 +3097,10 @@ def translate_range_contents(
                                 actions.log_progress(
                                     f"length_verification metadata auto-corrected for {cell_ref_for_metrics}."
                                 )
+                            else:
+                                actions.log_progress(
+                                    f"length_verification metadata still inconsistent for {cell_ref_for_metrics}: {verification_issue_message}"
+                                )
 
                     reported_length_delta: Optional[float] = None
                     reported_ratio_delta: Optional[float] = None
@@ -3095,20 +3139,23 @@ def translate_range_contents(
                                 reported_translated_length,
                                 reported_length_ratio,
                             )
-                            if not adjusted_payload or not isinstance(adjusted_payload, dict):
-                                actions.log_progress("Length constraint adjustment failed; stopping further retries for this cell.")
-                                break
+                            if not adjusted_payload:
+                                actions.log_progress("Length constraint adjustment returned no JSON payload; retrying if attempts remain.")
+                                continue
+                            if not isinstance(adjusted_payload, dict):
+                                actions.log_progress("Length constraint adjustment response was not a JSON object; retrying if attempts remain.")
+                                continue
                             candidate_translation = adjusted_payload.get("translated_text")
                             if not isinstance(candidate_translation, str):
-                                actions.log_progress("Length adjustment response missing 'translated_text'; stopping retries for this cell.")
-                                break
+                                actions.log_progress("Length adjustment response missing 'translated_text'; requesting another attempt.")
+                                continue
                             candidate_value_raw = _maybe_unescape_html_entities(candidate_translation)
                             if not isinstance(candidate_value_raw, str):
                                 candidate_value_raw = str(candidate_value_raw)
                             candidate_value_stripped = candidate_value_raw.strip()
                             if not candidate_value_stripped:
                                 actions.log_progress("再調整された翻訳が空文字だったため、これ以上の再試行を中止します。")
-                                break
+                                continue
                             translation_value = candidate_value_raw
                             translation_value_stripped = candidate_value_stripped
                             current_response_payload = adjusted_payload
@@ -3176,6 +3223,10 @@ def translate_range_contents(
                                     if not verification_issue_message:
                                         actions.log_progress(
                                             f"length_verification metadata auto-corrected for {cell_ref_for_metrics}."
+                                        )
+                                    else:
+                                        actions.log_progress(
+                                            f"length_verification metadata still inconsistent for {cell_ref_for_metrics}: {verification_issue_message}"
                                         )
 
                             violation_kind = _ratio_violation_kind(ratio_value)
