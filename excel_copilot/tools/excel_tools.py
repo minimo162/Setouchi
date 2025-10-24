@@ -1352,9 +1352,9 @@ def translate_range_contents(
                 "translated_length": translated_units,
                 "length_ratio": ratio_value,
             }
-            verification_result = json.dumps(verification_details, ensure_ascii=False)
-            if verification_dict.get("result") != verification_result:
-                verification_dict["result"] = verification_result
+            existing_verification_result = verification_dict.get("result")
+            if existing_verification_result != verification_details:
+                verification_dict["result"] = dict(verification_details)
                 changed = True
 
             corrected_payload["length_verification"] = verification_dict
@@ -1784,13 +1784,13 @@ def translate_range_contents(
             instructions.extend(
                 [
                     '- JSON only output. Do not include commentary, preambles, or code fences.',
-                    '- 余分な説明やコメント、追加のテキストを含めないでください。',
-                    '- 応答は {"translated_text": "...", "translated_length": number, "length_ratio": number, "length_verification": {"result": "...", "status": "..."}} を 1 要素だけ含む JSON 配列で返してください。',
+                    '- 余計な説明やコメント、追加のテキストを含めないでください。',
+                    '- 応答は {"translated_text": "...", "translated_length": number, "length_ratio": number, "length_verification": {"result": {"source_length": number, "translated_length": number, "length_ratio": number}, "status": "..."}} を 1 要素だけ含む JSON 配列で返してください。',
                     '- "translated_length" と length_verification.result 内の "translated_length" には translated_text を len() で測った同じ整数を記入してください。',
                     '- "length_ratio" と length_verification.result 内の "length_ratio" も同じ数値を用い、差異が出ないようにしてください。',
-                    '- length_verification.result には json.dumps などで得られるエスケープ済み JSON 文字列を入れてください (例: "{"source_length": 123, "translated_length": 240}")。',
+                    '- length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} のような JSON オブジェクトを入れてください。',
                     '- 応答前に Python の len() と同じ UTF-16 コードユニット長で再計測してください。',
-                    '',
+                    '- 応答前に Python の len() と同じ UTF-16 コードユニット長で再計測してください。',
                     'source_texts(JSON):',
                     json.dumps([original_text], ensure_ascii=False),
                 ]
@@ -1831,7 +1831,7 @@ def translate_range_contents(
                 if parse_error in {'json_decode_failed', 'no_json_found'}:
                     return '有効な JSON 配列（または配列内のオブジェクト）を返してください。'
                 if repair_status in {'repaired', 'repair_failed'}:
-                    return 'length_verification.result にはエスケープ済みの JSON 文字列を入れてください。'
+                    return 'length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} のような JSON オブジェクトを入れてください。'
                 return None
 
             response = browser_manager.ask(retry_prompt, stop_event=stop_event)
@@ -2086,7 +2086,7 @@ def translate_range_contents(
                 f"- \"translated_text\": {target_language} での翻訳文。\n",
                 "- \"process_notes_jp\": 日本語で数文の翻訳メモ。訳語の根拠や参照ペアの使い方を簡潔に記述してください。\n",
                 '- "length_verification": {"result": "...", "status": "..."} を含めてください。',
-                '- length_verification.result には Python の json.dumps で得られるようなエスケープ済み JSON 文字列 (例: "{\\"source_length\\": 67, \\"translated_length\\": 142}") を入れてください。未エスケープの引用符やバックスラッシュ不足があると応答は無効です。',
+                '- length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} のような JSON オブジェクトを入れてください。',
                 "- \"reference_pairs\": 実際に参考にしたペアの配列。利用しなかった場合は空配列を返してください。\n",
                 "余分なコメントやマークダウンを付けず、純粋な JSON だけを返してください。\n",
                 "以下に日本語原文の配列、続いて参照ペアの配列を示します。\n",
@@ -2103,7 +2103,7 @@ def translate_range_contents(
                 '- "translated_length": 訳文の UTF-16 コードユニット数（Python の len() と同じ定義、整数）。',
                 '- "length_ratio": translated_length / 原文の UTF-16 長さ（数値）。',
                 '- "length_verification": {"result": "...", "status": "verified"}。',
-                'length_verification.result には json.dumps によるエスケープ済み JSON 文字列を入れてください（例: "{\"source_length\": 67, \"translated_length\": 142, \"length_ratio\": 2.12}"）。',
+                '- length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} のような JSON オブジェクトを入れてください (例: {"source_length": 67, "translated_length": 142, "length_ratio": 2.12})',
                 '注意: "translated_length" と length_verification.result 内の "translated_length" は同一の再計測値を入れ、"length_ratio" も両方で同じ値にしてください。',
                 "禁止: 余分な説明、前置き、マークダウン、コードフェンス、複数の JSON ペイロード。",
             ]

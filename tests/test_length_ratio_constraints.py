@@ -80,7 +80,11 @@ class FakeBrowserManager:
                 "translated_length": 6,
                 "length_ratio": 1.2,
                 "length_verification": {
-                    "result": json.dumps({"source_length": 5, "translated_length": 6, "length_ratio": 1.2}),
+                    "result": {
+                        "source_length": 5,
+                        "translated_length": 6,
+                        "length_ratio": 1.2,
+                    },
                     "status": "verified",
                 },
             }
@@ -151,8 +155,12 @@ class TranslationLengthRatioTests(unittest.TestCase):
         )
 
         self.assertTrue(
-            any("json.dumps" in prompt and "length_verification.result" in prompt for prompt in browser.prompts),
-            "Translation prompt should instruct the model to use json.dumps-style escaping.",
+            any(
+                "length_verification.result" in prompt
+                and '{"source_length": number, "translated_length": number, "length_ratio": number}' in prompt
+                for prompt in browser.prompts
+            ),
+            "Translation prompt should instruct the model to embed length_verification.result as a JSON オブジェクト.",
         )
 
     def test_length_verification_metadata_mismatch_is_auto_corrected(self) -> None:
@@ -166,13 +174,11 @@ class TranslationLengthRatioTests(unittest.TestCase):
                 "translated_length": 3,  # incorrect metadata
                 "length_ratio": 1.0,
                 "length_verification": {
-                    "result": json.dumps(
-                        {
-                            "source_length": source_units,
-                            "translated_length": 3,
-                            "length_ratio": 1.0,
-                        }
-                    ),
+                    "result": {
+                        "source_length": source_units,
+                        "translated_length": 3,
+                        "length_ratio": 1.0,
+                    },
                     "status": "verified",
                 },
             }
@@ -218,13 +224,11 @@ class TranslationLengthRatioTests(unittest.TestCase):
                 "translated_length": 3,
                 "length_ratio": 1.0,
                 "length_verification": {
-                    "result": json.dumps(
-                        {
-                            "source_length": source_units,
-                            "translated_length": 3,
-                            "length_ratio": 1.0,
-                        }
-                    ),
+                    "result": {
+                        "source_length": source_units,
+                        "translated_length": 3,
+                        "length_ratio": 1.0,
+                    },
                     "status": "verified",
                 },
             }
@@ -236,13 +240,11 @@ class TranslationLengthRatioTests(unittest.TestCase):
                 "translated_length": 4,
                 "length_ratio": good_ratio,
                 "length_verification": {
-                    "result": json.dumps(
-                        {
-                            "source_length": source_units,
-                            "translated_length": 4,
-                            "length_ratio": good_ratio,
-                        }
-                    ),
+                    "result": {
+                        "source_length": source_units,
+                        "translated_length": 4,
+                        "length_ratio": good_ratio,
+                    },
                     "status": "verified",
                 },
             }
@@ -285,13 +287,11 @@ class TranslationLengthRatioTests(unittest.TestCase):
                 "translated_length": 3,
                 "length_ratio": 1.0,
                 "length_verification": {
-                    "result": json.dumps(
-                        {
-                            "source_length": source_units,
-                            "translated_length": 3,
-                            "length_ratio": 1.0,
-                        }
-                    ),
+                    "result": {
+                        "source_length": source_units,
+                        "translated_length": 3,
+                        "length_ratio": 1.0,
+                    },
                     "status": "verified",
                 },
             }
