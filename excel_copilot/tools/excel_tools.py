@@ -2174,8 +2174,9 @@ def translate_range_contents(
                     )
                 prompt_lines.extend([
                     'length_verification.result 内の "length_ratio" も同じ計算値を使用し、出力オブジェクト内の "length_ratio" と一致させてください。',
-                    "制限から外れる場合は自ら長さを調整し、再度 len() で長さを測って許容範囲に収めてください。",
-                    "意味と重要な情報を保ちながら、冗長な表現を削って簡潔な語を選んでください。",
+                    "この翻訳専用モードでは後続の長さ再調整は行われないため、初回出力で必ず長さ制約を満たす翻訳文を返してください。",
+                    "制約から外れそうな場合は回答前に自分で表現を調整し、len() で再計測してから返信してください。",
+                    "意味と重要な情報を保ちながら、冗長な表現を削ったり簡潔な語を選んで長さを制御してください。",
                 ])
             prompt_preamble = "".join(prompt_lines)
         if references_requested or use_references:
