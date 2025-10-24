@@ -1193,6 +1193,7 @@ def translate_range_contents(
             and effective_length_ratio_min > effective_length_ratio_limit
         ):
             raise ToolExecutionError("length_ratio_min は length_ratio_limit 以下にしてください。")
+        skip_length_recalibration = False
         enforce_length_limit = (
             output_mode == "translation_only"
             and (
@@ -1200,6 +1201,9 @@ def translate_range_contents(
                 or effective_length_ratio_min is not None
             )
         )
+        if enforce_length_limit and output_mode == "translation_only":
+            skip_length_recalibration = True
+            actions.log_progress("翻訳（通常）モードでは長さ再調整をスキップし、初回の翻訳結果を書き込みます。")
         length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
         length_limit_messages: List[str] = []
         length_retry_counts: Dict[Tuple[int, int], int] = {}
@@ -3191,120 +3195,125 @@ def translate_range_contents(
                             translation_context[item_index] if item_index < len(translation_context) else {}
                         )
                         retry_feedback: Optional[str] = None
-                        while (violation_kind or verification_issue_message) and retries_used < max_length_retries:
-                            retries_used += 1
-                            adjusted_payload, feedback_hint = _request_length_constrained_translation(
-                                source_cell_value,
-                                context_payload,
-                                translation_value,
-                                translated_length_units,
-                                ratio_value,
-                                retries_used,
-                                violation_kind,
-                                verification_issue_message,
-                                reported_translated_length,
-                                reported_length_ratio,
-                                retry_feedback=retry_feedback,
-                                latest_length_units=translated_length_units,
-                                latest_ratio_value=ratio_value,
+                        if skip_length_recalibration and (violation_kind or verification_issue_message):
+                            actions.log_progress(
+                                f"長さ再調整をスキップしました ({cell_ref_for_metrics}); 初回翻訳を採用します。"
                             )
-                            retry_feedback = feedback_hint
-                            if not adjusted_payload:
-                                verification_issue_message = None
-                                continue
-                            if not isinstance(adjusted_payload, dict):
-                                retry_feedback = "JSON オブジェクトを返してください。"
-                                verification_issue_message = None
-                                actions.log_progress("Length constraint adjustment failed: response was not a JSON object; requesting another attempt.")
-                                continue
-                            candidate_translation = adjusted_payload.get("translated_text")
-                            if not isinstance(candidate_translation, str):
-                                retry_feedback = "'translated_text' キーに文字列を入れてください。"
-                                verification_issue_message = None
-                                actions.log_progress("Length constraint adjustment failed: 'translated_text' missing or not a string; requesting another attempt.")
-                                continue
-                            candidate_value_raw = _maybe_unescape_html_entities(candidate_translation)
-                            if not isinstance(candidate_value_raw, str):
-                                candidate_value_raw = str(candidate_value_raw)
-                            candidate_value_stripped = candidate_value_raw.strip()
-                            if not candidate_value_stripped:
-                                retry_feedback = "translated_text を空にしないでください。"
-                                verification_issue_message = None
-                                actions.log_progress("Length constraint adjustment failed: translated_text was empty; requesting another attempt.")
-                                continue
-                            translation_value = candidate_value_raw
-                            translation_value_stripped = candidate_value_stripped
-                            current_response_payload = adjusted_payload
+                        else:
+                            while (violation_kind or verification_issue_message) and retries_used < max_length_retries:
+                                retries_used += 1
+                                adjusted_payload, feedback_hint = _request_length_constrained_translation(
+                                    source_cell_value,
+                                    context_payload,
+                                    translation_value,
+                                    translated_length_units,
+                                    ratio_value,
+                                    retries_used,
+                                    violation_kind,
+                                    verification_issue_message,
+                                    reported_translated_length,
+                                    reported_length_ratio,
+                                    retry_feedback=retry_feedback,
+                                    latest_length_units=translated_length_units,
+                                    latest_ratio_value=ratio_value,
+                                )
+                                retry_feedback = feedback_hint
+                                if not adjusted_payload:
+                                    verification_issue_message = None
+                                    continue
+                                if not isinstance(adjusted_payload, dict):
+                                    retry_feedback = "JSON オブジェクトを返してください。"
+                                    verification_issue_message = None
+                                    actions.log_progress("Length constraint adjustment failed: response was not a JSON object; requesting another attempt.")
+                                    continue
+                                candidate_translation = adjusted_payload.get("translated_text")
+                                if not isinstance(candidate_translation, str):
+                                    retry_feedback = "'translated_text' キーに文字列を入れてください。"
+                                    verification_issue_message = None
+                                    actions.log_progress("Length constraint adjustment failed: 'translated_text' missing or not a string; requesting another attempt.")
+                                    continue
+                                candidate_value_raw = _maybe_unescape_html_entities(candidate_translation)
+                                if not isinstance(candidate_value_raw, str):
+                                    candidate_value_raw = str(candidate_value_raw)
+                                candidate_value_stripped = candidate_value_raw.strip()
+                                if not candidate_value_stripped:
+                                    retry_feedback = "translated_text を空にしないでください。"
+                                    verification_issue_message = None
+                                    actions.log_progress("Length constraint adjustment failed: translated_text was empty; requesting another attempt.")
+                                    continue
+                                translation_value = candidate_value_raw
+                                translation_value_stripped = candidate_value_stripped
+                                current_response_payload = adjusted_payload
 
-                            translated_length_units = _measure_utf16_length(translation_value)
-                            ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-                            violation_kind = _ratio_violation_kind(ratio_value)
+                                translated_length_units = _measure_utf16_length(translation_value)
+                                ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                                violation_kind = _ratio_violation_kind(ratio_value)
 
-                            (
-                                reported_translated_length,
-                                reported_length_ratio,
-                                length_verification_status,
-                                length_verification_details,
-                                reported_source_length,
-                                verification_parse_error,
-                            ) = _extract_length_metadata_from_response(
-                                current_response_payload,
-                                cell_reference_for_log=cell_ref_for_metrics,
-                            )
-
-                            analysis = _analyse_length_verification(
-                                reported_source_length,
-                                reported_translated_length,
-                                reported_length_ratio,
-                                length_verification_status,
-                                length_verification_details,
-                                verification_parse_error,
-                                source_length_units,
-                                translated_length_units,
-                                ratio_value,
-                            )
-                            verification_issue_message = analysis["issue_message"]
-
-                            if _should_autocorrect_length_metadata(analysis, ratio_value):
-                                corrected_payload = _autocorrect_length_metadata(
+                                (
+                                    reported_translated_length,
+                                    reported_length_ratio,
+                                    length_verification_status,
+                                    length_verification_details,
+                                    reported_source_length,
+                                    verification_parse_error,
+                                ) = _extract_length_metadata_from_response(
                                     current_response_payload,
+                                    cell_reference_for_log=cell_ref_for_metrics,
+                                )
+
+                                analysis = _analyse_length_verification(
+                                    reported_source_length,
+                                    reported_translated_length,
+                                    reported_length_ratio,
+                                    length_verification_status,
+                                    length_verification_details,
+                                    verification_parse_error,
                                     source_length_units,
                                     translated_length_units,
                                     ratio_value,
                                 )
-                                if corrected_payload is not None:
-                                    current_response_payload = corrected_payload
-                                    (
-                                        reported_translated_length,
-                                        reported_length_ratio,
-                                        length_verification_status,
-                                        length_verification_details,
-                                        reported_source_length,
-                                        verification_parse_error,
-                                    ) = _extract_length_metadata_from_response(
+                                verification_issue_message = analysis["issue_message"]
+
+                                if _should_autocorrect_length_metadata(analysis, ratio_value):
+                                    corrected_payload = _autocorrect_length_metadata(
                                         current_response_payload,
-                                        cell_reference_for_log=cell_ref_for_metrics,
-                                    )
-                                    analysis = _analyse_length_verification(
-                                        reported_source_length,
-                                        reported_translated_length,
-                                        reported_length_ratio,
-                                        length_verification_status,
-                                        length_verification_details,
-                                        verification_parse_error,
                                         source_length_units,
                                         translated_length_units,
                                         ratio_value,
                                     )
-                                    verification_issue_message = analysis["issue_message"]
-                                    if not verification_issue_message:
-                                        actions.log_progress(
-                                            f"length_verification metadata auto-corrected for {cell_ref_for_metrics}."
+                                    if corrected_payload is not None:
+                                        current_response_payload = corrected_payload
+                                        (
+                                            reported_translated_length,
+                                            reported_length_ratio,
+                                            length_verification_status,
+                                            length_verification_details,
+                                            reported_source_length,
+                                            verification_parse_error,
+                                        ) = _extract_length_metadata_from_response(
+                                            current_response_payload,
+                                            cell_reference_for_log=cell_ref_for_metrics,
                                         )
-                                    else:
-                                        actions.log_progress(
-                                            f"length_verification metadata still inconsistent for {cell_ref_for_metrics}: {verification_issue_message}"
+                                        analysis = _analyse_length_verification(
+                                            reported_source_length,
+                                            reported_translated_length,
+                                            reported_length_ratio,
+                                            length_verification_status,
+                                            length_verification_details,
+                                            verification_parse_error,
+                                            source_length_units,
+                                            translated_length_units,
+                                            ratio_value,
                                         )
+                                        verification_issue_message = analysis["issue_message"]
+                                        if not verification_issue_message:
+                                            actions.log_progress(
+                                                f"length_verification metadata auto-corrected for {cell_ref_for_metrics}."
+                                            )
+                                        else:
+                                            actions.log_progress(
+                                                f"length_verification metadata still inconsistent for {cell_ref_for_metrics}: {verification_issue_message}"
+                                            )
                         length_retry_counts[(local_row, col_idx)] = retries_used
                         if violation_kind:
                             length_status = "above" if violation_kind == "above" else "below"
@@ -3379,8 +3388,12 @@ def translate_range_contents(
                             length_limit_messages.append(
                                 f"{cell_ref_for_metrics}: length verification failed ({verification_issue_message})."
                             )
-                    skip_writing_due_to_length = enforce_length_limit and (
-                        length_status in {"above", "below"} or bool(verification_issue_message)
+                    skip_writing_due_to_length = (
+                        enforce_length_limit
+                        and not skip_length_recalibration
+                        and (
+                            length_status in {"above", "below"} or bool(verification_issue_message)
+                        )
                     )
                     any_translation = True
                     if skip_writing_due_to_length:
