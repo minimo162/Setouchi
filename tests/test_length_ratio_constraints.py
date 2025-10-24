@@ -155,7 +155,7 @@ class TranslationLengthRatioTests(unittest.TestCase):
             "Translation prompt should instruct the model to use json.dumps-style escaping.",
         )
 
-    def test_length_verification_mismatch_triggers_retry(self) -> None:
+    def test_length_verification_metadata_mismatch_is_auto_corrected(self) -> None:
         actions = FakeActions()
         actions._data["Sheet1"]["A1"] = "テスト  "
         source_units = len(actions._data["Sheet1"]["A1"])
@@ -177,17 +177,69 @@ class TranslationLengthRatioTests(unittest.TestCase):
                 },
             }
         ]
-        good_ratio = 5 / source_units
+        browser = FakeBrowserManager(
+            responses=[
+                json.dumps(bad_payload, ensure_ascii=False),
+            ]
+        )
+
+        result = excel_tools.translate_range_without_references(
+            actions=actions,
+            browser_manager=browser,
+            cell_range="Sheet1!A1:A1",
+            sheet_name="Sheet1",
+            translation_output_range="Sheet1!B1:B1",
+            overwrite_source=False,
+            length_ratio_limit=2.5,
+            rows_per_batch=1,
+        )
+
+        self.assertTrue(result)
+        self.assertIn(("Sheet1", "B1"), actions.writes)
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["abcde"]])
+        self.assertEqual(
+            len(browser.prompts),
+            1,
+            "Metadata mismatch should be auto-corrected without requesting a retry.",
+        )
+        self.assertTrue(
+            any("metadata auto-corrected" in log for log in actions.logs),
+            "Auto-correction event should be logged for traceability.",
+        )
+
+    def test_length_ratio_violation_triggers_retry(self) -> None:
+        actions = FakeActions()
+        actions._data["Sheet1"]["A1"] = "テスト  "
+        source_units = len(actions._data["Sheet1"]["A1"])
+
+        bad_payload = [
+            {
+                "translated_text": "abcdefghij",
+                "translated_length": 3,
+                "length_ratio": 1.0,
+                "length_verification": {
+                    "result": json.dumps(
+                        {
+                            "source_length": source_units,
+                            "translated_length": 3,
+                            "length_ratio": 1.0,
+                        }
+                    ),
+                    "status": "verified",
+                },
+            }
+        ]
+        good_ratio = 4 / source_units
         good_payload = [
             {
-                "translated_text": "abcde",
-                "translated_length": 5,
+                "translated_text": "abcd",
+                "translated_length": 4,
                 "length_ratio": good_ratio,
                 "length_verification": {
                     "result": json.dumps(
                         {
                             "source_length": source_units,
-                            "translated_length": 5,
+                            "translated_length": 4,
                             "length_ratio": good_ratio,
                         }
                     ),
@@ -209,14 +261,14 @@ class TranslationLengthRatioTests(unittest.TestCase):
             sheet_name="Sheet1",
             translation_output_range="Sheet1!B1:B1",
             overwrite_source=False,
-            length_ratio_limit=2.5,
+            length_ratio_limit=1.5,
             rows_per_batch=1,
         )
 
         self.assertTrue(result)
         self.assertIn(("Sheet1", "B1"), actions.writes)
-        self.assertEqual(actions.writes[("Sheet1", "B1")], [["abcde"]])
-        self.assertEqual(len(browser.prompts), 2, "Mismatch should trigger exactly one retry.")
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["abcd"]])
+        self.assertEqual(len(browser.prompts), 2, "Length ratio violation should trigger exactly one retry.")
         self.assertTrue(
             any("length_verification" in prompt for prompt in browser.prompts[1:]),
             "Retry prompt should mention length verification failure.",
@@ -229,7 +281,7 @@ class TranslationLengthRatioTests(unittest.TestCase):
 
         bad_payload = [
             {
-                "translated_text": "abcde",
+                "translated_text": "abcdefghij",
                 "translated_length": 3,
                 "length_ratio": 1.0,
                 "length_verification": {
@@ -255,7 +307,7 @@ class TranslationLengthRatioTests(unittest.TestCase):
                 sheet_name="Sheet1",
                 translation_output_range="Sheet1!B1:B1",
                 overwrite_source=False,
-                length_ratio_limit=2.5,
+                length_ratio_limit=1.5,
                 rows_per_batch=1,
             )
 

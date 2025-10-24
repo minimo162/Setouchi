@@ -1238,6 +1238,144 @@ def translate_range_contents(
                 return "∞"
             return f"{value:.2f}"
 
+
+        def _analyse_length_verification(
+            reported_source_length: Optional[int],
+            reported_translated_length: Optional[int],
+            reported_length_ratio: Optional[float],
+            length_verification_status: Optional[str],
+            length_verification_details: Optional[Dict[str, Any]],
+            verification_parse_error: Optional[str],
+            source_units: int,
+            translated_units: int,
+            ratio_value: float,
+        ) -> Dict[str, Any]:
+            verification_messages: List[str] = []
+            evaluation_issue = _evaluate_length_verification(
+                length_verification_status,
+                length_verification_details,
+                verification_parse_error,
+                source_units,
+                translated_units,
+                ratio_value,
+            )
+            if evaluation_issue:
+                verification_messages.append(evaluation_issue)
+
+            source_mismatch = (
+                reported_source_length is not None and reported_source_length != source_units
+            )
+            translated_mismatch = (
+                reported_translated_length is not None and reported_translated_length != translated_units
+            )
+            ratio_mismatch = (
+                reported_length_ratio is not None and abs(reported_length_ratio - ratio_value) > 1e-4
+            )
+
+            if source_mismatch:
+                verification_messages.append(
+                    f"source_length ???????l???v??????? (reported {reported_source_length}, actual {source_units})"
+                )
+            if translated_mismatch:
+                verification_messages.append(
+                    f"translated_length ???????l???v??????? (reported {reported_translated_length}, actual {translated_units})"
+                )
+            if ratio_mismatch:
+                verification_messages.append(
+                    f"length_ratio ???????l???v??????? (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
+                )
+
+            status_issue = bool(
+                length_verification_status
+                and length_verification_status.strip().lower() != "verified"
+            )
+            parse_error = verification_parse_error is not None
+            details_missing = bool(
+                length_verification_status and not length_verification_details
+            )
+
+            return {
+                "issue_message": " / ".join(verification_messages) if verification_messages else None,
+                "status_issue": status_issue,
+                "parse_error": parse_error,
+                "details_missing": details_missing,
+                "source_mismatch": source_mismatch,
+                "translated_mismatch": translated_mismatch,
+                "ratio_mismatch": ratio_mismatch,
+            }
+
+        def _should_autocorrect_length_metadata(
+            analysis: Dict[str, Any],
+            ratio_value: float,
+        ) -> bool:
+            if not analysis.get("issue_message"):
+                return False
+            if analysis.get("status_issue") or analysis.get("parse_error"):
+                return False
+            if _ratio_violation_kind(ratio_value):
+                return False
+            return any(
+                analysis.get(key)
+                for key in (
+                    "details_missing",
+                    "source_mismatch",
+                    "translated_mismatch",
+                    "ratio_mismatch",
+                )
+            )
+
+        def _autocorrect_length_metadata(
+            response_payload: Dict[str, Any],
+            source_units: int,
+            translated_units: int,
+            ratio_value: float,
+        ) -> Optional[Dict[str, Any]]:
+            if not isinstance(response_payload, dict):
+                return None
+
+            corrected_payload = dict(response_payload)
+            changed = False
+
+            if corrected_payload.get("translated_length") != translated_units:
+                corrected_payload["translated_length"] = translated_units
+                changed = True
+
+            existing_ratio = corrected_payload.get("length_ratio")
+            if (
+                not isinstance(existing_ratio, (int, float))
+                or not math.isfinite(float(existing_ratio))
+                or abs(float(existing_ratio) - ratio_value) > 1e-4
+            ):
+                corrected_payload["length_ratio"] = ratio_value
+                changed = True
+
+            length_verification_section = corrected_payload.get("length_verification")
+            if isinstance(length_verification_section, dict):
+                verification_dict = dict(length_verification_section)
+            else:
+                verification_dict = {}
+                changed = True
+
+            status_value = verification_dict.get("status")
+            if not isinstance(status_value, str) or not status_value.strip():
+                verification_dict["status"] = "verified"
+                changed = True
+            else:
+                verification_dict["status"] = status_value.strip()
+
+            verification_details = {
+                "source_length": source_units,
+                "translated_length": translated_units,
+                "length_ratio": ratio_value,
+            }
+            verification_result = json.dumps(verification_details, ensure_ascii=False)
+            if verification_dict.get("result") != verification_result:
+                verification_dict["result"] = verification_result
+                changed = True
+
+            corrected_payload["length_verification"] = verification_dict
+            return corrected_payload if changed else None
+
         def _coerce_non_negative_int(value: Any) -> Optional[int]:
             if isinstance(value, bool):
                 return None
@@ -2870,9 +3008,10 @@ def translate_range_contents(
                     translated_length_units = _measure_utf16_length(translation_value)
                     ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
 
-                    verification_messages: List[str] = []
-                    verification_issue_message = None
-                    evaluation_issue = _evaluate_length_verification(
+                    analysis = _analyse_length_verification(
+                        reported_source_length,
+                        reported_translated_length,
+                        reported_length_ratio,
                         length_verification_status,
                         length_verification_details,
                         verification_parse_error,
@@ -2880,28 +3019,44 @@ def translate_range_contents(
                         translated_length_units,
                         ratio_value,
                     )
-                    if evaluation_issue:
-                        verification_messages.append(evaluation_issue)
-                    if reported_source_length is not None and reported_source_length != source_length_units:
-                        verification_messages.append(
-                            f"source_length が実測値と一致しません (reported {reported_source_length}, actual {source_length_units})"
+                    verification_issue_message = analysis["issue_message"]
+
+                    if _should_autocorrect_length_metadata(analysis, ratio_value):
+                        corrected_payload = _autocorrect_length_metadata(
+                            current_response_payload,
+                            source_length_units,
+                            translated_length_units,
+                            ratio_value,
                         )
-                    if (
-                        reported_translated_length is not None
-                        and reported_translated_length != translated_length_units
-                    ):
-                        verification_messages.append(
-                            f"translated_length が実測値と一致しません (reported {reported_translated_length}, actual {translated_length_units})"
-                        )
-                    if (
-                        reported_length_ratio is not None
-                        and abs(reported_length_ratio - ratio_value) > 1e-4
-                    ):
-                        verification_messages.append(
-                            f"length_ratio が実測値と一致しません (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
-                        )
-                    if verification_messages:
-                        verification_issue_message = " / ".join(verification_messages)
+                        if corrected_payload is not None:
+                            current_response_payload = corrected_payload
+                            (
+                                reported_translated_length,
+                                reported_length_ratio,
+                                length_verification_status,
+                                length_verification_details,
+                                reported_source_length,
+                                verification_parse_error,
+                            ) = _extract_length_metadata_from_response(
+                                current_response_payload,
+                                cell_reference_for_log=cell_ref_for_metrics,
+                            )
+                            analysis = _analyse_length_verification(
+                                reported_source_length,
+                                reported_translated_length,
+                                reported_length_ratio,
+                                length_verification_status,
+                                length_verification_details,
+                                verification_parse_error,
+                                source_length_units,
+                                translated_length_units,
+                                ratio_value,
+                            )
+                            verification_issue_message = analysis["issue_message"]
+                            if not verification_issue_message:
+                                actions.log_progress(
+                                    f"length_verification metadata auto-corrected for {cell_ref_for_metrics}."
+                                )
 
                     reported_length_delta: Optional[float] = None
                     reported_ratio_delta: Optional[float] = None
@@ -2973,8 +3128,10 @@ def translate_range_contents(
                                 cell_reference_for_log=cell_ref_for_metrics,
                             )
 
-                            verification_messages = []
-                            evaluation_issue = _evaluate_length_verification(
+                            analysis = _analyse_length_verification(
+                                reported_source_length,
+                                reported_translated_length,
+                                reported_length_ratio,
                                 length_verification_status,
                                 length_verification_details,
                                 verification_parse_error,
@@ -2982,32 +3139,44 @@ def translate_range_contents(
                                 translated_length_units,
                                 ratio_value,
                             )
-                            if evaluation_issue:
-                                verification_messages.append(evaluation_issue)
-                            if (
-                                reported_source_length is not None
-                                and reported_source_length != source_length_units
-                            ):
-                                verification_messages.append(
-                                    f"source_length が実測値と一致しません (reported {reported_source_length}, actual {source_length_units})"
+                            verification_issue_message = analysis["issue_message"]
+
+                            if _should_autocorrect_length_metadata(analysis, ratio_value):
+                                corrected_payload = _autocorrect_length_metadata(
+                                    current_response_payload,
+                                    source_length_units,
+                                    translated_length_units,
+                                    ratio_value,
                                 )
-                            if (
-                                reported_translated_length is not None
-                                and reported_translated_length != translated_length_units
-                            ):
-                                verification_messages.append(
-                                    f"translated_length が実測値と一致しません (reported {reported_translated_length}, actual {translated_length_units})"
-                                )
-                            if (
-                                reported_length_ratio is not None
-                                and abs(reported_length_ratio - ratio_value) > 1e-4
-                            ):
-                                verification_messages.append(
-                                    f"length_ratio が実測値と一致しません (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
-                                )
-                            verification_issue_message = (
-                                " / ".join(verification_messages) if verification_messages else None
-                            )
+                                if corrected_payload is not None:
+                                    current_response_payload = corrected_payload
+                                    (
+                                        reported_translated_length,
+                                        reported_length_ratio,
+                                        length_verification_status,
+                                        length_verification_details,
+                                        reported_source_length,
+                                        verification_parse_error,
+                                    ) = _extract_length_metadata_from_response(
+                                        current_response_payload,
+                                        cell_reference_for_log=cell_ref_for_metrics,
+                                    )
+                                    analysis = _analyse_length_verification(
+                                        reported_source_length,
+                                        reported_translated_length,
+                                        reported_length_ratio,
+                                        length_verification_status,
+                                        length_verification_details,
+                                        verification_parse_error,
+                                        source_length_units,
+                                        translated_length_units,
+                                        ratio_value,
+                                    )
+                                    verification_issue_message = analysis["issue_message"]
+                                    if not verification_issue_message:
+                                        actions.log_progress(
+                                            f"length_verification metadata auto-corrected for {cell_ref_for_metrics}."
+                                        )
 
                             violation_kind = _ratio_violation_kind(ratio_value)
 
