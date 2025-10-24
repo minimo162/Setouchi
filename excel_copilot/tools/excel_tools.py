@@ -1274,22 +1274,22 @@ def translate_range_contents(
 
             if source_mismatch:
                 verification_messages.append(
-                    f"source_length ???????l???v??????? (reported {reported_source_length}, actual {source_units})"
+                    f"source_length の報告値が実測と一致しません (reported {reported_source_length}, actual {source_units})"
                 )
             if translated_mismatch:
                 verification_messages.append(
-                    f"translated_length ???????l???v??????? (reported {reported_translated_length}, actual {translated_units})"
+                    f"translated_length の報告値が実測と一致しません (reported {reported_translated_length}, actual {translated_units})"
                 )
             if ratio_mismatch:
                 verification_messages.append(
-                    f"length_ratio ???????l???v??????? (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
+                    f"length_ratio の報告値が実測と一致しません (reported {reported_length_ratio:.4f}, actual {ratio_value:.4f})"
                 )
 
             if (
                 length_verification_status
                 and length_verification_status.strip().lower() != "verified"
             ):
-                verification_messages.append("length_verification.status �� verified �ł͂���܂���: {length_verification_status}")
+                verification_messages.append(f"length_verification.status が verified ではありません: {length_verification_status}")
 
             status_issue = bool(
                 length_verification_status

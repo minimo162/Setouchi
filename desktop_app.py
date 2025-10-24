@@ -1358,7 +1358,7 @@ class CopilotApp:
 
     def _format_form_summary(self, arguments: Dict[str, Any]) -> str:
         mode_label = MODE_LABELS.get(self.mode, self.mode.value)
-        lines = [f"繝輔か繝ｼ繝騾∽ｿ｡ ({mode_label})"]
+        lines = [f"フォーム送信 ({mode_label})"]
         for field in _iter_mode_field_definitions(self.mode):
             key = field["argument"]
             value = arguments.get(key)
