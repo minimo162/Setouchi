@@ -1,5 +1,6 @@
 import html
 import ast
+import json
 import re
 import difflib
 import logging
@@ -70,6 +71,7 @@ def _shorten_debug(value: str, limit: int = 120) -> str:
 _MOJIBAKE_MARKERS: Set[str] = frozenset('縺繧繝邨蜑螟蠖蛻蝣鬟荳菫譁蜿遘遉遞迚邱遽驟髣髴髢霑蜉')
 _BRACKETED_URL_PATTERN = re.compile(r"\[(\d+)\]\((?:https?|ftp)://[^)]+\)")
 _JAPANESE_CHAR_PATTERN = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufa6d]")
+JAPANESE_CHAR_PATTERN = _JAPANESE_CHAR_PATTERN  # 後方互換用のエイリアス
 
 def _mojibake_penalty(text: str) -> int:
     penalty = 0
@@ -108,19 +110,46 @@ def _count_japanese_characters(text: str) -> int:
 def _maybe_fix_mojibake(text: str) -> str:
     if not isinstance(text, str) or not text:
         return text
-    try:
-        candidate = text.encode('cp932', errors='strict').decode('utf-8', errors='strict')
-    except UnicodeError:
-        return text
-    if candidate == text:
-        return text
+
     original_penalty = _mojibake_penalty(text)
-    candidate_penalty = _mojibake_penalty(candidate)
     original_japanese = _count_japanese_characters(text)
-    candidate_japanese = _count_japanese_characters(candidate)
-    if candidate_penalty > original_penalty and candidate_japanese <= original_japanese:
+
+    candidates: List[str] = []
+
+    def _register_candidate(converter: Any) -> None:
+        try:
+            candidate = converter()
+        except (UnicodeError, ValueError):
+            return
+        if not isinstance(candidate, str):
+            return
+        if not candidate or candidate == text:
+            return
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    _register_candidate(lambda: text.encode('cp932', errors='strict').decode('utf-8', errors='strict'))
+    _register_candidate(lambda: text.encode('utf-8', errors='strict').decode('cp932', errors='strict'))
+    _register_candidate(lambda: text.encode('latin-1', errors='strict').decode('cp932', errors='strict'))
+    _register_candidate(lambda: text.encode('cp932', errors='strict').decode('latin-1', errors='strict'))
+    _register_candidate(lambda: text.encode('latin-1', errors='strict').decode('utf-8', errors='strict'))
+    _register_candidate(lambda: text.encode('utf-8', errors='strict').decode('latin-1', errors='strict'))
+
+    if not candidates:
         return text
-    return candidate
+
+    best_text = text
+    best_score = (original_penalty, -original_japanese)
+
+    for candidate in candidates:
+        candidate_penalty = _mojibake_penalty(candidate)
+        candidate_japanese = _count_japanese_characters(candidate)
+        candidate_score = (candidate_penalty, -candidate_japanese)
+        if candidate_score < best_score:
+            best_text = candidate
+            best_score = candidate_score
+
+    return best_text
 
 
 def _maybe_unescape_html_entities(text: str) -> str:
@@ -243,60 +272,6 @@ def _generate_keyword_variants(base: str) -> List[str]:
         _add(' '.join(punctuation_sanitised.split()))
 
     return variants
-
-
-
-def _extract_primary_quoted_phrase(text: str) -> Optional[str]:
-    match = re.search(r"「([^」]+)」", text)
-    if not match:
-        return None
-    candidate = match.group(1).strip()
-    return candidate or None
-
-
-def _enrich_search_keywords(source_text: str, base_keywords: List[str], max_keywords: int = 12) -> List[str]:
-    """Return the AI-supplied keywords with deduplication and opener diversity."""
-    del source_text  # retained for signature compatibility
-
-    cleaned_keywords: List[str] = []
-    seen_lower: Set[str] = set()
-    leading_pairs: Set[str] = set()
-    candidates: List[Tuple[str, str]] = []
-    fallback_candidates: List[Tuple[str, str]] = []
-
-    for keyword in base_keywords:
-        cleaned = (keyword or "").strip()
-        if not cleaned:
-            continue
-        lowered = cleaned.lower()
-        if lowered in seen_lower:
-            continue
-        seen_lower.add(lowered)
-        tokens = lowered.split()
-        leading_pair = " ".join(tokens[:2]) if tokens else ""
-        candidates.append((cleaned, leading_pair))
-
-    for cleaned, leading_pair in candidates:
-        if leading_pair and leading_pair in leading_pairs:
-            fallback_candidates.append((cleaned, leading_pair))
-            continue
-        leading_pairs.add(leading_pair)
-        cleaned_keywords.append(cleaned)
-        if len(cleaned_keywords) >= max_keywords:
-            return cleaned_keywords
-
-    for cleaned, leading_pair in fallback_candidates:
-        if cleaned in cleaned_keywords:
-            continue
-        cleaned_keywords.append(cleaned)
-        if len(cleaned_keywords) >= max_keywords:
-            break
-
-    return cleaned_keywords
-
-
-
-_MIN_QUOTE_TOKEN_COVERAGE = 0.5
 _PUNCT_TRANSLATION_TABLE = {ord(ch): ' ' for ch in string.punctuation}
 _PUNCT_TRANSLATION_TABLE.update({
     0x2010: ' ',
@@ -407,6 +382,7 @@ _CLOSING_PUNCTUATION = ")]},。、？！「」『』'\"》】〕〉"
 _MAX_DIFF_SEGMENT_TOKENS = 10
 _MAX_DIFF_SEGMENT_CHARS = 48
 
+# ハイライトは色分けで伝えるためラベル文字列は空のままとする。
 _HIGHLIGHT_LABELS = {
     "DEL": "",
     "ADD": "",
@@ -425,7 +401,7 @@ REFUSAL_PATTERNS = (
     "応答形式が不正です。'Thought:' または 'Final Answer:' が見つかりません。",
 )
 
-JAPANESE_CHAR_PATTERN = re.compile(r'[ぁ-んァ-ヶ一-龯]')
+# JAPANESE_CHAR_PATTERN はファイル先頭で定義した _JAPANESE_CHAR_PATTERN のエイリアスを使用します。
 
 
 
@@ -1068,8 +1044,6 @@ def formatrange(actions: ExcelActions,
         horizontal_alignment=horizontalalignment,
         border_style=borderstyle
     )
-
-import json
 
 def translate_range_contents(
     actions: ExcelActions,
@@ -2018,7 +1992,7 @@ def translate_range_contents(
             if invalid_tokens:
                 invalid_urls = ", ".join(_dedupe_preserve_order(invalid_tokens))
                 warnings.append(
-                    f"{label} で指定された値 ({invalid_urls}) はHTTP(S) URLとして解釈できなかったため無視しました。"
+                    f"{label} の値 {invalid_urls} は HTTP(S) URL ではないため除外しました。"
                 )
             return entries, warnings
 
@@ -2069,26 +2043,6 @@ def translate_range_contents(
                 cleaned = cleaned.split(":", 1)[1].strip()
             return cleaned
 
-        def _extract_json_block(response_text: str) -> Optional[Any]:
-            if not isinstance(response_text, str):
-                return None
-            cleaned = response_text.strip()
-            if not cleaned:
-                return None
-            cleaned = cleaned.lstrip("\ufeff")
-            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-            cleaned = cleaned.strip()
-            match = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
-            if match:
-                snippet = match.group(1)
-                try:
-                    return json.loads(snippet)
-                except json.JSONDecodeError:
-                    pass
-            return None
-
-
         def _strip_reference_urls_from_quote(text: str) -> str:
             """Remove embedded URLs while preserving bracket-only citation markers."""
 
@@ -2131,8 +2085,8 @@ def translate_range_contents(
                 "出力は JSON 配列のみです。各要素には次のキーを必ず含めてください。\n",
                 f"- \"translated_text\": {target_language} での翻訳文。\n",
                 "- \"process_notes_jp\": 日本語で数文の翻訳メモ。訳語の根拠や参照ペアの使い方を簡潔に記述してください。\n",
-                '- "length_verification": {"result": "...", "status": "..."} を含めてください、En',
-                '- length_verification.result には Python の json.dumps で得られるようなエスケープ済み JSON 文字列 (例: "{\\"source_length\\": 67, \\"translated_length\\": 142}") を入れてください。未エスケープの引用符やバックスラッシュ不足があると応答は無効です、En',
+                '- "length_verification": {"result": "...", "status": "..."} を含めてください。',
+                '- length_verification.result には Python の json.dumps で得られるようなエスケープ済み JSON 文字列 (例: "{\\"source_length\\": 67, \\"translated_length\\": 142}") を入れてください。未エスケープの引用符やバックスラッシュ不足があると応答は無効です。',
                 "- \"reference_pairs\": 実際に参考にしたペアの配列。利用しなかった場合は空配列を返してください。\n",
                 "余分なコメントやマークダウンを付けず、純粋な JSON だけを返してください。\n",
                 "以下に日本語原文の配列、続いて参照ペアの配列を示します。\n",
@@ -2569,14 +2523,12 @@ def translate_range_contents(
             _ensure_not_stopped()
             actions.log_progress("日本語参照文章抽出: Copilotに依頼中...")
             source_sentence_response = browser_manager.ask(source_sentence_prompt, stop_event=stop_event)
-            try:
-                source_sentence_items = _extract_json_block(source_sentence_response)
-                if source_sentence_items is None:
-                    raise json.JSONDecodeError("no json block", source_sentence_response, 0)
-            except json.JSONDecodeError as exc:
+            source_sentence_items, parse_error_code = _extract_first_json_payload(source_sentence_response)
+            if source_sentence_items is None:
+                error_label = parse_error_code or "unknown"
                 raise ToolExecutionError(
-                    f"Failed to parse source reference response as JSON: {source_sentence_response}"
-                ) from exc
+                    f"Failed to parse source reference response as JSON ({error_label}): {source_sentence_response}"
+                )
             if not isinstance(source_sentence_items, list) or len(source_sentence_items) != len(current_texts):
                 raise ToolExecutionError(
                     "Source reference response must be a list with one entry per source text."
@@ -2677,13 +2629,10 @@ def translate_range_contents(
 
             def _request_extraction(prompt: str) -> Tuple[Optional[List[Any]], str]:
                 response = browser_manager.ask(prompt, stop_event=stop_event)
-                try:
-                    payload = _extract_json_block(response)
-                    if payload is None:
-                        raise json.JSONDecodeError("no json block", response, 0)
-                    return payload, response
-                except json.JSONDecodeError:
+                payload, parse_error_code = _extract_first_json_payload(response)
+                if payload is None or not isinstance(payload, list):
                     return None, response
+                return payload, response
 
             extraction_items, raw_extraction_response = _request_extraction(extraction_prompt)
             if extraction_items is None:
@@ -3996,26 +3945,19 @@ def check_translation_quality(
     sheet_name: Optional[str] = None,
     stop_event: Optional[Event] = None,
 ) -> str:
-    """Translate text in a range and write the output plus optional context.
-
-    
+    """Review translated text against the source and record quality outcomes.
 
     Args:
-
         actions: Excel automation helper injected by the agent runtime.
-
-        browser_manager: Shared browser manager used for translation API calls.
-
-        cell_range: Range containing the source text.
-
-        target_language: Target language name, defaults to English.
-
+        browser_manager: Shared browser manager used for LLM review prompts.
+        source_range: Range containing the Japanese source text.
+        translated_range: Range containing the draft translations under review.
+        status_output_range: Range where OK/REVISE status markers are written.
+        issue_output_range: Range used to write reviewer issue notes.
+        corrected_output_range: Optional range where corrected translations are written.
+        highlight_output_range: Optional range that receives diff-highlight output.
         sheet_name: Optional sheet override; defaults to the active sheet.
-
-        translation_output_range: Optional range for translated rows (three columns per source column).
-
-        overwrite_source: Whether to overwrite the source range directly.
-
+        stop_event: Optional cancellation event set when the user interrupts the operation.
     """
     try:
         def _log_debug(message: str) -> None:
