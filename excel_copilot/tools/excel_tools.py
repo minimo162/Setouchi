@@ -1463,8 +1463,8 @@ def translate_range_contents(
                 )
             instructions.extend([
                 "- Preserve the source intent and critical information.",
-                "- Return a JSON array with one object: {\"translated_text\": \"...\", \"translated_length\": number, \"length_ratio\": number, \"length_verification\": {\"result\": \"...\", \"status\": \"...\"}}."
-                "- Provide an escaped JSON string inside length_verification.result (for example, '{\"source_length\": ...}')."
+                "- Return a JSON array with one object: {\"translated_text\": \"...\", \"translated_length\": number, \"length_ratio\": number, \"length_verification\": {\"result\": \"...\", \"status\": \"...\"}}.",
+                "- Provide a string produced by JSON encoding (for example, json.dumps) inside length_verification.result. Every double quote must be escaped, e.g. \"{\\\"source_length\\\": 123, \\\"translated_length\\\": 240}\".",
                 "- Measure lengths with Python len() semantics on UTF-16 code units before replying.",
                 "",
                 "source_texts(JSON):",
@@ -1759,7 +1759,7 @@ def translate_range_contents(
                 f"- \"translated_text\": {target_language} での翻訳文。\n",
                 "- \"process_notes_jp\": 日本語で数文の翻訳メモ。訳語の根拠や参照ペアの使い方を簡潔に記述してください。\n",
                 '- "length_verification": {"result": "...", "status": "..."} を含めてください、En',
-                '- length_verification.result には エスケープした JSON 文字列 (例: "{\"source_length\": ...}") を入れてください。未エスケープの引用符が含まれる場合は応答が拒否されます、En',
+                '- length_verification.result には Python の json.dumps で得られるようなエスケープ済み JSON 文字列 (例: "{\\"source_length\\": 67, \\"translated_length\\": 142}") を入れてください。未エスケープの引用符やバックスラッシュ不足があると応答は無効です、En',
                 "- \"reference_pairs\": 実際に参考にしたペアの配列。利用しなかった場合は空配列を返してください。\n",
                 "余分なコメントやマークダウンを付けず、純粋な JSON だけを返してください。\n",
                 "以下に日本語原文の配列、続いて参照ペアの配列を示します。\n",
@@ -1772,7 +1772,7 @@ def translate_range_contents(
                 "出力は JSON 配列のみとし、各要素は次のキーを必ず含むオブジェクトにしてください。\n",
                 '- "translated_text": 翻訳文の文字列。\n',
                 '- "length_verification": {"result": "...", "status": "..."} を含めてください、En',
-                '- length_verification.result には エスケープした JSON 文字列 (例: "{\"source_length\": ...}") を入れてください。未エスケープの引用符が含まれる場合は応答が拒否されます、En',
+                '- length_verification.result には Python の json.dumps で得られるようなエスケープ済み JSON 文字列 (例: "{\\"source_length\\": 67, \\"translated_length\\": 142}") を入れてください。未エスケープの引用符やバックスラッシュ不足があると応答は無効です、En',
                 '- "translated_length": 翻訳文の UTF-16 コードユニット数。Python の len() と同じ定義で整数を返してください、En',
                 '- "length_ratio": 原文に対する長さの比率 (translated_length / 原文の UTF-16 コードユニット数)。数値で返してください。\n',
                 "余分な説明やコメント、追加のテキストを含めないでください。\n",

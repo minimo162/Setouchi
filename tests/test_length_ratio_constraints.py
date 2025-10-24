@@ -135,5 +135,25 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertEqual(actions.writes[("Sheet1", "B1")], [["Test  "]])
         self.assertEqual(len(browser.prompts), 1)
 
+    def test_prompt_includes_explicit_json_encoding_guidance(self) -> None:
+        actions = FakeActions()
+        browser = FakeBrowserManager()
+
+        excel_tools.translate_range_without_references(
+            actions=actions,
+            browser_manager=browser,
+            cell_range="Sheet1!A1:A1",
+            sheet_name="Sheet1",
+            translation_output_range="Sheet1!B1:B1",
+            overwrite_source=False,
+            length_ratio_limit=1.3,
+            rows_per_batch=1,
+        )
+
+        self.assertTrue(
+            any("json.dumps" in prompt and "length_verification.result" in prompt for prompt in browser.prompts),
+            "Translation prompt should instruct the model to use json.dumps-style escaping.",
+        )
+
 if __name__ == "__main__":
     unittest.main()
