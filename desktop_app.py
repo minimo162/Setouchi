@@ -41,11 +41,32 @@ from excel_copilot.ui.messages import (
 from excel_copilot.ui.theme import EXPRESSIVE_PALETTE, elevated_surface_gradient
 from excel_copilot.ui.worker import CopilotWorker
 
-if not logging.getLogger().handlers:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+def _ensure_console_logging() -> None:
+    """Ensure root logger always streams to console so exceptions are visible."""
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    stream_handler_exists = False
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.setLevel(logging.INFO)
+            if handler.formatter is None:
+                handler.setFormatter(formatter)
+            stream_handler_exists = True
+            break
+    if not stream_handler_exists:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+    root_logger.setLevel(logging.INFO)
+
+
+_ensure_console_logging()
 
 FOCUS_WAIT_TIMEOUT_SECONDS = 15.0
 PREFERENCE_LAST_WORKBOOK_KEY = "__last_workbook__"
