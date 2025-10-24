@@ -384,6 +384,91 @@ class BrowserCopilotManager:
             except Exception:
                 pass
 
+    def _force_set_chat_input_text(self, chat_input: Locator, prompt: str) -> bool:
+        """Forcefully overwrite the chat input with the provided prompt."""
+        sanitized_prompt = (prompt or "").replace("\r\n", "\n")
+        try:
+            try:
+                chat_input.focus()
+            except Exception:
+                pass
+            applied = chat_input.evaluate(
+                """
+                (target, payload) => {
+                    if (!target) {
+                        return false;
+                    }
+                    const desired = typeof payload?.text === "string" ? payload.text : "";
+                    const normalized = desired.replace(/\r\n/g, "\n");
+
+                    const locateEditable = (node) => {
+                        if (!node) {
+                            return null;
+                        }
+                        if (node.isContentEditable || typeof node.value === "string") {
+                            return node;
+                        }
+                        if (node.querySelector) {
+                            const nested = node.querySelector('[contenteditable="true"], textarea, [role="textbox"]');
+                            if (nested) {
+                                return nested;
+                            }
+                        }
+                        return node;
+                    };
+
+                    const dispatchUpdates = (node) => {
+                        if (!node) {
+                            return;
+                        }
+                        try {
+                            const inputEvt = typeof InputEvent === "function"
+                                ? new InputEvent("input", { bubbles: true, data: normalized })
+                                : new Event("input", { bubbles: true });
+                            node.dispatchEvent(inputEvt);
+                        } catch (err) {
+                            try {
+                                const fallbackEvt = new Event("input", { bubbles: true });
+                                node.dispatchEvent(fallbackEvt);
+                            } catch (err2) {
+                                /* no-op */
+                            }
+                        }
+                        try {
+                            const changeEvt = new Event("change", { bubbles: true });
+                            node.dispatchEvent(changeEvt);
+                        } catch (err) {
+                            /* ignore */
+                        }
+                    };
+
+                    const editable = locateEditable(target);
+                    if (!editable) {
+                        return false;
+                    }
+
+                    if (typeof editable.value === "string") {
+                        editable.value = normalized;
+                    } else if (editable.isContentEditable) {
+                        editable.innerText = normalized;
+                    } else {
+                        return false;
+                    }
+
+                    dispatchUpdates(editable);
+                    if (editable !== target) {
+                        dispatchUpdates(target);
+                    }
+                    return true;
+                }
+                """,
+                {"text": sanitized_prompt},
+            )
+            return bool(applied)
+        except Exception as exc:
+            self._logger.debug("Force set chat input failed: %s", exc)
+            return False
+
 
     def _type_prompt_with_soft_returns(self, chat_input: Locator, prompt: str) -> bool:
         """Type text into the chat input while using soft returns for newlines."""
@@ -902,6 +987,27 @@ class BrowserCopilotManager:
 
         if not current_text:
             raise RuntimeError("Failed to populate the chat input with the prompt.")
+
+        expected_normalized = self._normalize_prompt_text(prompt)
+        normalized_current = self._normalize_prompt_text(current_text)
+        if normalized_current != expected_normalized:
+            print("Notice: chat input mismatch detected; attempting force replacement.")
+            force_success = self._force_set_chat_input_text(chat_input, prompt)
+            if force_success:
+                try:
+                    if self.page:
+                        self.page.wait_for_timeout(120)
+                    else:
+                        time.sleep(0.12)
+                except Exception:
+                    time.sleep(0.12)
+                refreshed_text = self._read_chat_input_text(chat_input)
+                if refreshed_text:
+                    current_text = refreshed_text
+                    normalized_current = self._normalize_prompt_text(refreshed_text)
+            if normalized_current != expected_normalized:
+                self._debug_chat_input_snapshot(chat_input, "force-replace-mismatch")
+                current_text = prompt
 
         return current_text
 

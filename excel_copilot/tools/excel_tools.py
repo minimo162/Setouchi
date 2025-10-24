@@ -1805,11 +1805,17 @@ def translate_range_contents(
             nonlocal output_dirty, source_dirty, any_translation, reused_translation_detected
             if include_context_columns:
                 return
-            translation_value = cached_entry.get("translation")
-            if not isinstance(translation_value, str):
+            translation_value_raw = cached_entry.get("translation")
+            if not isinstance(translation_value_raw, str):
                 return
-            translation_value = _maybe_unescape_html_entities(translation_value).strip()
-            if not translation_value:
+            translation_value = translation_value_raw
+            if not isinstance(translation_value, str):
+                translation_value = str(translation_value)
+            translation_value = _maybe_unescape_html_entities(translation_value)
+            if not isinstance(translation_value, str):
+                translation_value = str(translation_value)
+            translation_value_stripped = translation_value.strip()
+            if not translation_value_stripped:
                 return
 
             applied_changes = False
@@ -2343,22 +2349,22 @@ def translate_range_contents(
 
                     translation_col_index_seed = _translation_column_index(col_idx)
                     existing_output_value: Any = ""
+                    existing_output_raw = ""
                     if not writing_to_source_directly:
                         try:
                             existing_output_value = output_matrix[local_row][translation_col_index_seed]
                         except (IndexError, TypeError):
                             existing_output_value = ""
-
-                    existing_output_normalized = ""
-                    if isinstance(existing_output_value, str):
-                        normalized_output = _normalize_cell_value(existing_output_value)
-                        if isinstance(normalized_output, str):
-                            existing_output_normalized = normalized_output.strip()
+                        if isinstance(existing_output_value, str):
+                            normalized_output = _normalize_cell_value(existing_output_value)
+                            if isinstance(normalized_output, str):
+                                existing_output_raw = normalized_output
+                    existing_output_normalized = existing_output_raw.strip() if isinstance(existing_output_raw, str) else ""
 
                     if existing_output_normalized and not _contains_japanese(existing_output_normalized):
                         if not include_context_columns and canonical_source not in translation_cache:
                             translation_cache[canonical_source] = {
-                                "translation": existing_output_normalized,
+                                "translation": existing_output_raw or existing_output_normalized,
                             }
                         pending_cols = pending_columns_by_row.get(local_row)
                         if pending_cols is not None:
@@ -2656,8 +2662,13 @@ def translate_range_contents(
                             "Translation response must include a 'translated_text' string for each item."
                         )
 
-                    translation_value = _maybe_unescape_html_entities(translation_value)
-                    translation_value = translation_value.strip()
+                    translation_value_raw = _maybe_unescape_html_entities(translation_value)
+                    if not isinstance(translation_value_raw, str):
+                        translation_value_raw = str(translation_value_raw)
+                    translation_value_stripped = translation_value_raw.strip()
+                    if not translation_value_stripped:
+                        raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
+                    translation_value = translation_value_raw
 
                     translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
                     cell_ref_for_metrics = _cell_reference(
@@ -2669,9 +2680,6 @@ def translate_range_contents(
 
                     source_text_canonical = current_texts[item_index]
                     source_cell_value = source_text_canonical
-                    if not translation_value:
-                        raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
-
                     source_length_units = _measure_utf16_length(source_cell_value)
                     translated_length_units = _measure_utf16_length(translation_value)
                     ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
@@ -2730,11 +2738,11 @@ def translate_range_contents(
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
                     source_value_for_comparison = source_cell_value.strip()
-                    if translation_value == source_value_for_comparison and _contains_japanese(translation_value):
+                    if translation_value_stripped == source_value_for_comparison and _contains_japanese(translation_value_stripped):
                         raise ToolExecutionError(
                             "翻訳結果が元のテキストと同一で日本語のままです。翻訳が完了していません。"
                         )
-                    if target_language and target_language.lower().startswith("english") and _contains_japanese(translation_value):
+                    if target_language and target_language.lower().startswith("english") and _contains_japanese(translation_value_stripped):
                         raise ToolExecutionError(
                             "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
                         )
@@ -2860,7 +2868,7 @@ def translate_range_contents(
                             output_dirty = True
                             row_dirty_flags[local_row] = True
                         if include_context_columns:
-                            preview = translation_value
+                            preview = translation_value_stripped or translation_value
                             if len(preview) > 120:
                                 preview = preview[:117] + "..."
                             actions.log_progress(f"翻訳結果プレビュー ({item_index + 1}/{len(current_texts)}): {preview}")

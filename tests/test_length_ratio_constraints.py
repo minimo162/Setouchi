@@ -73,11 +73,11 @@ class FakeBrowserManager:
         self.prompts.append(prompt)
         payload = [
             {
-                "translated_text": "Test",
-                "translated_length": 4,
-                "length_ratio": 0.8,
+                "translated_text": "Test  ",
+                "translated_length": 6,
+                "length_ratio": 1.2,
                 "length_verification": {
-                    "result": json.dumps({"source_length": 5, "translated_length": 4, "ratio": 0.8}),
+                    "result": json.dumps({"source_length": 5, "translated_length": 6, "ratio": 1.2}),
                     "status": "ok",
                 },
             }
@@ -103,7 +103,8 @@ class TranslationLengthRatioTests(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn(("Sheet1", "B1"), actions.writes)
-        self.assertEqual(actions.writes[("Sheet1", "B1")], [["Test"]])
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["Test  "]])
+        self.assertEqual(len(browser.prompts), 1)
         self.assertFalse(any("Length adjustment task" in prompt for prompt in browser.prompts))
 
 
