@@ -1284,6 +1284,84 @@ def translate_range_contents(
                 return numeric_value
             return None
 
+        def _repair_unescaped_length_verification_result(response_text: Any) -> Any:
+            if not isinstance(response_text, str) or '"length_verification"' not in response_text:
+                return response_text
+
+            cursor = 0
+            text = response_text
+            marker_token = '"length_verification"'
+
+            while cursor < len(text):
+                marker_index = text.find(marker_token, cursor)
+                if marker_index == -1:
+                    break
+
+                result_index = text.find('"result"', marker_index)
+                if result_index == -1:
+                    cursor = marker_index + len(marker_token)
+                    continue
+
+                colon_index = text.find(":", result_index)
+                if colon_index == -1:
+                    cursor = result_index + 7
+                    continue
+
+                value_quote_index = text.find('"', colon_index)
+                if value_quote_index == -1:
+                    cursor = colon_index + 1
+                    continue
+
+                inner_start_index = value_quote_index + 1
+                if inner_start_index >= len(text) or text[inner_start_index] != "{":
+                    cursor = inner_start_index
+                    continue
+
+                brace_depth = 0
+                position = inner_start_index
+                closing_brace_index: Optional[int] = None
+                while position < len(text):
+                    char = text[position]
+                    if char == "{":
+                        brace_depth += 1
+                    elif char == "}":
+                        brace_depth -= 1
+                        if brace_depth == 0:
+                            closing_brace_index = position
+                            break
+                    position += 1
+
+                if closing_brace_index is None:
+                    break
+
+                closing_quote_index = closing_brace_index + 1
+                if closing_quote_index >= len(text) or text[closing_quote_index] != '"':
+                    cursor = closing_brace_index + 1
+                    continue
+
+                inner_payload = text[inner_start_index : closing_brace_index + 1]
+                try:
+                    parsed_payload = json.loads(inner_payload)
+                except json.JSONDecodeError:
+                    try:
+                        parsed_payload = ast.literal_eval(inner_payload)
+                    except (ValueError, SyntaxError):
+                        cursor = closing_brace_index + 1
+                        continue
+                if not isinstance(parsed_payload, (dict, list)):
+                    cursor = closing_brace_index + 1
+                    continue
+
+                safe_payload = json.dumps(parsed_payload, ensure_ascii=False)
+                text = (
+                    text[:value_quote_index]
+                    + safe_payload
+                    + text[closing_quote_index + 1 :]
+                )
+                cursor = value_quote_index + len(safe_payload)
+
+            return text
+
         def _parse_length_verification_payload(result: Any) -> Optional[Dict[str, Any]]:
             if isinstance(result, dict):
                 return result
@@ -2484,6 +2562,10 @@ def translate_range_contents(
                         }
                     )
                 translation_context_json = json.dumps(translation_context, ensure_ascii=False)
+                has_supporting_data = (
+                    include_context_columns
+                    or use_references
+                )
 
                 final_prompt_parts = [
                     prompt_preamble,
@@ -2495,10 +2577,11 @@ def translate_range_contents(
                         "Source UTF-16 lengths (JSON):",
                         source_lengths_json,
                     ])
-                final_prompt_parts.extend([
-                    "Supporting data (JSON):",
-                    translation_context_json,
-                ])
+                if has_supporting_data:
+                    final_prompt_parts.extend([
+                        "Supporting data (JSON):",
+                        translation_context_json,
+                    ])
                 final_prompt = "\n".join(final_prompt_parts) + "\n"
                 _ensure_not_stopped()
                 response = browser_manager.ask(final_prompt, stop_event=stop_event)
@@ -2506,6 +2589,7 @@ def translate_range_contents(
                 try:
                     match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
                     json_payload = match.group(0) if match else response
+                    json_payload = _repair_unescaped_length_verification_result(json_payload)
                     parsed_payload = json.loads(json_payload)
                 except json.JSONDecodeError:
                     fallback_prompt_parts = [
@@ -2524,6 +2608,7 @@ def translate_range_contents(
                     try:
                         match = re.search(r'{.*}|\[.*\]', response, re.DOTALL)
                         json_payload = match.group(0) if match else response
+                        json_payload = _repair_unescaped_length_verification_result(json_payload)
                         parsed_payload = json.loads(json_payload)
                     except json.JSONDecodeError as exc:
                         raise ToolExecutionError(

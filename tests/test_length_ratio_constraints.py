@@ -66,11 +66,14 @@ class FakeActions:
 
 
 class FakeBrowserManager:
-    def __init__(self) -> None:
+    def __init__(self, responses: list[str] | None = None) -> None:
         self.prompts: list[str] = []
+        self._responses: list[str] = list(responses) if responses else []
 
     def ask(self, prompt: str, stop_event=None) -> str:
         self.prompts.append(prompt)
+        if self._responses:
+            return self._responses.pop(0)
         payload = [
             {
                 "translated_text": "Test  ",
@@ -107,6 +110,30 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertEqual(len(browser.prompts), 1)
         self.assertFalse(any("Length adjustment task" in prompt for prompt in browser.prompts))
 
+    def test_unescaped_length_verification_result_is_repaired(self) -> None:
+        actions = FakeActions()
+        malformed_response = (
+            '[{"translated_text": "Test  ", "translated_length": 6, "length_ratio": 1.2, '
+            '"length_verification": {"result": "{"source_length": 5, "translated_length": 6, "length_ratio": 1.2}", '
+            '"status": "ok"}}]'
+        )
+        browser = FakeBrowserManager(responses=[malformed_response])
+
+        result = excel_tools.translate_range_without_references(
+            actions=actions,
+            browser_manager=browser,
+            cell_range="Sheet1!A1:A1",
+            sheet_name="Sheet1",
+            translation_output_range="Sheet1!B1:B1",
+            overwrite_source=False,
+            length_ratio_limit=1.3,
+            rows_per_batch=1,
+        )
+
+        self.assertTrue(result)
+        self.assertIn(("Sheet1", "B1"), actions.writes)
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["Test  "]])
+        self.assertEqual(len(browser.prompts), 1)
 
 if __name__ == "__main__":
     unittest.main()
