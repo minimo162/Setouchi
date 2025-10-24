@@ -1852,7 +1852,7 @@ def translate_range_contents(
             if applied_changes:
                 any_translation = True
 
-            source_text_canonical = source_key.strip()
+            source_text_canonical = source_key
             source_length_units = _measure_utf16_length(source_text_canonical)
             translated_length_units = _measure_utf16_length(translation_value)
             ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
@@ -2668,7 +2668,7 @@ def translate_range_contents(
                     )
 
                     source_text_canonical = current_texts[item_index]
-                    source_cell_value = source_text_canonical.strip()
+                    source_cell_value = source_text_canonical
                     if not translation_value:
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
@@ -2729,7 +2729,8 @@ def translate_range_contents(
                     if not translation_value:
                         raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
 
-                    if translation_value == source_cell_value and _contains_japanese(translation_value):
+                    source_value_for_comparison = source_cell_value.strip()
+                    if translation_value == source_value_for_comparison and _contains_japanese(translation_value):
                         raise ToolExecutionError(
                             "翻訳結果が元のテキストと同一で日本語のままです。翻訳が完了していません。"
                         )

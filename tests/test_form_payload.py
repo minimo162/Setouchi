@@ -2,6 +2,11 @@ import queue
 import types
 import unittest
 
+import pathlib
+import sys
+
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
+
 from desktop_app import (
     CopilotApp,
     CopilotMode,
