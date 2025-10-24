@@ -1077,8 +1077,10 @@ def translate_range_contents(
         target_reference_urls: URLs to the target-language reference documents used for pairing.
         translation_output_range: Range where translated content, process notes, and reference pairs are written.
         overwrite_source: Whether to overwrite the source range directly.
-        length_ratio_limit: Deprecated legacy argument retained for compatibility; the value is ignored.
-        length_ratio_min: Deprecated legacy argument retained for compatibility; the value is ignored.
+        length_ratio_limit: Optional upper bound for the ratio (translated UTF-16 length / source UTF-16 length)
+            enforced in translation-only mode. When None, no upper limit is applied.
+        length_ratio_min: Optional lower bound for the ratio (translated UTF-16 length / source UTF-16 length)
+            enforced in translation-only mode. When None, no lower limit is applied.
         rows_per_batch: Optional cap for batch size when chunking the translation work.
         stop_event: Optional cancellation event set when the user interrupts the operation.
         output_mode: Controls whether contextual columns (process notes / reference pairs) are emitted.
@@ -1142,16 +1144,65 @@ def translate_range_contents(
             _MIN_CONTEXT_BLOCK_WIDTH if include_context_columns else 1
         )
 
-        if length_ratio_limit is not None or length_ratio_min is not None:
-            actions.log_progress(
-                "length_ratio_limit / length_ratio_min は現在サポートを終了したため無視されます。"
+        effective_length_ratio_limit: Optional[float] = None
+        effective_length_ratio_min: Optional[float] = None
+        if length_ratio_limit is not None:
+            try:
+                candidate_limit = float(length_ratio_limit)
+            except (TypeError, ValueError):
+                raise ToolExecutionError("length_ratio_limit は数値で指定してください。") from None
+            if not math.isfinite(candidate_limit) or candidate_limit <= 0:
+                raise ToolExecutionError("length_ratio_limit には 0 より大きい有限の数値を指定してください。")
+            effective_length_ratio_limit = candidate_limit
+        if length_ratio_min is not None:
+            try:
+                candidate_min = float(length_ratio_min)
+            except (TypeError, ValueError):
+                raise ToolExecutionError("length_ratio_min は数値で指定してください。") from None
+            if not math.isfinite(candidate_min) or candidate_min < 0:
+                raise ToolExecutionError("length_ratio_min には 0 以上の有限の数値を指定してください。")
+            effective_length_ratio_min = candidate_min
+        if (
+            effective_length_ratio_min is not None
+            and effective_length_ratio_limit is not None
+            and effective_length_ratio_min > effective_length_ratio_limit
+        ):
+            raise ToolExecutionError("length_ratio_min は length_ratio_limit 以下にしてください。")
+
+        enforce_length_limit = (
+            output_mode == "translation_only"
+            and (
+                effective_length_ratio_limit is not None
+                or effective_length_ratio_min is not None
             )
+        )
+
         length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        length_limit_violations: List[str] = []
 
         def _compute_length_ratio(source_units: int, translated_units: int) -> float:
             if source_units <= 0:
                 return 0.0 if translated_units <= 0 else math.inf
             return translated_units / source_units
+
+        def _ratio_violation_kind(ratio_value: float) -> Optional[str]:
+            if effective_length_ratio_min is not None and ratio_value < effective_length_ratio_min:
+                return "below"
+            if effective_length_ratio_limit is not None and ratio_value > effective_length_ratio_limit:
+                return "above"
+            return None
+
+        def _format_ratio_bounds_for_display() -> str:
+            if (
+                effective_length_ratio_min is not None
+                and effective_length_ratio_limit is not None
+            ):
+                return f"{effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f}"
+            if effective_length_ratio_min is not None:
+                return f"{effective_length_ratio_min:.2f} 以上"
+            if effective_length_ratio_limit is not None:
+                return f"{effective_length_ratio_limit:.2f} 以下"
+            return ""
 
         def _format_ratio(value: float) -> str:
             if not math.isfinite(value):
@@ -1531,19 +1582,26 @@ def translate_range_contents(
             prompt_preamble = "".join(prompt_parts)
         else:
 
-            # translation_only 用プロンプト（初回から長さ厳守）
+            # translation_only 用プロンプト（初回で制約を満たす）
             prompt_lines = [
                 f"以下の日本語テキストを {target_language} に翻訳してください。",
-                "重要: 再調整は行いません。初回の回答だけで各訳文の長さを指定レンジに必ず収めてください。",
-                "出力は JSON 配列のみ。各要素は次のキーを必ず含めます：",
-                '- "translated_text": 訳文の文字列（空文字列不可）。',
+                "重要: 後続の長さ再調整は行いません。初回の回答で文字数制約を必ず満たしてください。",
+                "出力は JSON 配列のみ。各要素には次のキーを含めてください:",
+                '- "translated_text": 訳文（空文字列不可）。',
                 '- "translated_length": 訳文の UTF-16 コードユニット数（Python の len() と同じ定義、整数）。',
                 '- "length_ratio": translated_length / 原文の UTF-16 長さ（数値）。',
-                '- "length_verification": {"result": "...", "status": "verified"}。',
-                '- length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} のような JSON オブジェクトを入れてください (例: {"source_length": 67, "translated_length": 142, "length_ratio": 2.12})',
-                '注意: "translated_length" と length_verification.result 内の "translated_length" は同一の再計測値を入れ、"length_ratio" も両方で同じ値にしてください。',
-                "禁止: 余分な説明、前置き、マークダウン、コードフェンス、複数の JSON ペイロード。",
+                '- "length_verification": {"result": {...}, "status": "verified"}。',
+                '- length_verification.result には {"source_length": 数値, "translated_length": 数値, "length_ratio": 数値} を記入し、訳文の実測値と一致させてください。',
+                "禁止: 余分な説明、前置き、マークダウン、複数の JSON ペイロード。",
             ]
+            if enforce_length_limit:
+                bounds_text = _format_ratio_bounds_for_display()
+                if bounds_text:
+                    prompt_lines.append(f"文字数倍率の目標レンジ: {bounds_text}。")
+                prompt_lines.extend([
+                    "回答前に各原文の UTF-16 長さを用いて translated_length がレンジ内に収まっているか確認してください。",
+                    "上限を超える場合は簡潔にまとめ、下限を下回る場合は意味を変えずに自然な補足で調整してください。",
+                ])
             prompt_lines.extend([
                 "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
             ])
@@ -2284,6 +2342,12 @@ def translate_range_contents(
                     current_texts,
                 )
 
+                source_lengths: Optional[List[int]] = None
+                source_lengths_json: Optional[str] = None
+                if enforce_length_limit:
+                    source_lengths = [_measure_utf16_length(text) for text in current_texts]
+                    source_lengths_json = json.dumps(source_lengths, ensure_ascii=False)
+
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
 
                 translation_context = []
@@ -2311,6 +2375,11 @@ def translate_range_contents(
                         "Source sentences:",
                         texts_json,
                     ])
+                    if source_lengths_json is not None:
+                        prompt_sections.extend([
+                            "Source UTF-16 lengths (JSON):",
+                            source_lengths_json,
+                        ])
                     if include_supporting and has_supporting_data:
                         prompt_sections.extend([
                             "Supporting data (JSON):",
@@ -2496,11 +2565,27 @@ def translate_range_contents(
                             "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
                         )
 
+                    violation_kind: Optional[str] = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
+                    if enforce_length_limit and violation_kind:
+                        limit_parts: List[str] = []
+                        if effective_length_ratio_min is not None:
+                            limit_parts.append(f"下限 {effective_length_ratio_min:.2f}")
+                        if effective_length_ratio_limit is not None:
+                            limit_parts.append(f"上限 {effective_length_ratio_limit:.2f}")
+                        limit_text = "/".join(limit_parts) if limit_parts else "設定範囲"
+                        length_limit_violations.append(
+                            f"{cell_ref_for_metrics}: 翻訳 {translated_length_units} / 原文 {source_length_units} "
+                            f"(倍率 {_format_ratio(ratio_value)}) が {limit_text} を満たしていません"
+                        )
+
                     metric_entry: Dict[str, Any] = {
                         "source_length": source_length_units,
                         "translated_length": translated_length_units,
                         "ratio": ratio_value,
                         "cell_ref": cell_ref_for_metrics,
+                        "limit": effective_length_ratio_limit,
+                        "min_limit": effective_length_ratio_min,
+                        "status": violation_kind or "ok",
                     }
                     length_metrics[(local_row, col_idx)] = metric_entry
                     any_translation = True
@@ -2760,6 +2845,15 @@ def translate_range_contents(
         if include_context_columns and explanation_fallback_notes:
             messages.insert(0, "process_notes_jp が不足していたセルに既定の説明文を補いました: " + " / ".join(explanation_fallback_notes))
 
+        if enforce_length_limit and length_limit_violations:
+            bounds_text = _format_ratio_bounds_for_display() or "設定範囲"
+            failure_summary = "; ".join(length_limit_violations[:5])
+            if len(length_limit_violations) > 5:
+                failure_summary += "; ..."
+            raise ToolExecutionError(
+                f"Length ratio constraint violation in {len(length_limit_violations)} cell(s) (expected {bounds_text}): {failure_summary}"
+            )
+
         write_messages: List[str] = []
 
         if range_adjustment_note:
@@ -2820,7 +2914,8 @@ def translate_range_without_references(
 ) -> str:
     """Translate ranges without using external reference material.
 
-    length_ratio_limit / length_ratio_min は後方互換性のために受け付けますが、現在は無視されます。"""
+    Optionally enforces a UTF-16 ベースの文字数倍率制限を適用できます。
+    Supports defining both upper (length_ratio_limit) and lower (length_ratio_min) bounds."""
     if rows_per_batch is not None and rows_per_batch < 1:
         raise ToolExecutionError("rows_per_batch must be at least 1 when provided.")
 
@@ -2876,8 +2971,8 @@ def translate_range_with_references(
         citation_output_range: Optional range for structured citation output.
         overwrite_source: Whether to overwrite the source cells directly.
         stop_event: Optional cancellation event set when the user interrupts execution.
-        length_ratio_limit: Deprecated legacy argument retained for compatibility; the value is ignored.
-        length_ratio_min: Deprecated legacy argument retained for compatibility; the value is ignored.
+        length_ratio_limit: Optional upper bound for UTF-16 length ratio enforced in translation-only mode.
+        length_ratio_min: Optional lower bound for UTF-16 length ratio enforced in translation-only mode.
     """
     normalized_source_refs = source_reference_urls or reference_urls
     if not normalized_source_refs and not target_reference_urls:
