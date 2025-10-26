@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import string
+import copy
 from threading import Event
 from typing import List, Any, Optional, Dict, Tuple, Set, Mapping
 from pathlib import Path
@@ -2307,11 +2308,10 @@ def translate_range_contents(
                                 _finalize_row(local_row)
                         continue
 
-                    if not include_context_columns:
-                        cached_entry = translation_cache.get(canonical_source)
-                        if cached_entry:
-                            _apply_cached_translation(local_row, col_idx, canonical_source, cached_entry)
-                            continue
+                    cached_entry_for_source = translation_cache.get(canonical_source)
+                    if not include_context_columns and cached_entry_for_source:
+                        _apply_cached_translation(local_row, col_idx, canonical_source, cached_entry_for_source)
+                        continue
 
                     translation_col_index_seed = _translation_column_index(col_idx)
                     existing_output_value: Any = ""
@@ -2328,59 +2328,63 @@ def translate_range_contents(
                     existing_output_normalized = existing_output_raw.strip() if isinstance(existing_output_raw, str) else ""
 
                     if existing_output_normalized and not _contains_japanese(existing_output_normalized):
-                        translation_value_existing = (
-                            existing_output_value
-                            if isinstance(existing_output_value, str)
-                            else existing_output_normalized
-                        )
-                        if not isinstance(translation_value_existing, str):
-                            translation_value_existing = str(translation_value_existing)
-
+                        reused_translation_detected = True
                         cell_ref_for_metrics = _cell_reference(
                             output_start_row,
                             output_start_col,
                             local_row,
                             translation_col_index_seed,
                         )
-                        source_length_units = _measure_utf16_length(canonical_source)
-                        translated_length_units = _measure_utf16_length(translation_value_existing)
-                        ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-                        violation_kind = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
 
-                        metric_entry_existing = {
-                            "source_length": source_length_units,
-                            "translated_length": translated_length_units,
-                            "ratio": ratio_value,
-                            "cell_ref": cell_ref_for_metrics,
-                            "limit": effective_length_ratio_limit,
-                            "min_limit": effective_length_ratio_min,
-                            "status": violation_kind or "ok",
-                            "reported_source_length": None,
-                            "reported_translated_length": None,
-                            "reported_ratio": None,
-                        }
-                        length_metrics[(local_row, col_idx)] = metric_entry_existing
-
-                        if enforce_length_limit and violation_kind and (local_row, col_idx) not in length_violation_positions:
-                            direction_label = "上限" if violation_kind == "above" else "下限"
-                            ratio_text = _format_ratio(ratio_value)
-                            length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
-                            length_violation_positions.add((local_row, col_idx))
-                            actions.log_progress(
-                                f"既存の翻訳 {cell_ref_for_metrics} が文字数倍率制約を満たしていません: ×{ratio_text} ({direction_label}逸脱)。"
+                        if cached_entry_for_source and isinstance(cached_entry_for_source.get("translation"), str):
+                            translation_value_existing = (
+                                existing_output_value
+                                if isinstance(existing_output_value, str)
+                                else existing_output_normalized
                             )
+                            if not isinstance(translation_value_existing, str):
+                                translation_value_existing = str(translation_value_existing)
 
-                        if not include_context_columns and canonical_source not in translation_cache:
-                            translation_cache[canonical_source] = {
-                                "translation": translation_value_existing,
+                            source_length_units = _measure_utf16_length(canonical_source)
+                            translated_length_units = _measure_utf16_length(translation_value_existing)
+                            ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                            violation_kind = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
+
+                            metric_entry_existing = {
+                                "source_length": source_length_units,
+                                "translated_length": translated_length_units,
+                                "ratio": ratio_value,
+                                "cell_ref": cell_ref_for_metrics,
+                                "limit": effective_length_ratio_limit,
+                                "min_limit": effective_length_ratio_min,
+                                "status": violation_kind or "ok",
+                                "reported_source_length": None,
+                                "reported_translated_length": None,
+                                "reported_ratio": None,
                             }
-                        pending_cols = pending_columns_by_row.get(local_row)
-                        if pending_cols is not None:
-                            pending_cols.discard(col_idx)
-                            if not pending_cols:
-                                _finalize_row(local_row)
-                        reused_translation_detected = True
-                        continue
+                            length_metrics[(local_row, col_idx)] = metric_entry_existing
+
+                            if enforce_length_limit and violation_kind and (local_row, col_idx) not in length_violation_positions:
+                                direction_label = "上限" if violation_kind == "above" else "下限"
+                                ratio_text = _format_ratio(ratio_value)
+                                length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
+                                length_violation_positions.add((local_row, col_idx))
+                                actions.log_progress(
+                                    f"既存の翻訳 {cell_ref_for_metrics} が文字数倍率制約を満たしていません: ×{ratio_text} ({direction_label}逸脱)。"
+                                )
+
+                            pending_cols = pending_columns_by_row.get(local_row)
+                            if pending_cols is not None:
+                                pending_cols.discard(col_idx)
+                                if not pending_cols:
+                                    _finalize_row(local_row)
+                            continue
+
+                        if not include_context_columns:
+                            actions.log_progress(
+                                f"{cell_ref_for_metrics} に既存の訳文が見つかりましたが、新しい訳文を取得します。"
+                            )
+                        # fall through to request a fresh translation
 
                     chunk_texts.append(canonical_source)
                     chunk_positions.append((local_row, col_idx))
@@ -2579,6 +2583,35 @@ def translate_range_contents(
                 length_retry_count = 0
                 extra_ratio_notice: Optional[str] = None
                 max_length_retries = 3
+                best_violation_updates: Dict[Tuple[int, int], Dict[str, Any]] = {}
+                best_violation_distances: Dict[Tuple[int, int], float] = {}
+
+                def _violation_distance(ratio_value: float, violation_kind: Optional[str]) -> float:
+                    if violation_kind == "above":
+                        bound = effective_length_ratio_limit if effective_length_ratio_limit is not None else ratio_value
+                        return max(0.0, ratio_value - bound)
+                    if violation_kind == "below":
+                        bound = effective_length_ratio_min if effective_length_ratio_min is not None else ratio_value
+                        return max(0.0, bound - ratio_value)
+                    if effective_length_ratio_limit is not None and ratio_value > effective_length_ratio_limit:
+                        return ratio_value - effective_length_ratio_limit
+                    if effective_length_ratio_min is not None and ratio_value < effective_length_ratio_min:
+                        return effective_length_ratio_min - ratio_value
+                    return 0.0
+
+                def _record_violation_candidates(updates: List[Dict[str, Any]]) -> None:
+                    for candidate in updates:
+                        violation_kind = candidate.get("violation_kind")
+                        if not violation_kind:
+                            continue
+                        key = (candidate.get("local_row"), candidate.get("col_idx"))
+                        if key[0] is None or key[1] is None:
+                            continue
+                        distance = _violation_distance(candidate.get("ratio_value", 0.0), violation_kind)
+                        previous = best_violation_distances.get(key)
+                        if previous is None or distance < previous:
+                            best_violation_distances[key] = distance
+                            best_violation_updates[key] = copy.deepcopy(candidate)
 
                 while True:
                     parsed_payload = _obtain_translation_payload(extra_ratio_notice)
@@ -2838,29 +2871,57 @@ def translate_range_contents(
                         )
 
                     if enforce_length_limit and ratio_violations_local:
+                        _record_violation_candidates(pending_updates)
                         if length_retry_count >= max_length_retries:
-                            violation_messages = "; ".join(
-                                f"{entry['cell_ref']}: {_format_ratio(entry['ratio'])}" for entry in ratio_violations_local[:5]
+                            if best_violation_updates:
+                                fallback_updates: List[Dict[str, Any]] = []
+                                fallback_seen_keys: Set[Tuple[int, int]] = set()
+
+                                for update in pending_updates:
+                                    key = (update.get("local_row"), update.get("col_idx"))
+                                    if update.get("violation_kind") and key in best_violation_updates:
+                                        best_update = copy.deepcopy(best_violation_updates[key])
+                                        fallback_updates.append(best_update)
+                                        fallback_seen_keys.add(key)
+                                    else:
+                                        fallback_updates.append(update)
+                                        if key[0] is not None and key[1] is not None:
+                                            fallback_seen_keys.add(key)
+
+                                for key, best_update in best_violation_updates.items():
+                                    if key not in fallback_seen_keys:
+                                        fallback_updates.append(copy.deepcopy(best_update))
+                                        fallback_seen_keys.add(key)
+
+                                pending_updates = fallback_updates
+                                ratio_violations_local = []
+                                actions.log_progress(
+                                    "翻訳応答が長さ制約に収まりませんでしたが、最も近い訳文を採用します。"
+                                )
+                            else:
+                                violation_messages = "; ".join(
+                                    f"{entry['cell_ref']}: {_format_ratio(entry['ratio'])}" for entry in ratio_violations_local[:5]
+                                )
+                                raise ToolExecutionError(
+                                    f"Length ratio constraint violation persisted after {max_length_retries} retries: {violation_messages}"
+                                )
+                        if ratio_violations_local:
+                            length_retry_count += 1
+                            notice_lines = [
+                                "前回の応答で以下の項目が文字数制約を満たしていません。",
+                                "各訳文を調整し、translated_length と length_ratio を制約内に収めてください。",
+                            ]
+                            for entry in ratio_violations_local:
+                                direction = "上限" if entry["kind"] == "above" else "下限"
+                                notice_lines.append(
+                                    f"- {entry['cell_ref']}: 実測倍率 {_format_ratio(entry['ratio'])} が{direction}を外れています "
+                                    f"(原文 {entry['source_units']}、訳文 {entry['translated_units']})。"
+                                )
+                            extra_ratio_notice = "\n".join(notice_lines)
+                            actions.log_progress(
+                                f"翻訳応答が長さ制約を満たしていません（再リクエスト {length_retry_count}/{max_length_retries}）。"
                             )
-                            raise ToolExecutionError(
-                                f"Length ratio constraint violation persisted after {max_length_retries} retries: {violation_messages}"
-                            )
-                        length_retry_count += 1
-                        notice_lines = [
-                            "前回の応答で以下の項目が文字数制約を満たしていません。",
-                            "各訳文を調整し、translated_length と length_ratio を制約内に収めてください。",
-                        ]
-                        for entry in ratio_violations_local:
-                            direction = "上限" if entry["kind"] == "above" else "下限"
-                            notice_lines.append(
-                                f"- {entry['cell_ref']}: 実測倍率 {_format_ratio(entry['ratio'])} が{direction}を外れています "
-                                f"(原文 {entry['source_units']}、訳文 {entry['translated_units']})。"
-                            )
-                        extra_ratio_notice = "\n".join(notice_lines)
-                        actions.log_progress(
-                            f"翻訳応答が長さ制約を満たしていません（再リクエスト {length_retry_count}/{max_length_retries}）。"
-                        )
-                        continue
+                            continue
 
                     for message in metadata_corrections:
                         actions.log_progress(message)
