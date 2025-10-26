@@ -262,6 +262,48 @@ class TranslationLengthRatioTests(unittest.TestCase):
             "Translation prompt should instruct the model to output source_length/translated_length/length_ratio fields.",
         )
 
+    def test_playwright_prompt_for_tariff_impact_contains_ratio_guidance(self) -> None:
+        actions = FakeActions()
+        actions._data["Sheet1"]["A1"] = "関税影響"
+        browser = FakeBrowserManager(
+            responses=[
+                json.dumps(
+                    [
+                        {
+                            "translated_text": "Tariff hit",
+                            "source_length": 4,
+                            "translated_length": 10,
+                            "length_ratio": 2.5,
+                        }
+                    ],
+                    ensure_ascii=False,
+                )
+            ]
+        )
+
+        result = excel_tools.translate_range_without_references(
+            actions=actions,
+            browser_manager=browser,
+            cell_range="Sheet1!A1:A1",
+            sheet_name="Sheet1",
+            translation_output_range="Sheet1!B1:B1",
+            overwrite_source=False,
+            length_ratio_limit=2.5,
+            length_ratio_min=2.0,
+        )
+
+        self.assertTrue(result)
+        self.assertIn(("Sheet1", "B1"), actions.writes)
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["Tariff hit"]])
+        self.assertGreaterEqual(len(browser.prompts), 1)
+
+        prompt_text = browser.prompts[0]
+        self.assertIn("文字数倍率の目標レンジ: 2.00〜2.50。", prompt_text)
+        self.assertIn("補足: 範囲中央 (2.25) × source_length を目安の訳文長とし", prompt_text)
+        self.assertIn("列挙や見出しを訳す場合は 'and' を使わずに", prompt_text)
+        self.assertIn("文章として訳す場合は必要な接続詞の使用を許容しますが", prompt_text)
+        self.assertIn('Source sentences:\n["関税影響"]', prompt_text)
+
     def test_length_metadata_mismatch_is_auto_corrected(self) -> None:
         actions = FakeActions()
         actions._data["Sheet1"]["A1"] = "テスト  "

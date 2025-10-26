@@ -1661,6 +1661,17 @@ def translate_range_contents(
                 '- "source_length": 原文の UTF-16 コードユニット数（整数）。\n',
                 '- "translated_length": 訳文の UTF-16 コードユニット数（整数）。\n',
                 '- "length_ratio": translated_length / source_length（数値）。\n',
+                '- "length_verification": { "method": "utf16-le", "translated_length_computed": 整数, "length_ratio_computed": 数値, "status": "ok" }\n',
+                "UTF-16 長さを求めるときは、各文字を UTF-16LE でエンコードして 2 バイトで割った正確な値を使用してください。重複計算や概算は禁止です。\n",
+                "検算には Python などで `len(translated_text.encode(\"utf-16-le\")) // 2` を実行した結果を用い、必ずその値を translated_length と length_verification.translated_length_computed の両方に転記してください。\n",
+                "translated_length と length_ratio は必ず以下の計算法に従って一致させてください。\n",
+                "  - translated_length = len(translated_text.encode(\"utf-16-le\")) / 2 を整数化した値。\n",
+                "  - length_ratio = translated_length / source_length を小数第2位まで四捨五入した値。\n",
+                "  - JSON 出力後に両値を再チェックし、計算とズレていれば必ず修正してください。\n",
+                "  - translated_text が直前の回答と同一内容だった場合はエラーと見なし、新しい訳語に差し替えてから出力してください。\n",
+                "  - length_verification.translated_length_computed および length_verification.length_ratio_computed も同じ計算結果を記載し、translated_length/length_ratio と数値が一致しない場合は JSON を出力せず再計算してください。\n",
+                "  - translated_length が許容上限（source_length × 2.50 の四捨五入値）を超える場合は JSON を提出せず、語数や語彙を見直して再計算するまで回答禁止です。\n",
+                "  - length_verification.status は計算結果が完全に一致した場合だけ \"ok\" を返し、不一致時は \"mismatch\" と記録して JSON を送信せず再計算してください。\n",
                 "禁止: 余計な説明、前置き、マークダウン、複数の JSON ペイロード。\n",
             ]
             if enforce_length_limit:
@@ -1706,7 +1717,19 @@ def translate_range_contents(
                     "見出し・項目名では 1 語訳や短い同義語を優先し、不要な接続詞（and 等）や語尾の反復を避けてください。\n"
                 )
                 prompt_lines.append(
-                    "'and' を含む列挙は禁止です。必ずコンマやスラッシュで区切り、各項目は 1 語程度に簡潔化してください（例示不要）。\n"
+                    "列挙や見出しを訳す場合は 'and' を使わずにコンマやスラッシュで区切り、各項目を 1 語程度に簡潔化してください（例示不要）。\n"
+                )
+                prompt_lines.append(
+                    "以前の応答でレンジ外だった訳文を再利用せず、語数や語彙を調整した新しい案を必ず提示してください。\n"
+                )
+                prompt_lines.append(
+                    "直前にレンジ外と判定された語句（例: \"Tariff Impact\" のような長い表現）は再利用禁止です。語彙を圧縮した別案に置き換えてください。\n"
+                )
+                prompt_lines.append(
+                    "短い同義語が必要な場合は 1 語訳を優先的に検討し、UTF-16 長が収まるまで語を調整してください。\n"
+                )
+                prompt_lines.append(
+                    "文章として訳す場合は必要な接続詞の使用を許容しますが、冗長な節や重複表現を削除し、簡潔な語順に再構成してください。\n"
                 )
                 prompt_lines.append(
                     "複合語が長くなる場合は意味を保ったまま一般的な単語 1 語に置き換えてください。\n"
@@ -2959,6 +2982,15 @@ def translate_range_contents(
                                 notice_lines.append(f"文字数倍率の目標レンジ: {ratio_bounds_display}。")
                             notice_lines.extend([
                                 "各訳文を調整し、translated_length と length_ratio を制約内に収めてください。",
+                                "調整ヒント:",
+                                "- 見出しや列挙では冠詞や 'and' を省き、短い名詞・同義語に置き換えてください。",
+                                "- 文として訳す場合は冗長な節や重複語を削除し、簡潔な語順へ再構成してください。",
+                                "- 長い複合語は意味を保ったまま 1 語の一般的な語に言い換えるか、不要な修飾語を省いてください。",
+                                "- 下限を下回る場合は意味を変えずに必要な情報を自然な文で補完してください。",
+                                "- translated_length は UTF-16LE で再計算し、length_ratio は translated_length / source_length を小数第2位まで四捨五入した値に揃えてください。",
+                                "- length_verification.translated_length_computed と length_verification.length_ratio_computed も同じ結果を記載し、他の値と一致しない場合は JSON を提出しないでください。",
+                                "- length_verification.status は一致時のみ \"ok\" にし、不一致なら \"mismatch\" と記録して再翻訳してください。",
+                                "- 1 語訳が長すぎる場合は Hit/Toll/Drag など別の短い語に置き換えて必ずレンジに収めてください。",
                                 "再回答前に全項目の translated_length / source_length を再計算し、指定レンジ内であることを確認してから JSON を返してください。",
                             ])
                             extra_ratio_notice = "\n".join(notice_lines)
