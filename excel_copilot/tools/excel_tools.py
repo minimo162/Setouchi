@@ -1630,12 +1630,7 @@ def translate_range_contents(
             return variants
 
 
-
-
-
-
-
-
+        ratio_bounds_display = _format_ratio_bounds_for_display() if enforce_length_limit else ""
         prompt_parts: List[str]
         if include_context_columns:
             prompt_parts = [
@@ -1669,12 +1664,11 @@ def translate_range_contents(
                 "禁止: 余計な説明、前置き、マークダウン、複数の JSON ペイロード。\n",
             ]
             if enforce_length_limit:
-                bounds_text = _format_ratio_bounds_for_display()
-                if bounds_text:
-                    prompt_lines.append(f"文字数倍率の目標レンジ: {bounds_text}。")
+                if ratio_bounds_display:
+                    prompt_lines.append(f"文字数倍率の目標レンジ: {ratio_bounds_display}。")
                 prompt_lines.extend([
-                    "回答前に各原文の UTF-16 長さを用いて translated_length がレンジ内に収まっているか確認してください。",
-                    "上限を超える場合は簡潔にまとめ、下限を下回る場合は意味を変えずに自然な補足で調整してください。",
+                    "初回の翻訳および必要に応じた再翻訳のいずれでも、回答前に各原文の UTF-16 長さを用いて translated_length がレンジ内に収まっているか確認してください。",
+                    "上限を超える場合は簡潔にまとめ、下限を下回る場合は意味を変えずに自然な補足で調整した上で、最終回答前に length_ratio がレンジ内であることを再確認してください。",
                 ])
             prompt_lines.extend([
                 "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
@@ -2909,7 +2903,6 @@ def translate_range_contents(
                             length_retry_count += 1
                             notice_lines = [
                                 "前回の応答で以下の項目が文字数制約を満たしていません。",
-                                "各訳文を調整し、translated_length と length_ratio を制約内に収めてください。",
                             ]
                             for entry in ratio_violations_local:
                                 direction = "上限" if entry["kind"] == "above" else "下限"
@@ -2917,6 +2910,12 @@ def translate_range_contents(
                                     f"- {entry['cell_ref']}: 実測倍率 {_format_ratio(entry['ratio'])} が{direction}を外れています "
                                     f"(原文 {entry['source_units']}、訳文 {entry['translated_units']})。"
                                 )
+                            if ratio_bounds_display:
+                                notice_lines.append(f"文字数倍率の目標レンジ: {ratio_bounds_display}。")
+                            notice_lines.extend([
+                                "各訳文を調整し、translated_length と length_ratio を制約内に収めてください。",
+                                "再回答前に全項目の translated_length / source_length を再計算し、指定レンジ内であることを確認してから JSON を返してください。",
+                            ])
                             extra_ratio_notice = "\n".join(notice_lines)
                             actions.log_progress(
                                 f"翻訳応答が長さ制約を満たしていません（再リクエスト {length_retry_count}/{max_length_retries}）。"
