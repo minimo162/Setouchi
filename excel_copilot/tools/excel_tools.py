@@ -1400,6 +1400,7 @@ def translate_range_contents(
             length = len(cleaned)
             found_candidate = False
             decode_error_occurred = False
+            decoded_payloads: List[Tuple[Any, int]] = []
             while index < length:
                 char = cleaned[index]
                 if char in ("{", "["):
@@ -1411,12 +1412,15 @@ def translate_range_contents(
                         index += 1
                         continue
                     else:
-                        remaining = cleaned[end_index:].lstrip()
-                        if remaining.startswith(("```", "{", "[")):
-                            # 長い JSON 断片が続く場合は先頭のものを返す
-                            pass
-                        return payload, None
+                        decoded_payloads.append((payload, end_index))
+                        index = end_index
+                        continue
                 index += 1
+            if decoded_payloads:
+                for payload, _ in reversed(decoded_payloads):
+                    if isinstance(payload, list):
+                        return payload, None
+                return decoded_payloads[-1][0], None
             stripped = cleaned.strip()
             if not stripped:
                 return None, "empty_response"

@@ -304,6 +304,61 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertIn("文章として訳す場合は必要な接続詞の使用を許容しますが", prompt_text)
         self.assertIn('Source sentences:\n["関税影響"]', prompt_text)
 
+    def test_last_json_array_is_selected_when_multiple_payloads_returned(self) -> None:
+        actions = FakeActions()
+        actions._data["Sheet1"]["A1"] = "関税影響"
+        intermediate_payload = [
+            {
+                "translated_text": "Tariff impact",
+                "source_length": 4,
+                "translated_length": 13,
+                "length_ratio": 3.25,
+                "length_verification": {
+                    "method": "utf16-le",
+                    "translated_length_computed": 13,
+                    "length_ratio_computed": 3.25,
+                    "status": "mismatch",
+                },
+            }
+        ]
+        final_payload = [
+            {
+                "translated_text": "Tariff fee",
+                "source_length": 4,
+                "translated_length": 10,
+                "length_ratio": 2.5,
+                "length_verification": {
+                    "method": "utf16-le",
+                    "translated_length_computed": 10,
+                    "length_ratio_computed": 2.5,
+                    "status": "ok",
+                },
+            }
+        ]
+        browser = FakeBrowserManager(
+            responses=[
+                json.dumps(intermediate_payload, ensure_ascii=False)
+                + "\n"
+                + json.dumps(final_payload, ensure_ascii=False)
+            ]
+        )
+
+        result = excel_tools.translate_range_without_references(
+            actions=actions,
+            browser_manager=browser,
+            cell_range="Sheet1!A1:A1",
+            sheet_name="Sheet1",
+            translation_output_range="Sheet1!B1:B1",
+            overwrite_source=False,
+            length_ratio_limit=2.5,
+            length_ratio_min=2.0,
+        )
+
+        self.assertTrue(result)
+        self.assertIn(("Sheet1", "B1"), actions.writes)
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["Tariff fee"]])
+        self.assertEqual(len(browser.prompts), 1)
+
     def test_length_metadata_mismatch_is_auto_corrected(self) -> None:
         actions = FakeActions()
         actions._data["Sheet1"]["A1"] = "テスト  "
