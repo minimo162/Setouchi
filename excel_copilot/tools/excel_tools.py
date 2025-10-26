@@ -1667,6 +1667,12 @@ def translate_range_contents(
                 if ratio_bounds_display:
                     prompt_lines.append(f"文字数倍率の目標レンジ: {ratio_bounds_display}。")
                 prompt_lines.append("各要素について、以下の手順で訳文の長さを調整してください。\n")
+                ratio_midpoint_display: Optional[str] = None
+                if (
+                    effective_length_ratio_min is not None
+                    and effective_length_ratio_limit is not None
+                ):
+                    ratio_midpoint_display = f"{(effective_length_ratio_min + effective_length_ratio_limit) / 2:.2f}"
                 if (
                     effective_length_ratio_min is not None
                     and effective_length_ratio_limit is not None
@@ -1686,6 +1692,28 @@ def translate_range_contents(
                     "2. 訳文案を作成する際は許容範囲の中央付近を意識し、出力前に translated_length を確認してレンジ内であることを確かめてください。\n",
                     "3. 上限を超える場合は冗長な語句を整理し、下限を下回る場合は意味を変えずに自然な補足や言い換えで密度を高めた上で、length_ratio が許容範囲に収まっているか再計算してください。\n",
                 ])
+                if ratio_midpoint_display:
+                    prompt_lines.append(
+                        f"補足: 範囲中央 ({ratio_midpoint_display}) × source_length を目安の訳文長とし、自然で簡潔な文体を優先してください。\n"
+                    )
+                prompt_lines.append(
+                    "直訳で長くなりがちな場合は見出し風の簡潔表現や列挙を検討し、等位接続詞や冠詞、重複語を極力省いてください。\n"
+                )
+                prompt_lines.append(
+                    "translated_length が許容上限を 1 でも超える場合は必ず再構成し、レンジ内に収まるまで JSON を出力しないでください。\n"
+                )
+                prompt_lines.append(
+                    "見出し・項目名では 1 語訳や短い同義語を優先し、不要な接続詞（and 等）や語尾の反復を避けてください。\n"
+                )
+                prompt_lines.append(
+                    "'and' を含む列挙は禁止です。必ずコンマやスラッシュで区切り、各項目は 1 語程度に簡潔化してください（例示不要）。\n"
+                )
+                prompt_lines.append(
+                    "複合語が長くなる場合は意味を保ったまま一般的な単語 1 語に置き換えてください。\n"
+                )
+                prompt_lines.append(
+                    "JSON を返す直前に各要素の translated_length を再計算し、許容上限を超えていないことを確認した上で出力してください。\n"
+                )
                 prompt_lines.append("全行について length_ratio が許容レンジ内だと確認できるまで回答を出力しないでください。\n")
             prompt_lines.extend([
                 "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
