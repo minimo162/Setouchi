@@ -1666,10 +1666,27 @@ def translate_range_contents(
             if enforce_length_limit:
                 if ratio_bounds_display:
                     prompt_lines.append(f"文字数倍率の目標レンジ: {ratio_bounds_display}。")
+                prompt_lines.append("各要素について、以下の手順で訳文の長さを調整してください。\n")
+                if (
+                    effective_length_ratio_min is not None
+                    and effective_length_ratio_limit is not None
+                ):
+                    prompt_lines.append(
+                        f"1. source_length に {effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} を掛けて、訳文の許容下限・上限を算出し、四捨五入して整数に揃えてください。\n"
+                    )
+                elif effective_length_ratio_min is not None:
+                    prompt_lines.append(
+                        f"1. source_length に {effective_length_ratio_min:.2f} を掛けた値を訳文の許容下限として計算し、四捨五入して整数に揃えてください。\n"
+                    )
+                elif effective_length_ratio_limit is not None:
+                    prompt_lines.append(
+                        f"1. source_length に {effective_length_ratio_limit:.2f} を掛けた値を訳文の許容上限として計算し、四捨五入して整数に揃えてください。\n"
+                    )
                 prompt_lines.extend([
-                    "初回の翻訳および必要に応じた再翻訳のいずれでも、回答前に各原文の UTF-16 長さを用いて translated_length がレンジ内に収まっているか確認してください。",
-                    "上限を超える場合は簡潔にまとめ、下限を下回る場合は意味を変えずに自然な補足で調整した上で、最終回答前に length_ratio がレンジ内であることを再確認してください。",
+                    "2. 訳文案を作成する際は許容範囲の中央付近を意識し、出力前に translated_length を確認してレンジ内であることを確かめてください。\n",
+                    "3. 上限を超える場合は冗長な語句を整理し、下限を下回る場合は意味を変えずに自然な補足や言い換えで密度を高めた上で、length_ratio が許容範囲に収まっているか再計算してください。\n",
                 ])
+                prompt_lines.append("全行について length_ratio が許容レンジ内だと確認できるまで回答を出力しないでください。\n")
             prompt_lines.extend([
                 "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
             ])
