@@ -1179,6 +1179,7 @@ def translate_range_contents(
 
         length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
         length_limit_violations: List[str] = []
+        length_violation_positions: Set[Tuple[int, int]] = set()
 
         def _compute_length_ratio(source_units: int, translated_units: int) -> float:
             if source_units <= 0:
@@ -1819,13 +1820,30 @@ def translate_range_contents(
             translated_length_units = _measure_utf16_length(translation_value)
             ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
 
+            violation_kind = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
+
             metric_entry = {
                 "source_length": source_length_units,
                 "translated_length": translated_length_units,
                 "ratio": ratio_value,
                 "cell_ref": cell_ref_for_metrics,
+                "limit": effective_length_ratio_limit,
+                "min_limit": effective_length_ratio_min,
+                "status": violation_kind or "ok",
+                "reported_source_length": None,
+                "reported_translated_length": None,
+                "reported_ratio": None,
             }
             length_metrics[(local_row, col_idx)] = metric_entry
+
+            if enforce_length_limit and violation_kind and (local_row, col_idx) not in length_violation_positions:
+                direction_label = "上限" if violation_kind == "above" else "下限"
+                ratio_text = _format_ratio(ratio_value)
+                length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
+                length_violation_positions.add((local_row, col_idx))
+                actions.log_progress(
+                    f"既存の翻訳 {cell_ref_for_metrics} が文字数倍率制約を満たしていません: ×{ratio_text} ({direction_label}逸脱)。"
+                )
 
             pending_cols = pending_columns_by_row.get(local_row)
             if pending_cols is not None:
@@ -2310,9 +2328,51 @@ def translate_range_contents(
                     existing_output_normalized = existing_output_raw.strip() if isinstance(existing_output_raw, str) else ""
 
                     if existing_output_normalized and not _contains_japanese(existing_output_normalized):
+                        translation_value_existing = (
+                            existing_output_value
+                            if isinstance(existing_output_value, str)
+                            else existing_output_normalized
+                        )
+                        if not isinstance(translation_value_existing, str):
+                            translation_value_existing = str(translation_value_existing)
+
+                        cell_ref_for_metrics = _cell_reference(
+                            output_start_row,
+                            output_start_col,
+                            local_row,
+                            translation_col_index_seed,
+                        )
+                        source_length_units = _measure_utf16_length(canonical_source)
+                        translated_length_units = _measure_utf16_length(translation_value_existing)
+                        ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
+                        violation_kind = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
+
+                        metric_entry_existing = {
+                            "source_length": source_length_units,
+                            "translated_length": translated_length_units,
+                            "ratio": ratio_value,
+                            "cell_ref": cell_ref_for_metrics,
+                            "limit": effective_length_ratio_limit,
+                            "min_limit": effective_length_ratio_min,
+                            "status": violation_kind or "ok",
+                            "reported_source_length": None,
+                            "reported_translated_length": None,
+                            "reported_ratio": None,
+                        }
+                        length_metrics[(local_row, col_idx)] = metric_entry_existing
+
+                        if enforce_length_limit and violation_kind and (local_row, col_idx) not in length_violation_positions:
+                            direction_label = "上限" if violation_kind == "above" else "下限"
+                            ratio_text = _format_ratio(ratio_value)
+                            length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
+                            length_violation_positions.add((local_row, col_idx))
+                            actions.log_progress(
+                                f"既存の翻訳 {cell_ref_for_metrics} が文字数倍率制約を満たしていません: ×{ratio_text} ({direction_label}逸脱)。"
+                            )
+
                         if not include_context_columns and canonical_source not in translation_cache:
                             translation_cache[canonical_source] = {
-                                "translation": existing_output_raw or existing_output_normalized,
+                                "translation": translation_value_existing,
                             }
                         pending_cols = pending_columns_by_row.get(local_row)
                         if pending_cols is not None:

@@ -4,9 +4,66 @@ import sys
 import types
 import unittest
 
+if "playwright" not in sys.modules:
+    playwright_stub = types.ModuleType("playwright")
+    sync_api_stub = types.ModuleType("playwright.sync_api")
+
+    def _missing_playwright(*args, **kwargs):
+        raise ModuleNotFoundError("playwright is not available in the test environment")
+
+    class _PlaywrightStub:
+        pass
+
+    class _PlaywrightTimeoutError(RuntimeError):
+        pass
+
+    sync_api_stub.sync_playwright = _missing_playwright
+    sync_api_stub.Page = _PlaywrightStub
+    sync_api_stub.BrowserContext = _PlaywrightStub
+    sync_api_stub.Playwright = _PlaywrightStub
+    sync_api_stub.TimeoutError = _PlaywrightTimeoutError
+    sync_api_stub.Locator = _PlaywrightStub
+    sync_api_stub.ElementHandle = _PlaywrightStub
+
+    playwright_stub.sync_api = sync_api_stub
+
+    sys.modules["playwright"] = playwright_stub
+    sys.modules["playwright.sync_api"] = sync_api_stub
+
+if "pyperclip" not in sys.modules:
+    pyperclip_stub = types.ModuleType("pyperclip")
+
+    def _missing_pyperclip(*args, **kwargs):
+        raise ModuleNotFoundError("pyperclip is not available in the test environment")
+
+    pyperclip_stub.copy = _missing_pyperclip
+    pyperclip_stub.paste = _missing_pyperclip
+    sys.modules["pyperclip"] = pyperclip_stub
+
+if "xlwings" not in sys.modules:
+    def _col_name(index: int) -> str:
+        if index <= 0:
+            return ""
+        name = ""
+        while index:
+            index, remainder = divmod(index - 1, 26)
+            name = chr(65 + remainder) + name
+        return name
+
+    xlwings_stub = types.ModuleType("xlwings")
+    xlwings_stub.Range = type("Range", (), {})
+    xlwings_stub.Sheet = type("Sheet", (), {})
+    xlwings_stub.Book = type("Book", (), {})
+    xlwings_stub.App = type("App", (), {})
+    xlwings_stub.apps = []
+    xlwings_stub.utils = types.SimpleNamespace(col_name=_col_name)
+
+    sys.modules["xlwings"] = xlwings_stub
+
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 
 from excel_copilot.tools import excel_tools
+from excel_copilot.core.exceptions import ToolExecutionError
 
 
 def _split_range(cell_range: str) -> tuple[str, str]:
@@ -279,6 +336,27 @@ class TranslationLengthRatioTests(unittest.TestCase):
 
         self.assertNotIn(("Sheet1", "B1"), actions.writes)
         self.assertEqual(len(browser.prompts), 4, "Should attempt initial call plus three retries.")
+
+    def test_existing_translation_outside_length_limit_raises(self) -> None:
+        actions = FakeActions()
+        actions._data["Sheet1"]["A1"] = "テスト"
+        actions._data["Sheet1"]["B1"] = "This translated sentence is intentionally far longer than the original text."
+        browser = FakeBrowserManager()
+
+        with self.assertRaises(ToolExecutionError) as ctx:
+            excel_tools.translate_range_without_references(
+                actions=actions,
+                browser_manager=browser,
+                cell_range="Sheet1!A1:A1",
+                sheet_name="Sheet1",
+                translation_output_range="Sheet1!B1:B1",
+                overwrite_source=False,
+                length_ratio_limit=1.2,
+                rows_per_batch=1,
+            )
+
+        self.assertIn("Length ratio constraint violation", str(ctx.exception))
+        self.assertEqual(len(browser.prompts), 0, "Reused translations should not trigger new prompts.")
 
 if __name__ == "__main__":
     unittest.main()
