@@ -182,12 +182,16 @@ class FakeBrowserManager:
         payload = [
             {
                 "translated_text": "Test  ",
-                "source_length": 5,
-                "translated_length": 6,
-                "length_ratio": 1.2,
             }
         ]
-        return json.dumps(payload, ensure_ascii=False)
+        return "\n".join(
+            [
+                "---THOUGHT---",
+                "Outline: check length ratio and keep translation concise.",
+                "---OUTPUT---",
+                json.dumps(payload, ensure_ascii=False),
+            ]
+        )
 
 
 class TranslationLengthRatioTests(unittest.TestCase):
@@ -324,12 +328,12 @@ class TranslationLengthRatioTests(unittest.TestCase):
 
         self.assertTrue(
             any(
-                '"source_length"' in prompt
-                and '"translated_length"' in prompt
-                and '"length_ratio"' in prompt
+                '---THOUGHT---' in prompt
+                and 'キーは `"translated_text"` のみ' in prompt
+                and '---OUTPUT---' in prompt
                 for prompt in browser.prompts
             ),
-            "Translation prompt should instruct the model to output source_length/translated_length/length_ratio fields.",
+            "Translation prompt should instruct the model to emit a thought section and translated_text-only JSON.",
         )
 
     def test_playwright_prompt_for_tariff_impact_contains_ratio_guidance(self) -> None:
@@ -368,18 +372,18 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertGreaterEqual(len(browser.prompts), 1)
 
         prompt_text = browser.prompts[0]
+        self.assertIn("【出力フォーマット】", prompt_text)
+        self.assertIn("`---THOUGHT---` を出力", prompt_text)
+        self.assertIn("`---OUTPUT---` を出力", prompt_text)
+        self.assertIn('キーは `"translated_text"` のみ', prompt_text)
+        self.assertIn("ASCII 範囲 (U+0020〜U+007E) の非空文字列", prompt_text)
         self.assertIn("許容倍率: **2.00〜2.50**", prompt_text)
         self.assertIn("目標倍率: **TGT = 2.25**", prompt_text)
-        self.assertIn("* `min_len = ceil(SL × 2.00)`、`max_len = floor(SL × 2.50)`", prompt_text)
+        self.assertIn("`min_len = ceil(SL × 2.00)`", prompt_text)
         self.assertIn("`target_len = RHU_INT(SL × 2.25)`", prompt_text)
-        self.assertIn("`RHU2(x) := RHU_INT(x * 100) / 100`", prompt_text)
-        self.assertIn(' "translated_text": ASCII のみ (U+0020〜U+007E)、非空。', prompt_text)
-        self.assertIn('列挙はカンマまたはスラッシュを使用。**"and" は使用しない**。', prompt_text)
-        self.assertIn("**縮約手順（TL > max_len または target_len を超過）**", prompt_text)
-        self.assertIn("**膨張手順（TL < min_len または target_len に不足）**", prompt_text)
-        self.assertIn("`translated_length = UTF16_LEN(translated_text)`", prompt_text)
-        self.assertIn("`length_verification.length_ratio_computed` と `length_ratio` の一致", prompt_text)
-        self.assertIn('* 条件合格なら `status = "ok"`', prompt_text)
+        self.assertIn("TL = UTF16_LEN(translated_text)", prompt_text)
+        self.assertIn("縮約: `the/a/an/and` の削除", prompt_text)
+        self.assertIn("膨張: 意味を維持した補語を最小限追加", prompt_text)
         self.assertIn('Source sentences:\n["関税影響"]', prompt_text)
 
     def test_last_json_array_is_selected_when_multiple_payloads_returned(self) -> None:
@@ -479,6 +483,51 @@ class TranslationLengthRatioTests(unittest.TestCase):
             any("metadata auto-corrected" in log for log in actions.logs),
             "Auto-correction event should be logged for traceability.",
         )
+
+    def test_json_parse_failure_triggers_retry(self) -> None:
+        actions = FakeActions()
+        actions._data["Sheet1"]["A1"] = "再試行確認"
+        invalid_response = "\n".join(
+            [
+                "---THOUGHT---",
+                "First try: outline steps.",
+            ]
+        )
+        valid_payload = [
+            {
+                "translated_text": "Retry done",
+            }
+        ]
+        valid_response = "\n".join(
+            [
+                "---THOUGHT---",
+                "Second try: ratio ok.",
+                "---OUTPUT---",
+                json.dumps(valid_payload, ensure_ascii=False),
+            ]
+        )
+        browser = FakeBrowserManager(
+            responses=[
+                invalid_response,
+                valid_response,
+            ]
+        )
+
+        result = excel_tools.translate_range_without_references(
+            actions=actions,
+            browser_manager=browser,
+            cell_range="Sheet1!A1:A1",
+            sheet_name="Sheet1",
+            translation_output_range="Sheet1!B1:B1",
+            overwrite_source=False,
+            length_ratio_limit=1.5,
+            rows_per_batch=1,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(len(browser.prompts), 2)
+        self.assertIn(("Sheet1", "B1"), actions.writes)
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["Retry done"]])
 
     def test_length_ratio_violation_continues_without_retry(self) -> None:
         actions = FakeActions()
