@@ -134,6 +134,11 @@ class ExcelActions:
                 self._progress_callback(message)
             except Exception as callback_error:
                 _ACTIONS_LOGGER.debug(f"log_progress callback error: {callback_error}")
+        else:
+            try:
+                print(message)
+            except Exception:
+                pass
 
     def consume_progress_messages(self) -> List[str]:
         messages = self._progress_buffer[:]
