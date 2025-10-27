@@ -1668,7 +1668,7 @@ def translate_range_contents(
 
             # translation_only 用プロンプト（初回で制約を満たす）
             prompt_lines = [
-                f"あなたは {target_language} への翻訳専任アシスタントです。以下の日本語テキストを入力順に翻訳し、初回の応答ですべての訳文を UTF-16 文字数倍率の許容範囲に収めた状態で返してください。\n",
+                f"あなたは {target_language} への翻訳専任アシスタントです。以下の日本語テキストを入力順に翻訳し、初回の応答ですべての訳文を UTF-16 文字数倍率の許容範囲に収めた状態で返してください。自然で流暢な {target_language} とし、不自然な直訳を避けます。\n",
                 "出力形式:\n",
                 "- 応答は JSON 配列のみ。要素は入力テキストと同じ順番で並べてください。\n",
                 '- \"translated_text\": 訳文（空文字列禁止。以前にレンジ外と判定された語句や案は再利用しないでください）。\n',
@@ -1704,7 +1704,7 @@ def translate_range_contents(
                         f"- 文字数倍率の上限: {effective_length_ratio_limit:.2f}。最大長 = floor(source_length × {effective_length_ratio_limit:.2f}) を超える訳文は不許可です。\n"
                     )
                 prompt_lines.append(
-                    "- 訳文候補を作成したら、translated_length と length_ratio を再計算し、全行が最小長〜最大長内になるまで語を差し替えてください。\n"
+                    "- 訳文候補を作成したら、translated_length と length_ratio を再計算し、全行が最小長〜最大長内かつ目標倍率に十分近い状態になるまで語を差し替えてください。\n"
                 )
                 prompt_lines.append(
                     "- 上限（最大長）を超える場合は、語尾を削る・複合語を 1 語に集約する・接続詞や冠詞・形容詞・重複表現を削除する・同義語の短縮形に置換するなどで長さを減らしてください。\n"
@@ -1720,6 +1720,9 @@ def translate_range_contents(
                 )
                 prompt_lines.append(
                     "- 複合語が長い場合は意味を保ったまま一般的な単語や短い言い換えに置き換え、冗長な節や重複表現を除去してください。\n"
+                )
+                prompt_lines.append(
+                    f"- 自然な {target_language} の表現を優先し、直訳調の不自然な語句結合（例: \"applied completion\" のような語尾の重複）は避けてください。\n"
                 )
                 prompt_lines.append(
                     "- translated_length がレンジ外の行が 1 つでも残っている段階では JSON を出力せず、内部で書き直してください。\n"
