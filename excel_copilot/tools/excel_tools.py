@@ -1666,112 +1666,202 @@ def translate_range_contents(
             prompt_preamble = "".join(prompt_parts)
         else:
 
-            prompt_lines = [
-                f"あなたは {target_language} への翻訳専任アシスタントです。日本語テキスト配列を入力順に翻訳し、初回の応答のみで各訳文を指定された UTF-16 文字数レンジに収めた JSON 配列を返してください。\n",
-                "【入出力仕様】\n",
-                "- 応答は JSON 配列 1 個のみ。余分なテキスト、マークダウン、ログ、複数 JSON、不要なバックスラッシュは禁止です。\n",
-                "- 配列要素は入力順を保持し、キーは \"translated_text\"、\"source_length\"、\"translated_length\"、\"length_ratio\"、\"length_verification\" の順で並べてください。\n",
-                '- "translated_text": ASCII のみを使用した非空の訳文。\n',
-                '- "source_length": 入力で与えられた UTF-16 コードユニット数をそのまま転記し、自前計測で上書きしないこと。\n',
-                '- "translated_length": len(translated_text.encode("utf-16-le")) // 2 の整数。\n',
-                '- "length_ratio": translated_length / source_length を小数第2位で round half up。\n',
-                '- "length_verification": {"method": "utf16-le", "translated_length_computed": 同じ整数, "length_ratio_computed": 同じ数値, "status": "ok"}。\n',
-                "- 必要な場合のみ \" をエスケープし、使用文字は ASCII 範囲 U+0020〜U+007E に限定してください。\n",
-                "【表記ルール】\n",
-                "- 語間スペースは半角 1 個。先頭・末尾スペースおよび重複スペースは禁止。\n",
-                "- 見出しやラベルは 1〜2 語。列挙はカンマまたはスラッシュで区切り、`and` は使用しないこと。\n",
-                "- スマート引用符・長音ダッシュ・NBSP・絵文字は禁止。引用符は \" '、ハイフンは -、スラッシュは /、コンマは , を使用します。\n",
-                "【長さ計算関数】\n",
-                '- UTF16_LEN(s) := len(s.encode("utf-16-le")) // 2\n',
-                "- RHU_INT(x) := floor(x + 0.5)（round half up）\n",
-                "- RHU2(x) := RHU_INT(x * 100) / 100\n",
-            ]
-
             has_lower_bound = effective_length_ratio_min is not None
             has_upper_bound = effective_length_ratio_limit is not None
-            target_ratio_display: Optional[str] = None
 
-            if enforce_length_limit and (has_lower_bound or has_upper_bound):
-                prompt_lines.append("【長さパラメータ】\n")
+            if enforce_length_limit and has_lower_bound and has_upper_bound:
+                ratio_lower_display = f"{effective_length_ratio_min:.2f}"
+                ratio_upper_display = f"{effective_length_ratio_limit:.2f}"
+                target_ratio_value = (effective_length_ratio_min + effective_length_ratio_limit) / 2
+                target_ratio_display = f"{target_ratio_value:.2f}"
+
+                prompt_lines = [
+                    "あなたは English への翻訳専任アシスタントです。日本語テキスト配列を入力順に翻訳し、**初回の応答のみ**で、各訳文を指定の UTF-16 文字数レンジに収めた **JSON 配列**を1個だけ返してください。出力前に各要素の長さ検証を**内部で完了**し、条件未達が1つでもある場合は**出力せず内部で修正**してからまとめて返します。\n",
+                    "\n",
+                    "【入出力仕様】\n",
+                    "\n",
+                    "* **出力**は JSON 配列1個のみ。余分なテキスト、マークダウン、ログ、複数JSON、不要なバックスラッシュは禁止。\n",
+                    "* 配列要素は入力順を保持。各要素は次のキー順で並べる:\n",
+                    "\n",
+                    '  1. "translated_text", 2) "source_length", 3) "translated_length", 4) "length_ratio", 5) "length_verification"。\n',
+                    '* "translated_text": ASCII のみ (U+0020〜U+007E)、非空。必要時のみ " をエスケープ。タブ/改行/先頭末尾スペース/重複スペースは禁止。語間スペースは半角1個。\n',
+                    '* "source_length": 入力で与えられた UTF-16 コードユニット数を**そのまま転記**（自前再計測で上書きしない）。\n',
+                    '* "translated_length": `UTF16_LEN(translated_text)` の整数。\n',
+                    '* "length_ratio": `translated_length / source_length` を **RHU2** で算出。\n',
+                    '* "length_verification":\n',
+                    "\n",
+                    "  ```\n",
+                    "  {\n",
+                    '    "method": "utf16-le",\n',
+                    '    "translated_length_computed": 同じ整数,\n',
+                    '    "length_ratio_computed": 同じ数値,\n',
+                    '    "status": "ok"\n',
+                    "  }\n",
+                    "  ```\n",
+                    "\n",
+                    '  出力直前に再計測し、数値一致なら "ok"。不一致や条件未達がある場合は**出力せず内部で修正**。\n',
+                    "\n",
+                    "【表記ルール】\n",
+                    "\n",
+                    "* 英文は簡潔・中立・平叙。見出し/ラベルは1〜2語。\n",
+                    '* 列挙はカンマまたはスラッシュを使用。**"and" は使用しない**。\n',
+                    '* 引用符は `" \'`、ハイフンは `-`、スラッシュ `/`、コンマ `,` を使用。\n',
+                    "* スマート引用符・長音ダッシュ・NBSP・絵文字は禁止。\n",
+                    "* 不要な情報の付加禁止。意味保持を最優先。\n",
+                    "\n",
+                    "【長さ計算関数】\n",
+                    "\n",
+                    "* `UTF16_LEN(s) := len(s.encode(\"utf-16-le\")) // 2`\n",
+                    "* `RHU_INT(x) := floor(x + 0.5)`（round half up）\n",
+                    "* `RHU2(x) := RHU_INT(x * 100) / 100`\n",
+                    "\n",
+                    "【長さパラメータ】\n",
+                    "\n",
+                    f"* 許容倍率: **{ratio_lower_display}〜{ratio_upper_display}**\n",
+                    f"* 目標倍率: **TGT = {target_ratio_display}**（レンジ外なら自動補正）\n",
+                    "* 各行で `SL = source_length`（入力値をそのまま使用）\n",
+                    f"* `min_len = ceil(SL × {ratio_lower_display})`、`max_len = floor(SL × {ratio_upper_display})`\n",
+                    f"* `target_len = RHU_INT(SL × {target_ratio_display})` を設定し、レンジ外なら `min_len` または `max_len` に補正\n",
+                    "\n",
+                    "【出力生成アルゴリズム（各行ごとに内部実行）】\n",
+                    "\n",
+                    "1. **初期訳**を作成（簡潔・自然・ASCII限定）。\n",
+                    "2. `TL = UTF16_LEN(初期訳)` を計測。\n",
+                    "3. もし `TL` が `min_len〜max_len` にあり **かつ** `|TL - target_len| ≤ 1` なら採用。\n",
+                    "4. そうでなければ次を順に適用し、その都度 `TL` を再計測して条件を満たすまで**内部で調整**：\n",
+                    "   **縮約手順（TL > max_len または target_len を超過）**\n",
+                    "   * (a) 冠詞/接続詞の削除: `the, a, an, and` など\n",
+                    "   * (b) 冗長表現の短縮: `due to the fact → because`, `in order to → to` など\n",
+                    "   * (c) 短形同義語へ置換: `information → info`, `application → app` など\n",
+                    "   * (d) 自然さを保って複合語を短く再構成（不自然な造語禁止）\n",
+                    "   **膨張手順（TL < min_len または target_len に不足）**\n",
+                    "   * 意味保持の最小限の補語を追加。使用可能語は限定: `status, note, detail, record, update, flag` のみ。\n",
+                    "5. 上記で達成不能な場合は、**レンジ内**で `|TL - target_len|` が最小の訳を採用（同値なら**短い方**）。\n",
+                    "6. 出力直前チェック：各要素で\n",
+                    "\n",
+                    "* `translated_text` のASCII性・スペース規則\n",
+                    "* `translated_length = UTF16_LEN(translated_text)`\n",
+                    "* `length_ratio = RHU2(translated_length / SL)`\n",
+                    "* `length_verification.translated_length_computed` と `translated_length` の一致\n",
+                    "* `length_verification.length_ratio_computed` と `length_ratio` の一致\n",
+                    '* 条件合格なら `status = "ok"`\n',
+                    "* 合格しない要素があれば**JSONを出力せず**当該要素のみ再調整してから再検証。\n",
+                    "\n",
+                    "【重要禁止事項】\n",
+                    "\n",
+                    "* 出力に説明文/マークダウン/追加ログを含めない。\n",
+                    "* 入力の `source_length` を再計測・上書きしない。\n",
+                    "* 語順/要素順を変更しない。\n",
+                    "* 先頭/末尾スペースや重複スペース、タブ/改行を含めない。\n",
+                    "\n",
+                    "以上の手順を**内部で完了**してから、条件を満たす **JSON 配列のみ**を1回で返してください。\n",
+                ]
+                prompt_preamble = "".join(prompt_lines)
+            else:
+                prompt_lines = [
+                    f"あなたは {target_language} への翻訳専任アシスタントです。日本語テキスト配列を入力順に翻訳し、初回の応答のみで各訳文を指定された UTF-16 文字数レンジに収めた JSON 配列を返してください。\n",
+                    "【入出力仕様】\n",
+                    "- 応答は JSON 配列 1 個のみ。余分なテキスト、マークダウン、ログ、複数 JSON、不要なバックスラッシュは禁止です。\n",
+                    "- 配列要素は入力順を保持し、キーは \"translated_text\"、\"source_length\"、\"translated_length\"、\"length_ratio\"、\"length_verification\" の順で並べてください。\n",
+                    '- "translated_text": ASCII のみを使用した非空の訳文。\n',
+                    '- "source_length": 入力で与えられた UTF-16 コードユニット数をそのまま転記し、自前計測で上書きしないこと。\n',
+                    '- "translated_length": len(translated_text.encode("utf-16-le")) // 2 の整数。\n',
+                    '- "length_ratio": translated_length / source_length を小数第2位で round half up。\n',
+                    '- "length_verification": {"method": "utf16-le", "translated_length_computed": 同じ整数, "length_ratio_computed": 同じ数値, "status": "ok"}。\n',
+                    "- 必要な場合のみ \" をエスケープし、使用文字は ASCII 範囲 U+0020〜U+007E に限定してください。\n",
+                    "【表記ルール】\n",
+                    "- 語間スペースは半角 1 個。先頭・末尾スペースおよび重複スペースは禁止。\n",
+                    "- 見出しやラベルは 1〜2 語。列挙はカンマまたはスラッシュで区切り、`and` は使用しないこと。\n",
+                    "- スマート引用符・長音ダッシュ・NBSP・絵文字は禁止。引用符は \" '、ハイフンは -、スラッシュは /、コンマは , を使用します。\n",
+                    "【長さ計算関数】\n",
+                    '- UTF16_LEN(s) := len(s.encode("utf-16-le")) // 2\n',
+                    "- RHU_INT(x) := floor(x + 0.5)（round half up）\n",
+                    "- RHU2(x) := RHU_INT(x * 100) / 100\n",
+                ]
+
+                target_ratio_display: Optional[str] = None
+
+                if enforce_length_limit and (has_lower_bound or has_upper_bound):
+                    prompt_lines.append("【長さパラメータ】\n")
+                    if has_lower_bound and has_upper_bound:
+                        target_ratio_display = f"{(effective_length_ratio_min + effective_length_ratio_limit) / 2:.2f}"
+                        prompt_lines.extend(
+                            [
+                                f"- 許容倍率: {ratio_bounds_display}。\n",
+                                f"- 目標倍率: TGT = {target_ratio_display}（レンジ外の場合は自動で補正）。\n",
+                                f"- min_len = ceil(SL × {effective_length_ratio_min:.2f})、max_len = floor(SL × {effective_length_ratio_limit:.2f}) を整数で算出。\n",
+                                f"- target_len = RHU_INT(SL × {target_ratio_display}) を設定し、レンジ外なら min_len または max_len に補正。\n",
+                            ]
+                        )
+                    elif has_lower_bound:
+                        prompt_lines.extend(
+                            [
+                                f"- 最小倍率: MIN = {effective_length_ratio_min:.2f}。\n",
+                                f"- min_len = ceil(SL × {effective_length_ratio_min:.2f}) を計算し、TL が下限を満たすまで調整してください。\n",
+                            ]
+                        )
+                    elif has_upper_bound:
+                        prompt_lines.extend(
+                            [
+                                f"- 最大倍率: MAX = {effective_length_ratio_limit:.2f}。\n",
+                                f"- max_len = floor(SL × {effective_length_ratio_limit:.2f}) を計算し、TL が上限を超えないよう調整してください。\n",
+                            ]
+                        )
+
+                prompt_lines.append("【処理手順】\n")
+                prompt_lines.append("- 各行で SL = source_length をそのまま使用し、候補訳ごとに TL = UTF16_LEN(translated_text) を測定します。\n")
                 if has_lower_bound and has_upper_bound:
-                    target_ratio_display = f"{(effective_length_ratio_min + effective_length_ratio_limit) / 2:.2f}"
                     prompt_lines.extend(
                         [
-                            f"- 許容倍率: {ratio_bounds_display}。\n",
-                            f"- 目標倍率: TGT = {target_ratio_display}（レンジ外の場合は自動で補正）。\n",
-                            f"- min_len = ceil(SL × {effective_length_ratio_min:.2f})、max_len = floor(SL × {effective_length_ratio_limit:.2f}) を整数で算出。\n",
-                            f"- target_len = RHU_INT(SL × {target_ratio_display}) を設定し、レンジ外なら min_len または max_len に補正。\n",
+                            "- TL が min_len〜max_len に収まり、かつ |TL - target_len| ≤ 1 を満たすまで調整します。達成不能な場合はレンジ内で target_len に最も近い TL（同値なら短い方）を採用します。\n",
                         ]
                     )
                 elif has_lower_bound:
                     prompt_lines.extend(
                         [
-                            f"- 最小倍率: MIN = {effective_length_ratio_min:.2f}。\n",
-                            f"- min_len = ceil(SL × {effective_length_ratio_min:.2f}) を計算し、TL が下限を満たすまで調整してください。\n",
+                            "- TL が min_len 以上になるまで調整します。達成不能な場合はレンジ内で min_len に最も近い TL（同値なら短い方）を選択します。\n",
                         ]
                     )
                 elif has_upper_bound:
                     prompt_lines.extend(
                         [
-                            f"- 最大倍率: MAX = {effective_length_ratio_limit:.2f}。\n",
-                            f"- max_len = floor(SL × {effective_length_ratio_limit:.2f}) を計算し、TL が上限を超えないよう調整してください。\n",
+                            "- TL が max_len 以下になるまで調整します。達成不能な場合はレンジ内で max_len に最も近い TL（同値なら短い方）を選択します。\n",
                         ]
                     )
 
-            prompt_lines.append("【処理手順】\n")
-            prompt_lines.append("- 各行で SL = source_length をそのまま使用し、候補訳ごとに TL = UTF16_LEN(translated_text) を測定します。\n")
-            if has_lower_bound and has_upper_bound:
+                if has_upper_bound:
+                    prompt_lines.extend(
+                        [
+                            "【縮約手順（上限超過時）】\n",
+                            "1. 冠詞・接続詞を削除（the, a, an, and など）。\n",
+                            "2. 冗長表現を短縮（due to the fact → because、in order to → to 等）。\n",
+                            "3. 同義語を短縮形へ置換（information → info、application → app 等）。\n",
+                            "4. 自然さを保つ範囲で複合語を短く再構成し、不自然な造語は避けてください。\n",
+                        ]
+                    )
+                if has_lower_bound:
+                    prompt_lines.extend(
+                        [
+                            "【膨張手順（下限不足時）】\n",
+                            "- 意味を維持したまま最小限の語句を追加します。使用可能な補助語は status, note, detail, record, update, flag に限定し、不足行でのみ使用してください。\n",
+                            "- 無用な長文化を避け、必要最小限の追加で下限を満たしてください。\n",
+                        ]
+                    )
+
                 prompt_lines.extend(
                     [
-                        "- TL が min_len〜max_len に収まり、かつ |TL - target_len| ≤ 1 を満たすまで調整します。達成不能な場合はレンジ内で target_len に最も近い TL（同値なら短い方）を採用します。\n",
-                    ]
-                )
-            elif has_lower_bound:
-                prompt_lines.extend(
-                    [
-                        "- TL が min_len 以上になるまで調整します。達成不能な場合はレンジ内で min_len に最も近い TL（同値なら短い方）を選択します。\n",
-                    ]
-                )
-            elif has_upper_bound:
-                prompt_lines.extend(
-                    [
-                        "- TL が max_len 以下になるまで調整します。達成不能な場合はレンジ内で max_len に最も近い TL（同値なら短い方）を選択します。\n",
+                        "【検証と出力】\n",
+                        "- 候補を作るたびに TL と length_ratio を再計算し、条件未達なら JSON を出力せず内部で修正してください。\n",
+                        '- 出力直前に各 translated_text について UTF16_LEN を再計測し、その値で "translated_length" と "length_verification.translated_length_computed" を更新します。\n',
+                        '- length_ratio と "length_verification.length_ratio_computed" も実測値から RHU2 で算出してください。\n',
+                        '- 実測値が一致し条件を満たした場合のみ "length_verification.status" を "ok" に設定できます。矛盾が残る場合は JSON を返さず修正します。\n',
+                        "- JSON 以外の前置き、思考の開示、メモ、ログ、Python 例、Markdown、連続した JSON の出力は禁止です。\n",
+                        "- 再利用禁止語句は同一行のレンジ外候補にのみ適用し、他行へ波及させないでください。\n",
+                        f"- 訳文に日本語を残さず、自然で流暢な {target_language} を維持してください。\n",
                     ]
                 )
 
-            if has_upper_bound:
-                prompt_lines.extend(
-                    [
-                        "【縮約手順（上限超過時）】\n",
-                        "1. 冠詞・接続詞を削除（the, a, an, and など）。\n",
-                        "2. 冗長表現を短縮（due to the fact → because、in order to → to 等）。\n",
-                        "3. 同義語を短縮形へ置換（information → info、application → app 等）。\n",
-                        "4. 自然さを保つ範囲で複合語を短く再構成し、不自然な造語は避けてください。\n",
-                    ]
-                )
-            if has_lower_bound:
-                prompt_lines.extend(
-                    [
-                        "【膨張手順（下限不足時）】\n",
-                        "- 意味を維持したまま最小限の語句を追加します。使用可能な補助語は status, note, detail, record, update, flag に限定し、不足行でのみ使用してください。\n",
-                        "- 無用な長文化を避け、必要最小限の追加で下限を満たしてください。\n",
-                    ]
-                )
-
-            prompt_lines.extend(
-                [
-                    "【検証と出力】\n",
-                    "- 候補を作るたびに TL と length_ratio を再計算し、条件未達なら JSON を出力せず内部で修正してください。\n",
-                    '- 出力直前に各 translated_text について UTF16_LEN を再計測し、その値で "translated_length" と "length_verification.translated_length_computed" を更新します。\n',
-                    '- length_ratio と "length_verification.length_ratio_computed" も実測値から RHU2 で算出してください。\n',
-                    '- 実測値が一致し条件を満たした場合のみ "length_verification.status" を "ok" に設定できます。矛盾が残る場合は JSON を返さず修正します。\n',
-                    "- JSON 以外の前置き、思考の開示、メモ、ログ、Python 例、Markdown、連続した JSON の出力は禁止です。\n",
-                    "- 再利用禁止語句は同一行のレンジ外候補にのみ適用し、他行へ波及させないでください。\n",
-                    f"- 訳文に日本語を残さず、自然で流暢な {target_language} を維持してください。\n",
-                ]
-            )
-
-            prompt_preamble = "".join(prompt_lines)
+                prompt_preamble = "".join(prompt_lines)
 
         if references_requested or use_references:
             rows_per_batch = 1
