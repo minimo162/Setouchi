@@ -371,6 +371,11 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertIn("許容文字数倍率レンジ: 2.00〜2.50。", prompt_text)
         self.assertIn("最小長 = ceil(source_length × 2.00)、最大長 = floor(source_length × 2.50)", prompt_text)
         self.assertIn("目標長 = round(source_length × 2.25)", prompt_text)
+        self.assertIn("translated_length と length_verification.translated_length_computed は必ず len(translated_text.encode(\"utf-16-le\")) // 2 の実測値と完全一致させ", prompt_text)
+        self.assertIn("length_ratio と length_verification.length_ratio_computed は実測 translated_length / source_length を基に再計算し", prompt_text)
+        self.assertIn("例示や過去応答の数値をコピーせず、毎回 translated_text の実測値から計算した数値のみを記入してください", prompt_text)
+        self.assertIn("len(translated_text.encode(\"utf-16-le\")) // 2 を再測定し、その実測値で translated_length と length_verification.translated_length_computed を上書きし", prompt_text)
+        self.assertIn("length_verification.status は translated_length・length_ratio が実測値と一致し許容レンジ内である場合に限り \"ok\"", prompt_text)
         self.assertIn("列挙は 'and' ではなくコンマやスラッシュを用いて簡潔に区切ってください", prompt_text)
         self.assertIn('Source sentences:\n["関税影響"]', prompt_text)
 

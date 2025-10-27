@@ -1677,7 +1677,11 @@ def translate_range_contents(
                 '- \"length_ratio\": translated_length / source_length を小数第2位まで四捨五入した数値。\n',
                 '- \"length_verification\": { \"method\": \"utf16-le\", \"translated_length_computed\": 同じ整数, \"length_ratio_computed\": 同じ数値, \"status\": \"ok\" }\n',
                 "UTF-16 長さは len(translated_text.encode(\"utf-16-le\")) // 2 で算出した正確な値のみを使用し、概算や重複計算は禁止です。\n",
-                "length_verification.status はすべての値が一致した場合に限り \"ok\" とし、検算ログや Python コードは出力せず内部で確認してください。\n",
+                "translated_length と length_verification.translated_length_computed は必ず len(translated_text.encode(\"utf-16-le\")) // 2 の実測値と完全一致させ、推測値や丸め値を入力しないでください。\n",
+                "length_ratio と length_verification.length_ratio_computed は実測 translated_length / source_length を基に再計算し、小数第2位まで四捨五入した値だけを記入してください。\n",
+                "例示や過去応答の数値をコピーせず、毎回 translated_text の実測値から計算した数値のみを記入してください。\n",
+                "translated_length・length_ratio・length_verification の値が translated_text と矛盾する場合は JSON を出力せず、再計算してから書き直してください。\n",
+                "length_verification.status は translated_length・length_ratio が実測値と一致し許容レンジ内である場合に限り \"ok\" とし、逸脱が残る状態では JSON を返さず内部で修正してください（\"ok\" のまま矛盾した値を出力してはいけません）。\n",
                 "JSON 以外のテキストやマークダウン、余分なバックスラッシュを追加せず、単一の JSON 配列だけを返してください。\n",
             ]
             if enforce_length_limit:
@@ -1705,6 +1709,9 @@ def translate_range_contents(
                     )
                 prompt_lines.append(
                     "- 訳文候補を作成したら、translated_length と length_ratio を再計算し、全行が最小長〜最大長内かつ目標倍率に十分近い状態になるまで語を差し替えてください。\n"
+                )
+                prompt_lines.append(
+                    "- JSON を返す直前に全ての translated_text について len(translated_text.encode(\"utf-16-le\")) // 2 を再測定し、その実測値で translated_length と length_verification.translated_length_computed を上書きし、同じ実測値から length_ratio と length_verification.length_ratio_computed を再計算してから出力してください。\n"
                 )
                 prompt_lines.append(
                     "- 上限（最大長）を超える場合は、語尾を削る・複合語を 1 語に集約する・接続詞や冠詞・形容詞・重複表現を削除する・同義語の短縮形に置換するなどで長さを減らしてください。\n"
