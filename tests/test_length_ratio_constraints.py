@@ -368,10 +368,10 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertGreaterEqual(len(browser.prompts), 1)
 
         prompt_text = browser.prompts[0]
-        self.assertIn("文字数倍率の目標レンジ: 2.00〜2.50。", prompt_text)
-        self.assertIn("補足: 範囲中央 (2.25) × source_length を目安の訳文長とし", prompt_text)
-        self.assertIn("列挙や見出しを訳す場合は 'and' を使わずに", prompt_text)
-        self.assertIn("文章として訳す場合は必要な接続詞の使用を許容しますが", prompt_text)
+        self.assertIn("文字数倍率の許容レンジ: 2.00〜2.50。", prompt_text)
+        self.assertIn("下限=round(source_length × 2.00)、上限=round(source_length × 2.50)", prompt_text)
+        self.assertIn("範囲中央 (2.25) × source_length を四捨五入した長さを目安にし", prompt_text)
+        self.assertIn("列挙は 'and' ではなくコンマやスラッシュで簡潔に区切ってください", prompt_text)
         self.assertIn('Source sentences:\n["関税影響"]', prompt_text)
 
     def test_last_json_array_is_selected_when_multiple_payloads_returned(self) -> None:
