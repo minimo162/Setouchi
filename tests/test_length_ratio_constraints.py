@@ -368,15 +368,18 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertGreaterEqual(len(browser.prompts), 1)
 
         prompt_text = browser.prompts[0]
-        self.assertIn("許容文字数倍率レンジ: 2.00〜2.50。", prompt_text)
-        self.assertIn("最小長 = ceil(source_length × 2.00)、最大長 = floor(source_length × 2.50)", prompt_text)
-        self.assertIn("目標長 = round(source_length × 2.25)", prompt_text)
-        self.assertIn("translated_length と length_verification.translated_length_computed は必ず len(translated_text.encode(\"utf-16-le\")) // 2 の実測値と完全一致させ", prompt_text)
-        self.assertIn("length_ratio と length_verification.length_ratio_computed は実測 translated_length / source_length を基に再計算し", prompt_text)
-        self.assertIn("例示や過去応答の数値をコピーせず、毎回 translated_text の実測値から計算した数値のみを記入してください", prompt_text)
-        self.assertIn("len(translated_text.encode(\"utf-16-le\")) // 2 を再測定し、その実測値で translated_length と length_verification.translated_length_computed を上書きし", prompt_text)
-        self.assertIn("length_verification.status は translated_length・length_ratio が実測値と一致し許容レンジ内である場合に限り \"ok\"", prompt_text)
-        self.assertIn("列挙は 'and' ではなくコンマやスラッシュを用いて簡潔に区切ってください", prompt_text)
+        self.assertIn("許容倍率: 2.00〜2.50。", prompt_text)
+        self.assertIn("min_len = ceil(source_length × 2.00)、max_len = floor(source_length × 2.50)", prompt_text)
+        self.assertIn("target_len = round_half_up(source_length × 2.25)", prompt_text)
+        self.assertIn("四捨五入は round half up を用い", prompt_text)
+        self.assertIn("訳文は ASCII 範囲 (U+0020〜U+007E) のみを使用し", prompt_text)
+        self.assertIn("見出しやラベルは 1〜2 語に抑え、列挙はコンマまたはスラッシュで区切り、and は使用しないでください", prompt_text)
+        self.assertIn("縮約手順（上限超過時）", prompt_text)
+        self.assertIn("膨張手順（下限不足時）", prompt_text)
+        self.assertIn("最終到達条件: min_len ≤ translated_length ≤ max_len かつ |translated_length - target_len| ≤ 1", prompt_text)
+        self.assertIn("len(translated_text.encode(\"utf-16-le\")) // 2 を実測し、その値で translated_length と length_verification.translated_length_computed を更新してください", prompt_text)
+        self.assertIn("length_ratio と length_verification.length_ratio_computed も実測値から計算し、小数第2位で round half up してください", prompt_text)
+        self.assertIn("length_verification.status を \"ok\" にできるのは実測値が一致し条件を満たした場合のみ", prompt_text)
         self.assertIn('Source sentences:\n["関税影響"]', prompt_text)
 
     def test_last_json_array_is_selected_when_multiple_payloads_returned(self) -> None:
