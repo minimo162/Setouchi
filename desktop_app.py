@@ -2070,11 +2070,12 @@ class CopilotApp:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
             display_text = text_to_copy or "翻訳結果が確認できませんでした。"
-            summary_body = ft.SelectableText(
+            summary_body = ft.Text(
                 display_text,
                 size=13,
                 color=palette["on_surface"],
                 font_family=self._primary_font_family,
+                selectable=True,
             )
             summary_container = ft.Container(
                 content=summary_body,
