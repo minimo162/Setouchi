@@ -15,7 +15,6 @@ import time
 import pyperclip
 import sys
 import re
-import os
 from pathlib import Path
 from typing import Optional, Callable, List, Tuple, Union, Dict, Any
 from threading import Event
@@ -54,35 +53,6 @@ class BrowserCopilotManager:
         self._logger = logging.getLogger(__name__)
         self._focus_suppressed_once = False
         self._chat_sessions_started = 0
-        self._last_response_ready_at: Optional[float] = None
-        try:
-            buffer_ms = int(os.getenv("COPILOT_RESPONSE_BUFFER_MS", "900"))
-        except ValueError:
-            buffer_ms = 900
-        self._post_response_buffer_ms = max(0, buffer_ms)
-
-    def _await_post_response_buffer(self, minimum_delay_ms: Optional[int] = None) -> None:
-        if minimum_delay_ms is None:
-            minimum_delay_ms = getattr(self, "_post_response_buffer_ms", 0)
-        if minimum_delay_ms <= 0:
-            return
-
-        last_ready = getattr(self, "_last_response_ready_at", None)
-        if not last_ready:
-            return
-
-        remaining_ms = minimum_delay_ms - (time.monotonic() - last_ready) * 1000.0
-        if remaining_ms <= 0:
-            return
-
-        remaining_ms = max(0.0, remaining_ms)
-        try:
-            if self.page:
-                self.page.wait_for_timeout(remaining_ms)
-            else:
-                time.sleep(remaining_ms / 1000.0)
-        except Exception:
-            time.sleep(max(0.0, remaining_ms / 1000.0))
         self._active_copilot_mode: Optional[str] = None
         self._last_gpt_mode_confirmed_at: Optional[float] = None
         self._chat_transcript_sink: Optional[Callable[[str, str, Optional[Dict[str, Any]]], None]] = None
@@ -1550,8 +1520,6 @@ class BrowserCopilotManager:
         if not self.page:
             return
 
-        self._await_post_response_buffer()
-
         button_factories = [
             ("data-testid=newChatButton", lambda: self.page.get_by_test_id("newChatButton")),
             ("role=button 新しいチャット", lambda: self.page.get_by_role("button", name="新しいチャット")),
@@ -1841,10 +1809,6 @@ class BrowserCopilotManager:
                 time.sleep(0.5)
 
             print("応答が完了したと判断しました。")
-            try:
-                self._last_response_ready_at = time.monotonic()
-            except Exception:
-                self._last_response_ready_at = time.time()
             if response_text is None:
                 return _finalize_response("エラー: Copilotからの応答を取得できませんでした。")
 
@@ -1918,8 +1882,6 @@ class BrowserCopilotManager:
             return False
 
         self._logger.info("Copilot の新しいチャットを開始し、GPT-5 に切り替えます。")
-
-        self._await_post_response_buffer()
 
         try:
             self.page.get_by_test_id("newChatButton").click(timeout=5000)
@@ -2148,3 +2110,4 @@ class BrowserCopilotManager:
         except Exception:
             rendered = str(snapshot)
         print(f"Debug: chat input snapshot ({label}): {rendered}")
+
