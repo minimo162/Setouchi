@@ -2695,9 +2695,9 @@ def translate_range_contents(
                         break
 
                     error_label_local = last_error_label or "unknown"
-                    raise ToolExecutionError(
-                        f"Failed to parse translation response as JSON ({error_label_local}): {last_response}"
-                    )
+                    error_message = f"Failed to parse translation response as JSON ({error_label_local}): {last_response}"
+                    actions.log_progress(error_message)
+                    raise ToolExecutionError(error_message)
 
                 def _find_empty_translation_indexes(payload: List[Any]) -> List[int]:
                     empty_indexes: List[int] = []
@@ -3048,9 +3048,11 @@ def translate_range_contents(
                                 violation_messages = "; ".join(
                                     f"{entry['cell_ref']}: {_format_ratio(entry['ratio'])}" for entry in ratio_violations_local[:5]
                                 )
-                                raise ToolExecutionError(
+                                error_message = (
                                     f"Length ratio constraint violation persisted after {max_length_retries} retries: {violation_messages}"
                                 )
+                                actions.log_progress(error_message)
+                                raise ToolExecutionError(error_message)
                         if ratio_violations_local:
                             length_retry_count += 1
                             notice_lines = [
