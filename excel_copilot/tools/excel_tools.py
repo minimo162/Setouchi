@@ -2728,7 +2728,7 @@ def translate_range_contents(
 
                 length_retry_count = 0
                 extra_ratio_notice: Optional[str] = None
-                max_length_retries = 3
+                max_length_retries = 1
                 best_violation_updates: Dict[Tuple[int, int], Dict[str, Any]] = {}
                 best_violation_distances: Dict[Tuple[int, int], float] = {}
 
