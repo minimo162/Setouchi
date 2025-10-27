@@ -1659,29 +1659,22 @@ def translate_range_contents(
             # translation_only 用プロンプト（初回で制約を満たす）
             prompt_lines = [
                 f"以下の日本語テキストを {target_language} に翻訳してください。\n",
-                "重要: 後続の長さ調整は行いません。1回の回答で文字数制約を必ず満たしてください。\n",
-                "出力は JSON 配列のみ。各要素には次のキーを含めてください:\n",
-                '- "translated_text": 訳文。空文字列は不可。\n',
+                "出力は JSON 配列のみで、要素順は入力テキスト順と一致させてください。各要素には必ず次のキーを含めてください:\n",
+                '- "translated_text": 訳文（空文字列禁止、前回応答の同一訳語再利用禁止）。\n',
                 '- "source_length": 原文の UTF-16 コードユニット数（整数）。\n',
-                '- "translated_length": 訳文の UTF-16 コードユニット数（整数）。\n',
-                '- "length_ratio": translated_length / source_length（数値）。\n',
-                '- "length_verification": { "method": "utf16-le", "translated_length_computed": 整数, "length_ratio_computed": 数値, "status": "ok" }\n',
-                "UTF-16 長さを求めるときは、各文字を UTF-16LE でエンコードして 2 バイトで割った正確な値を使用してください。重複計算や概算は禁止です。\n",
-                "検算には Python などで `len(translated_text.encode(\"utf-16-le\")) // 2` を実行した結果を用い、必ずその値を translated_length と length_verification.translated_length_computed の両方に転記してください。\n",
-                "translated_length と length_ratio は必ず以下の計算法に従って一致させてください。\n",
-                "  - translated_length = len(translated_text.encode(\"utf-16-le\")) / 2 を整数化した値。\n",
-                "  - length_ratio = translated_length / source_length を小数第2位まで四捨五入した値。\n",
-                "  - JSON 出力後に両値を再チェックし、計算とズレていれば必ず修正してください。\n",
-                "  - translated_text が直前の回答と同一内容だった場合はエラーと見なし、新しい訳語に差し替えてから出力してください。\n",
-                "  - length_verification.translated_length_computed および length_verification.length_ratio_computed も同じ計算結果を記載し、translated_length/length_ratio と数値が一致しない場合は JSON を出力せず再計算してください。\n",
-                "  - translated_length が許容上限（source_length × 2.50 の四捨五入値）を超える場合は JSON を提出せず、語数や語彙を見直して再計算するまで回答禁止です。\n",
-                "  - length_verification.status は計算結果が完全に一致した場合だけ \"ok\" を返し、不一致時は \"mismatch\" と記録して JSON を送信せず再計算してください。\n",
-                "禁止: 余計な説明、前置き、マークダウン、複数の JSON ペイロード。\n",
+                '- "translated_length": len(translated_text.encode(\"utf-16-le\")) // 2 で得た整数値。\n',
+                '- "length_ratio": translated_length / source_length を小数第2位まで四捨五入した数値。\n',
+                '- "length_verification": { "method": "utf16-le", "translated_length_computed": 同じ整数, "length_ratio_computed": 同じ数値, "status": "ok" }\n',
+                "UTF-16 長さは UTF-16LE でエンコードしたバイト長を 2 で割った正確な値のみを使用し、概算や重複計算は禁止です。\n",
+                "検算では Python 等で `len(translated_text.encode(\"utf-16-le\")) // 2` を実行し、得た値を translated_length と length_verification.translated_length_computed の両方に転記してください。\n",
+                "translated_length と length_ratio は必ず同じ計算結果から導き、出力前に再チェックしてズレがあれば修正してください。\n",
+                "length_verification.status はすべての値が一致した場合のみ \"ok\" とし、一致しない場合は JSON を出力せず再計算してください。\n",
+                "重要: 後続の長さ調整は行いません。1 回の回答で文字数制約を必ず満たしてください。\n",
             ]
             if enforce_length_limit:
                 if ratio_bounds_display:
                     prompt_lines.append(f"文字数倍率の目標レンジ: {ratio_bounds_display}。")
-                prompt_lines.append("各要素について、以下の手順で訳文の長さを調整してください。\n")
+                prompt_lines.append("必須手順:\n")
                 ratio_midpoint_display: Optional[str] = None
                 if (
                     effective_length_ratio_min is not None
@@ -1693,19 +1686,21 @@ def translate_range_contents(
                     and effective_length_ratio_limit is not None
                 ):
                     prompt_lines.append(
-                        f"1. source_length に {effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} を掛けて、訳文の許容下限・上限を算出し、四捨五入して整数に揃えてください。\n"
+                        f"1. source_length に {effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f} を掛けて許容下限・上限を算出し、四捨五入して整数化してください。\n"
                     )
                 elif effective_length_ratio_min is not None:
                     prompt_lines.append(
-                        f"1. source_length に {effective_length_ratio_min:.2f} を掛けた値を訳文の許容下限として計算し、四捨五入して整数に揃えてください。\n"
+                        f"1. source_length × {effective_length_ratio_min:.2f} を許容下限として計算し、四捨五入して整数化してください。\n"
                     )
                 elif effective_length_ratio_limit is not None:
                     prompt_lines.append(
-                        f"1. source_length に {effective_length_ratio_limit:.2f} を掛けた値を訳文の許容上限として計算し、四捨五入して整数に揃えてください。\n"
+                        f"1. source_length × {effective_length_ratio_limit:.2f} を許容上限として計算し、四捨五入して整数化してください。\n"
                     )
                 prompt_lines.extend([
-                    "2. 訳文案を作成する際は許容範囲の中央付近を意識し、出力前に translated_length を確認してレンジ内であることを確かめてください。\n",
-                    "3. 上限を超える場合は冗長な語句を整理し、下限を下回る場合は意味を変えずに自然な補足や言い換えで密度を高めた上で、length_ratio が許容範囲に収まっているか再計算してください。\n",
+                    "2. 訳文案は許容範囲の中央付近を狙い、出力前に translated_length がレンジ内か確認してください。\n",
+                    "3. 上限超過時は語句を圧縮し、下限未満時は意味を保った自然な補足で密度を調整し、再計算後に length_ratio がレンジ内か確認してください。\n",
+                    "4. Python 等で再計算した translated_length と length_ratio を length_verification フィールドにも反映させ、値が完全に一致することを確認してください。\n",
+                    "5. translated_length が許容上限を 1 でも超える場合は JSON を出力せず再構成してから検算してください。\n",
                 ])
                 if ratio_midpoint_display:
                     prompt_lines.append(
@@ -1741,7 +1736,11 @@ def translate_range_contents(
                 prompt_lines.append(
                     "JSON を返す直前に各要素の translated_length を再計算し、許容上限を超えていないことを確認した上で出力してください。\n"
                 )
-                prompt_lines.append("全行について length_ratio が許容レンジ内だと確認できるまで回答を出力しないでください。\n")
+                prompt_lines.append("全行について length_ratio が許容レンジ内であると確信するまで JSON を出力しないでください。\n")
+            prompt_lines.append("禁止事項:\n")
+            prompt_lines.append("  - JSON 以外の出力、複数 JSON、前置き、マークダウン、冗長な説明。\n")
+            prompt_lines.append("  - 許容レンジ外の値を含んだまま出力すること。\n")
+            prompt_lines.append("  - 再利用禁止語句や直前にレンジ外と判断された訳語の使い回し。\n")
             prompt_lines.extend([
                 "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
             ])
