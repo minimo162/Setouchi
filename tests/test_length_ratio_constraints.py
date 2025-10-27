@@ -237,6 +237,76 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertEqual(actions.writes[("Sheet1", "B1")], [["Test  "]])
         self.assertEqual(len(browser.prompts), 1)
 
+    def test_invalid_escape_sequences_are_sanitized(self) -> None:
+        actions = FakeActions()
+        actions._data["Sheet1"]["A1"] = "テスト"
+        invalid_response = r"""
+[
+    {
+        "translated_text": "Excluding credit applied",
+        "source_length": 12,
+        "translated_length": 28,
+        "length_ratio": 2.33,
+        "length_verification": {
+            "method": "utf16-le",
+            "translated_length_computed": 28,
+            "length_ratio_computed": 2.33,
+            "status": "ok"
+        }
+    },
+    {
+        "translated_text": "Allocation shortfall",
+        "source_length": 7,
+        "translated_length": 17,
+        "length_ratio": 2.43,
+        "length_verification": {
+            "method": "utf16-le",
+            "translated_length_computed": 17,
+            "length_ratio_computed": 2.43,
+            "status": "ok"
+        }
+    },
+    {
+        "translated_text": "Planned credit for shortfall",
+        "source_length": 11,
+        "translated_length": 27,
+        "length_ratio": 2.45,
+        "length_verification": {
+            "method": "utf16-le",
+            "translated_length_computed": 27,
+            "length_ratio_computed": 2.45,
+            "status": "ok"
+        }
+    },
+    {
+        "translated_text": "Shipped vehicle MY(\*)",
+        "source_length": 10,
+        "translated_length": 24,
+        "length_ratio": 2.40,
+        "length_verification": {
+            "method": "utf16-le",
+            "translated_length_computed": 24,
+            "length_ratio_computed": 2.40,
+            "status": "ok"
+        }
+    }
+]
+"""
+        browser = FakeBrowserManager(responses=[invalid_response])
+
+        result = excel_tools.translate_range_without_references(
+            actions=actions,
+            browser_manager=browser,
+            cell_range="Sheet1!A1:A1",
+            sheet_name="Sheet1",
+            translation_output_range="Sheet1!B1:B1",
+            overwrite_source=False,
+            rows_per_batch=1,
+        )
+
+        self.assertTrue(result)
+        self.assertIn(("Sheet1", "B1"), actions.writes)
+
     def test_prompt_includes_explicit_json_encoding_guidance(self) -> None:
         actions = FakeActions()
         browser = FakeBrowserManager()

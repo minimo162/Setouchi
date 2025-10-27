@@ -1404,6 +1404,7 @@ def translate_range_contents(
             cleaned = _strip_json_code_fences(response_text)
             if isinstance(cleaned, str):
                 cleaned = re.sub(r"\\([\[\]_])", r"\1", cleaned)
+                cleaned = re.sub(r"\\(?=[^\"\\/bfnrtu])", "", cleaned)
             decoder = json.JSONDecoder()
             index = 0
             length = len(cleaned)
