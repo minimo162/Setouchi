@@ -15,6 +15,7 @@ import time
 import pyperclip
 import sys
 import re
+import os
 from pathlib import Path
 from typing import Optional, Callable, List, Tuple, Union, Dict, Any
 from threading import Event
@@ -53,6 +54,11 @@ class BrowserCopilotManager:
         self._logger = logging.getLogger(__name__)
         self._focus_suppressed_once = False
         self._chat_sessions_started = 0
+        try:
+            delay_ms = int(os.getenv("COPILOT_RESPONSE_BUFFER_MS", "900"))
+        except ValueError:
+            delay_ms = 900
+        self._post_copy_delay_ms = max(0, delay_ms)
         self._active_copilot_mode: Optional[str] = None
         self._last_gpt_mode_confirmed_at: Optional[float] = None
         self._chat_transcript_sink: Optional[Callable[[str, str, Optional[Dict[str, Any]]], None]] = None
@@ -1797,6 +1803,16 @@ class BrowserCopilotManager:
                     if _looks_like_prompt_echo(clipboard_text):
                         continue
 
+                    delay_ms = getattr(self, "_post_copy_delay_ms", 0)
+                    if delay_ms > 0:
+                        try:
+                            if self.page:
+                                self.page.wait_for_timeout(delay_ms)
+                            else:
+                                time.sleep(delay_ms / 1000.0)
+                        except Exception:
+                            time.sleep(delay_ms / 1000.0)
+
                     response_text = clipboard_text
                     break
 
@@ -2110,4 +2126,3 @@ class BrowserCopilotManager:
         except Exception:
             rendered = str(snapshot)
         print(f"Debug: chat input snapshot ({label}): {rendered}")
-
