@@ -1395,6 +1395,8 @@ def translate_range_contents(
             if not isinstance(response_text, str):
                 return None, "non_string"
             cleaned = _strip_json_code_fences(response_text)
+            if isinstance(cleaned, str):
+                cleaned = re.sub(r"\\([\[\]_])", r"\1", cleaned)
             decoder = json.JSONDecoder()
             index = 0
             length = len(cleaned)
@@ -1671,6 +1673,8 @@ def translate_range_contents(
                 "length_verification.status はすべての値が一致した場合のみ \"ok\" とし、一致しない場合は JSON を出力せず再計算してください。\n",
                 "思考過程・計画・検算手順・再計算ログは出力せず、必要な確認は内部で完了させてください。\n",
                 "Python コードや計算ログを表示せず、測定結果のみを JSON に反映してください。\n",
+                "JSON はバックスラッシュなしでそのまま出力し、先頭は `[`、末尾は `]` としてください。\n",
+                "キー名や記号にバックスラッシュを追加したり、Markdown 形式に変換したりしないでください。\n",
                 "重要: 後続の長さ調整は行いません。1 回の回答で文字数制約を必ず満たしてください。\n",
             ]
             if enforce_length_limit:
@@ -1744,6 +1748,7 @@ def translate_range_contents(
             prompt_lines.append("  - 許容レンジ外の値を含んだまま出力すること。\n")
             prompt_lines.append("  - 再利用禁止語句や直前にレンジ外と判断された訳語の使い回し。\n")
             prompt_lines.append("  - 思考内容、計画、検算のプロセス、Python 実行例、メモ、ログの出力。\n")
+            prompt_lines.append("  - JSON 文字列をバックスラッシュで囲む、アンダースコア等にバックスラッシュを付与する、Markdown 記法を使用すること。\n")
             prompt_lines.extend([
                 "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
             ])
