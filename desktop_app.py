@@ -2995,6 +2995,8 @@ class CopilotApp:
             if self._auto_test_triggered:
                 self._auto_test_completed = True
             self._latest_translation_job = None
+            if response.content:
+                print(f"ERROR: {response.content}", flush=True)
         elif response.type is ResponseType.END_OF_TASK:
             self._set_state(AppState.READY)
             if self._auto_test_triggered:
