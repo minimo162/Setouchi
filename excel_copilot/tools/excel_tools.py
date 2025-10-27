@@ -55,6 +55,14 @@ if _TRANSLATION_UTF16_BUDGET <= 0:
     _TRANSLATION_UTF16_BUDGET = None  # type: ignore[assignment]
 
 
+_FORCE_JSON_ONLY_NOTICE_JA = (
+    "前回の応答で説明文や形式違反が検出されました。今回は純粋な JSON 配列のみを返してください。\n"
+    "平方括弧で始まり、各要素に指定されたキーを含め、訳文と検算値以外の文章や記号を出力しないでください。"
+)
+_FORCE_JSON_ONLY_NOTICE_EN = (
+    "Return ONLY the JSON array with the required keys. Do not include explanations, plans, code, or any text outside the JSON."
+)
+
 
 def _diff_debug(message: str) -> None:
     if _DIFF_DEBUG_ENABLED:
@@ -1673,6 +1681,8 @@ def translate_range_contents(
                 "length_verification.status はすべての値が一致した場合のみ \"ok\" とし、一致しない場合は JSON を出力せず再計算してください。\n",
                 "思考過程・計画・検算手順・再計算ログは出力せず、必要な確認は内部で完了させてください。\n",
                 "Python コードや計算ログを表示せず、測定結果のみを JSON に反映してください。\n",
+                "翻訳理由や調整方針などの説明文を JSON の外側に書かないでください。\n",
+                "応答全体は単一の JSON 配列のみとし、前置き・後置き・装飾表現を含めないでください。\n",
                 "JSON はバックスラッシュなしでそのまま出力し、先頭は `[`、末尾は `]` としてください。\n",
                 "キー名や記号にバックスラッシュを追加したり、Markdown 形式に変換したりしないでください。\n",
                 "重要: 後続の長さ調整は行いません。1 回の回答で文字数制約を必ず満たしてください。\n",
@@ -1748,6 +1758,7 @@ def translate_range_contents(
             prompt_lines.append("  - 許容レンジ外の値を含んだまま出力すること。\n")
             prompt_lines.append("  - 再利用禁止語句や直前にレンジ外と判断された訳語の使い回し。\n")
             prompt_lines.append("  - 思考内容、計画、検算のプロセス、Python 実行例、メモ、ログの出力。\n")
+            prompt_lines.append("  - JSON 以外で説明文や理由を記述すること。\n")
             prompt_lines.append("  - JSON 文字列をバックスラッシュで囲む、アンダースコア等にバックスラッシュを付与する、Markdown 記法を使用すること。\n")
             prompt_lines.extend([
                 "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
@@ -2605,26 +2616,88 @@ def translate_range_contents(
                         parsed_payload_local = fallback_payload_local
                     return parsed_payload_local, response_local, parse_error_code_local, repair_status_local
 
+                def _merge_notices(primary: Optional[str], secondary: Optional[str]) -> Optional[str]:
+                    if not secondary:
+                        return primary
+                    if not primary:
+                        return secondary
+                    return f"{primary}\n{secondary}"
+
+                JSON_PARSE_ERROR_CODES: Set[str] = {
+                    "non_string",
+                    "no_json_marker",
+                    "json_decode_failed",
+                    "no_json_found",
+                }
+
                 def _obtain_translation_payload(extra_notice: Optional[str]) -> List[Any]:
-                    parsed_payload_local, response_local, parse_error_code_local, repair_status_local = _run_translation_request(
-                        extra_notice,
-                        include_supporting=True,
-                    )
-                    if parsed_payload_local is None and has_supporting_data:
+                    notices_queue_raw: List[Optional[str]] = []
+                    if extra_notice is not None:
+                        notices_queue_raw.append(extra_notice)
+                        notices_queue_raw.append(_merge_notices(extra_notice, _FORCE_JSON_ONLY_NOTICE_JA))
+                    else:
+                        notices_queue_raw.append(None)
+                    notices_queue_raw.append(_FORCE_JSON_ONLY_NOTICE_JA)
+                    notices_queue_raw.append(_FORCE_JSON_ONLY_NOTICE_EN)
+
+                    notices_queue: List[Optional[str]] = []
+                    seen_notice_keys: Set[str] = set()
+                    for notice_candidate in notices_queue_raw:
+                        key = notice_candidate if notice_candidate is not None else "__NONE__"
+                        if key in seen_notice_keys:
+                            continue
+                        seen_notice_keys.add(key)
+                        notices_queue.append(notice_candidate)
+
+                    last_error_label: Optional[str] = None
+                    last_response: Optional[Any] = None
+                    json_error_logged = False
+                    structure_error_logged = False
+
+                    for notice in notices_queue:
                         parsed_payload_local, response_local, parse_error_code_local, repair_status_local = _run_translation_request(
-                            extra_notice,
-                            include_supporting=False,
+                            notice,
+                            include_supporting=True,
                         )
-                    if parsed_payload_local is None:
-                        error_label_local = parse_error_code_local or repair_status_local or "unknown"
-                        raise ToolExecutionError(
-                            f"Failed to parse translation response as JSON ({error_label_local}): {response_local}"
-                        )
-                    if not isinstance(parsed_payload_local, list) or len(parsed_payload_local) != len(current_texts):
-                        raise ToolExecutionError(
-                            "Translation response must be a list with one entry per source text."
-                        )
-                    return parsed_payload_local
+                        if parsed_payload_local is None and has_supporting_data:
+                            parsed_payload_local, response_local, parse_error_code_local, repair_status_local = _run_translation_request(
+                                notice,
+                                include_supporting=False,
+                            )
+
+                        if isinstance(parsed_payload_local, list) and len(parsed_payload_local) == len(current_texts):
+                            return parsed_payload_local
+
+                        error_code_for_retry = parse_error_code_local or repair_status_local or "unknown"
+                        if parsed_payload_local is not None:
+                            if not isinstance(parsed_payload_local, list) or len(parsed_payload_local) != len(current_texts):
+                                error_code_for_retry = "invalid_structure"
+
+                        last_error_label = error_code_for_retry
+                        last_response = response_local
+
+                        if error_code_for_retry in JSON_PARSE_ERROR_CODES:
+                            if not json_error_logged:
+                                actions.log_progress(
+                                    "翻訳応答が JSON 形式ではないため、JSON のみを返すよう再リクエストします。"
+                                )
+                                json_error_logged = True
+                            continue
+
+                        if error_code_for_retry == "invalid_structure":
+                            if not structure_error_logged:
+                                actions.log_progress(
+                                    "翻訳応答の構造が想定外だったため、形式を修正するよう再リクエストします。"
+                                )
+                                structure_error_logged = True
+                            continue
+
+                        break
+
+                    error_label_local = last_error_label or "unknown"
+                    raise ToolExecutionError(
+                        f"Failed to parse translation response as JSON ({error_label_local}): {last_response}"
+                    )
 
                 def _find_empty_translation_indexes(payload: List[Any]) -> List[int]:
                     empty_indexes: List[int] = []
