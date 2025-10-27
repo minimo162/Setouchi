@@ -1669,6 +1669,8 @@ def translate_range_contents(
                 "検算では Python 等で `len(translated_text.encode(\"utf-16-le\")) // 2` を実行し、得た値を translated_length と length_verification.translated_length_computed の両方に転記してください。\n",
                 "translated_length と length_ratio は必ず同じ計算結果から導き、出力前に再チェックしてズレがあれば修正してください。\n",
                 "length_verification.status はすべての値が一致した場合のみ \"ok\" とし、一致しない場合は JSON を出力せず再計算してください。\n",
+                "思考過程・計画・検算手順・再計算ログは出力せず、必要な確認は内部で完了させてください。\n",
+                "Python コードや計算ログを表示せず、測定結果のみを JSON に反映してください。\n",
                 "重要: 後続の長さ調整は行いません。1 回の回答で文字数制約を必ず満たしてください。\n",
             ]
             if enforce_length_limit:
@@ -1741,6 +1743,7 @@ def translate_range_contents(
             prompt_lines.append("  - JSON 以外の出力、複数 JSON、前置き、マークダウン、冗長な説明。\n")
             prompt_lines.append("  - 許容レンジ外の値を含んだまま出力すること。\n")
             prompt_lines.append("  - 再利用禁止語句や直前にレンジ外と判断された訳語の使い回し。\n")
+            prompt_lines.append("  - 思考内容、計画、検算のプロセス、Python 実行例、メモ、ログの出力。\n")
             prompt_lines.extend([
                 "各要素は必ず 1 本の訳文のみを返してください（見出し・注釈を追加しない）。",
             ])
