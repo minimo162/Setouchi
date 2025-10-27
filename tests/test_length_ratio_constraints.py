@@ -402,7 +402,7 @@ class TranslationLengthRatioTests(unittest.TestCase):
             "Auto-correction event should be logged for traceability.",
         )
 
-    def test_length_ratio_violation_triggers_retry(self) -> None:
+    def test_length_ratio_violation_continues_without_retry(self) -> None:
         actions = FakeActions()
         actions._data["Sheet1"]["A1"] = "テスト  "
         source_units = len(actions._data["Sheet1"]["A1"])
@@ -444,14 +444,15 @@ class TranslationLengthRatioTests(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertIn(("Sheet1", "B1"), actions.writes)
-        self.assertEqual(actions.writes[("Sheet1", "B1")], [["abcd"]])
-        self.assertEqual(len(browser.prompts), 2, "Length ratio violation should trigger exactly one retry.")
+        self.assertEqual(actions.writes[("Sheet1", "B1")], [["abcdefghij"]])
+        self.assertEqual(len(browser.prompts), 1, "Length ratio violation should no longer trigger a retry.")
         self.assertTrue(
-            any("translated_length と length_ratio" in prompt for prompt in browser.prompts[1:]),
-            "Retry prompt should mention length ratio adjustment.",
+            any("文字数倍率制約を逸脱した訳文を検出しました" in log for log in actions.logs),
+            "Progress log should note that the limit was violated but processing continued.",
         )
+        self.assertIn("文字数倍率制約の警告", result)
 
-    def test_length_ratio_mismatch_falls_back_to_closest_result(self) -> None:
+    def test_length_ratio_violation_with_persistent_payload_does_not_retry(self) -> None:
         actions = FakeActions()
         actions._data["Sheet1"]["A1"] = "テスト  "
         source_units = len(actions._data["Sheet1"]["A1"])
@@ -481,11 +482,16 @@ class TranslationLengthRatioTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn(("Sheet1", "B1"), actions.writes)
         self.assertEqual(actions.writes[("Sheet1", "B1")], [["abcdefghij"]])
-        self.assertEqual(len(browser.prompts), 4, "Should attempt initial call plus three retries before falling back.")
-        self.assertTrue(
+        self.assertEqual(len(browser.prompts), 1, "Retries should not be attempted even when violations persist.")
+        self.assertFalse(
             any("最も近い訳文を採用します" in log for log in actions.logs),
-            "Fallback adoption should be announced in progress logs.",
+            "Fallback adoption log should no longer be emitted.",
         )
+        self.assertTrue(
+            any("文字数倍率制約を逸脱した訳文を検出しました" in log for log in actions.logs),
+            "Violation warning should be logged even when retries are skipped.",
+        )
+        self.assertIn("文字数倍率制約の警告", result)
 
     def test_existing_translation_is_replaced_by_cached_translation(self) -> None:
         actions = FakeActions()

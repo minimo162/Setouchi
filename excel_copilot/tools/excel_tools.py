@@ -1926,7 +1926,7 @@ def translate_range_contents(
                 length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
                 length_violation_positions.add((local_row, col_idx))
                 actions.log_progress(
-                    f"既存の翻訳 {cell_ref_for_metrics} が文字数倍率制約を満たしていません: ×{ratio_text} ({direction_label}逸脱)。"
+                    f"既存の翻訳 {cell_ref_for_metrics} が文字数倍率制約を満たしていません: ×{ratio_text}（{direction_label}逸脱）。処理を継続します。"
                 )
 
             pending_cols = pending_columns_by_row.get(local_row)
@@ -2745,7 +2745,6 @@ def translate_range_contents(
 
                 pending_updates: List[Dict[str, Any]] = []
                 metadata_corrections: List[str] = []
-                ratio_violations_local: List[Dict[str, Any]] = []
 
                 for item_index, (item, position_group) in enumerate(zip(parsed_payload, current_position_groups)):
                         if not position_group:
@@ -2945,15 +2944,14 @@ def translate_range_contents(
                                 })
 
                         if enforce_length_limit and violation_kind:
-                            ratio_violations_local.append(
-                                {
-                                    "cell_ref": cell_ref_for_metrics,
-                                    "ratio": ratio_value,
-                                    "kind": violation_kind,
-                                    "source_units": source_length_units,
-                                    "translated_units": translated_length_units,
-                                }
-                            )
+                            if (local_row, col_idx) not in length_violation_positions:
+                                direction_label = "上限" if violation_kind == "above" else "下限"
+                                ratio_text = _format_ratio(ratio_value)
+                                length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
+                                length_violation_positions.add((local_row, col_idx))
+                                actions.log_progress(
+                                    f"文字数倍率制約を逸脱した訳文を検出しました（{cell_ref_for_metrics}: ×{ratio_text}、{direction_label}逸脱）。処理を継続します。"
+                                )
 
                         pending_updates.append(
                             {
@@ -2979,22 +2977,6 @@ def translate_range_contents(
                                 "expected_pair_count": len(source_references_per_item[item_index]) if include_context_columns and item_index < len(source_references_per_item) else 0,
                             }
                         )
-
-                        if enforce_length_limit and ratio_violations_local:
-                            violation_details: List[str] = []
-                            for entry in ratio_violations_local[:5]:
-                                direction = "上限" if entry["kind"] == "above" else "下限"
-                                violation_details.append(
-                                    f"{entry['cell_ref']}: {_format_ratio(entry['ratio'])} ({direction})"
-                                )
-                            if len(ratio_violations_local) > 5:
-                                violation_details.append("...")
-                            bounds_text = ratio_bounds_display or "設定レンジ"
-                            error_message = (
-                                f"Length ratio constraint violation: {'; '.join(violation_details)} / 期待レンジ {bounds_text}"
-                            )
-                            actions.log_progress(error_message)
-                            raise ToolExecutionError(error_message)
 
                         for message in metadata_corrections:
                             actions.log_progress(message)
@@ -3220,9 +3202,11 @@ def translate_range_contents(
             failure_summary = "; ".join(length_limit_violations[:5])
             if len(length_limit_violations) > 5:
                 failure_summary += "; ..."
-            raise ToolExecutionError(
-                f"Length ratio constraint violation in {len(length_limit_violations)} cell(s) (expected {bounds_text}): {failure_summary}"
+            warning_message = (
+                f"文字数倍率制約の警告: {len(length_limit_violations)} 件のセルが許容レンジ {bounds_text} を逸脱しました（例: {failure_summary}）。処理は継続済みです。"
             )
+            actions.log_progress(warning_message)
+            messages.append(warning_message)
 
         write_messages: List[str] = []
 
