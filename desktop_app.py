@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -30,6 +31,7 @@ from excel_copilot.config import (
     COPILOT_SLOW_MO_MS,
 )
 from excel_copilot.core.excel_manager import ExcelManager, ExcelConnectionError
+from excel_copilot.tools.actions import ExcelActions
 from excel_copilot.ui.chat import ChatMessage
 from excel_copilot.ui.messages import (
     AppState,
@@ -363,6 +365,8 @@ class CopilotApp:
         self._last_context_refresh_at: Optional[datetime] = None
         self._group_summary_labels: Dict[str, ft.Text] = {}
         self._field_groups: Dict[str, str] = {}
+        self._latest_translation_job: Optional[Dict[str, Any]] = None
+        self._latest_translation_summary_text: str = ""
 
         auto_test_prompt_override = os.getenv("COPILOT_AUTOTEST_PROMPT")
         auto_test_enabled_flag = os.getenv("COPILOT_AUTOTEST_ENABLED")
@@ -1407,6 +1411,25 @@ class CopilotApp:
             return
 
         assert payload is not None and arguments is not None
+        tool_arguments = dict(payload.get("arguments", {}))
+        job_context: Optional[Dict[str, Any]] = None
+        if self.mode in {CopilotMode.TRANSLATION, CopilotMode.TRANSLATION_WITH_REFERENCES}:
+            source_texts = self._capture_source_texts(tool_arguments)
+            job_context = {
+                "mode": self.mode,
+                "workbook": self.current_workbook_name,
+                "sheet": tool_arguments.get("sheet_name") or self.current_sheet_name,
+                "source_range": tool_arguments.get("cell_range"),
+                "output_range": tool_arguments.get("translation_output_range"),
+                "overwrite_source": bool(tool_arguments.get("overwrite_source")),
+                "source_texts": source_texts,
+                "arguments": tool_arguments,
+            }
+            self._latest_translation_job = job_context
+            self._latest_translation_summary_text = ""
+        else:
+            self._latest_translation_job = None
+            self._latest_translation_summary_text = ""
         self._set_form_error("")
         summary_message = self._format_form_summary(arguments)
         metadata: Dict[str, Any] = {"mode": self.mode.value, "mode_label": MODE_LABELS.get(self.mode, self.mode.value)}
@@ -1415,7 +1438,8 @@ class CopilotApp:
         if self.current_sheet_name:
             metadata["sheet"] = self.current_sheet_name
         self._set_state(AppState.TASK_IN_PROGRESS)
-        self._add_message("user", summary_message, metadata)
+        if job_context is None:
+            self._add_message("user", summary_message, metadata)
         self.request_queue.put(RequestMessage(RequestType.USER_INPUT, payload))
         self._flush_pending_form_value_save()
         self._update_ui()
@@ -1854,8 +1878,7 @@ class CopilotApp:
     _CHAT_VISIBLE_TYPES = {
         "user",
         ResponseType.FINAL_ANSWER.value,
-        ResponseType.CHAT_PROMPT.value,
-        ResponseType.CHAT_RESPONSE.value,
+        ResponseType.ERROR.value,
     }
 
     def _add_message(
@@ -1907,6 +1930,202 @@ class CopilotApp:
             has_history = bool(self.chat_history)
         self.save_log_button.disabled = not has_history
         self._update_chat_empty_state()
+
+    def _normalize_display_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value).strip()
+
+    def _flatten_range_values(self, values: Any) -> List[str]:
+        if values is None:
+            return []
+        flattened: List[Any] = []
+        if isinstance(values, list):
+            for row in values:
+                if isinstance(row, list):
+                    flattened.extend(row)
+                else:
+                    flattened.append(row)
+        else:
+            flattened.append(values)
+        return [self._normalize_display_text(item) for item in flattened]
+
+    def _read_range_matrix(self, workbook: Optional[str], sheet: Optional[str], cell_range: Optional[str]) -> List[List[Any]]:
+        if not workbook or not cell_range:
+            return []
+        try:
+            with ExcelManager(workbook) as manager:
+                actions = ExcelActions(manager)
+                raw_values = actions.read_range(cell_range, sheet)
+        except Exception as exc:
+            print(f"Failed to read range '{cell_range}': {exc}")
+            return []
+        if raw_values is None:
+            return []
+        if isinstance(raw_values, list):
+            if raw_values and isinstance(raw_values[0], list):
+                return raw_values
+            return [[item] for item in raw_values]
+        return [[raw_values]]
+
+    def _capture_source_texts(self, tool_arguments: Dict[str, Any]) -> List[str]:
+        workbook = self.current_workbook_name
+        sheet_name = tool_arguments.get("sheet_name") or self.current_sheet_name
+        cell_range = tool_arguments.get("cell_range")
+        matrix = self._read_range_matrix(workbook, sheet_name, cell_range)
+        return self._flatten_range_values(matrix)
+
+    def _capture_translated_texts(self, job: Dict[str, Any]) -> List[str]:
+        workbook = job.get("workbook")
+        sheet_name = job.get("sheet")
+        target_range = job.get("output_range") or job.get("source_range")
+        matrix = self._read_range_matrix(workbook, sheet_name, target_range)
+        if not matrix:
+            return []
+        translations: List[str] = []
+        for row in matrix:
+            if isinstance(row, list) and row:
+                translations.append(self._normalize_display_text(row[0]))
+            else:
+                translations.append(self._normalize_display_text(row))
+        return translations
+
+    def _parse_translation_texts(self, final_text: str) -> Optional[List[str]]:
+        if not final_text:
+            return None
+        try:
+            payload = json.loads(final_text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, list):
+            return None
+        translations: List[str] = []
+        for item in payload:
+            if isinstance(item, dict):
+                candidate = item.get("translated_text")
+                if candidate is None:
+                    continue
+                translations.append(self._normalize_display_text(candidate))
+            else:
+                translations.append(self._normalize_display_text(item))
+        return translations or None
+
+    def _build_translation_pairs(self, final_text: str, job: Dict[str, Any]) -> List[Tuple[str, str]]:
+        source_texts: List[str] = list(job.get("source_texts") or [])
+        if not source_texts:
+            arguments = job.get("arguments") or {}
+            source_texts = self._capture_source_texts(arguments if isinstance(arguments, dict) else {})
+            job["source_texts"] = source_texts
+        translations = self._parse_translation_texts(final_text)
+        if translations is None:
+            translations = self._capture_translated_texts(job)
+        if not source_texts and not translations:
+            return []
+        pairs: List[Tuple[str, str]] = []
+        for src, tgt in zip_longest(source_texts, translations, fillvalue=""):
+            src_text = src if isinstance(src, str) else self._normalize_display_text(src)
+            tgt_text = tgt if isinstance(tgt, str) else self._normalize_display_text(tgt)
+            pairs.append((src_text, tgt_text))
+        return pairs
+
+    def _display_translation_summary(
+        self,
+        pairs: List[Tuple[str, str]],
+        fallback_text: str,
+        job: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]],
+    ) -> None:
+        palette = EXPRESSIVE_PALETTE
+        summary_lines: List[str] = []
+        for index, (source_text, translated_text) in enumerate(pairs, start=1):
+            if not source_text and not translated_text:
+                continue
+            summary_lines.append(f"{index}. 原文: {source_text}")
+            summary_lines.append(f"   訳文: {translated_text}")
+        fallback_clean = fallback_text.strip() if fallback_text else ""
+        text_to_copy = "\n".join(summary_lines).strip() if summary_lines else fallback_clean
+        self._latest_translation_summary_text = text_to_copy
+
+        if self.chat_list:
+            self.chat_list.controls.clear()
+
+            header = ft.Text(
+                "翻訳結果",
+                size=14,
+                weight=ft.FontWeight.W_600,
+                color=palette["on_surface"],
+                font_family=self._primary_font_family,
+            )
+            copy_button = ft.OutlinedButton(
+                "全件コピー",
+                icon=ft.Icons.CONTENT_COPY,
+                on_click=lambda e, text=text_to_copy: self._copy_translation_summary(text),
+                disabled=not text_to_copy,
+            )
+            header_row = ft.Row(
+                controls=[header, copy_button],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            display_text = text_to_copy or "翻訳結果が確認できませんでした。"
+            summary_body = ft.SelectableText(
+                display_text,
+                size=13,
+                color=palette["on_surface"],
+                font_family=self._primary_font_family,
+            )
+            summary_container = ft.Container(
+                content=summary_body,
+                padding=ft.Padding(16, 14, 16, 14),
+                border_radius=12,
+                bgcolor=ft.Colors.with_opacity(0.08, palette["surface_variant"]),
+                border=ft.border.all(1, ft.Colors.with_opacity(0.06, palette["outline_variant"])),
+            )
+            summary_column = ft.Column(
+                controls=[header_row, summary_container],
+                spacing=16,
+                tight=True,
+            )
+            self.chat_list.controls.append(summary_column)
+            self._update_chat_empty_state()
+            try:
+                self.chat_list.update()
+            except Exception:
+                pass
+
+        with self.history_lock:
+            self.chat_history.clear()
+        history_metadata = {
+            "mode": job.get("mode").value if isinstance(job.get("mode"), CopilotMode) else job.get("mode"),
+            "workbook": job.get("workbook"),
+            "sheet": job.get("sheet"),
+            "source_range": job.get("source_range"),
+            "translation_output_range": job.get("output_range"),
+        }
+        if metadata:
+            history_metadata.update(metadata)
+        history_content = text_to_copy or fallback_clean
+        self._append_history("translation_summary", history_content, history_metadata)
+        self._update_save_button_state()
+
+    def _copy_translation_summary(self, text: str) -> None:
+        if not text:
+            return
+        setter = getattr(self.page, "set_clipboard", None)
+        if callable(setter):
+            try:
+                setter(text)
+            except Exception as copy_err:
+                print(f"Failed to copy translation summary: {copy_err}")
+        if self.status_label:
+            self.status_label.value = "翻訳結果をコピーしました。"
+            self.status_label.color = EXPRESSIVE_PALETTE["primary"]
+            try:
+                self.status_label.update()
+            except Exception:
+                pass
 
     def _has_active_excel_context(self) -> bool:
         return bool(self.current_workbook_name) and bool(self.current_sheet_name)
@@ -2775,6 +2994,7 @@ class CopilotApp:
                     self.new_chat_button.disabled = False
             if self._auto_test_triggered:
                 self._auto_test_completed = True
+            self._latest_translation_job = None
         elif response.type is ResponseType.END_OF_TASK:
             self._set_state(AppState.READY)
             if self._auto_test_triggered:
@@ -2801,24 +3021,43 @@ class CopilotApp:
                         self.new_chat_button.disabled = False
             elif response.content:
                 self._add_message(type_value, response.content, response.metadata)
+        elif response.type is ResponseType.FINAL_ANSWER:
+            self._handle_final_answer(response)
         else:
             if response.content:
                 self._add_message(type_value, response.content, response.metadata)
 
-        if response.type is ResponseType.FINAL_ANSWER:
-            if self._auto_test_triggered:
-                final_text = (response.content or "").strip()
-                self._auto_test_completed = True
-                print(f"AUTOTEST: final answer '{final_text}'", flush=True)
-                self._schedule_autotest_shutdown()
-            elif response.content:
-                print(f"Final answer received outside autotest: {(response.content or '').strip()}", flush=True)
-        elif self._auto_test_enabled and response.type in {ResponseType.OBSERVATION, ResponseType.ACTION, ResponseType.THOUGHT}:
+        if self._auto_test_enabled and response.type in {ResponseType.OBSERVATION, ResponseType.ACTION, ResponseType.THOUGHT}:
             snippet = (response.content or "").strip()
             if snippet:
                 print(f"AUTOTEST: {response.type.value} '{snippet[:120]}'", flush=True)
 
         self._update_ui()
+
+    def _handle_final_answer(self, response: ResponseMessage) -> None:
+        final_text = (response.content or "").strip()
+        if self._auto_test_triggered:
+            self._latest_translation_job = None
+            self._auto_test_completed = True
+            print(f"AUTOTEST: final answer '{final_text}'", flush=True)
+            self._schedule_autotest_shutdown()
+            return
+        if final_text:
+            print(f"Final answer received outside autotest: {final_text}", flush=True)
+
+        job = self._latest_translation_job
+        mode = job.get("mode") if isinstance(job, dict) else None
+        if isinstance(mode, CopilotMode):
+            is_translation_mode = mode in {CopilotMode.TRANSLATION, CopilotMode.TRANSLATION_WITH_REFERENCES}
+        else:
+            is_translation_mode = str(mode) in {CopilotMode.TRANSLATION.value, CopilotMode.TRANSLATION_WITH_REFERENCES.value}
+
+        if job and is_translation_mode:
+            pairs = self._build_translation_pairs(final_text, job)
+            self._display_translation_summary(pairs, final_text, job, response.metadata)
+            self._latest_translation_job = None
+        elif final_text:
+            self._add_message(response.type, final_text, response.metadata)
 
     def _maybe_handle_worker_init_timeout(self) -> None:
         if self._worker_init_timed_out:
