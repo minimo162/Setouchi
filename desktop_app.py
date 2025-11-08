@@ -40,7 +40,16 @@ from excel_copilot.ui.messages import (
     ResponseMessage,
     ResponseType,
 )
-from excel_copilot.ui.theme import EXPRESSIVE_PALETTE, elevated_surface_gradient
+from excel_copilot.ui.theme import (
+    EXPRESSIVE_PALETTE,
+    TYPE_SCALE,
+    accent_glow_gradient,
+    elevated_surface_gradient,
+    floating_shadow,
+    glass_border,
+    glass_surface,
+    primary_surface_gradient,
+)
 from excel_copilot.ui.worker import CopilotWorker
 
 def _ensure_console_logging() -> None:
@@ -449,7 +458,7 @@ class CopilotApp:
         self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
 
     def _configure_page(self):
-        self.page.title = "Excel Co-pilot"
+        self.page.title = "Setouchi Excel Copilot"
         self.page.window.width = 1280
         self.page.window.height = 768
         self.page.window.min_width = 480
@@ -480,8 +489,8 @@ class CopilotApp:
             font_family=font_family,
         )
         self.page.theme_mode = ft.ThemeMode.LIGHT
-        self.page.bgcolor = palette["surface_dim"]
-        self.page.window.bgcolor = palette["surface_dim"]
+        self.page.bgcolor = palette["background"]
+        self.page.window.bgcolor = palette["background"]
         self.page.padding = ft.Padding(0, 0, 0, 0)
         self.page.scroll = ft.ScrollMode.AUTO
         self.page.window.center()
@@ -534,14 +543,19 @@ class CopilotApp:
                 spacing=6,
                 tight=True,
             ),
-            bgcolor=ft.Colors.with_opacity(0.6, palette["surface_variant"]),
-            border_radius=18,
-            padding=ft.Padding(18, 14, 18, 16),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
+            bgcolor=glass_surface(0.72),
+            border_radius=22,
+            padding=ft.Padding(20, 16, 20, 18),
+            border=glass_border(0.35),
+            shadow=floating_shadow("sm"),
         )
 
-        button_shape = ft.RoundedRectangleBorder(radius=18)
-        button_overlay = ft.Colors.with_opacity(0.12, palette["primary"])
+        button_shape = ft.RoundedRectangleBorder(radius=22)
+        button_overlay = ft.Colors.with_opacity(0.08, palette["primary"])
+        button_bg = {
+            ft.MaterialState.DEFAULT: ft.Colors.with_opacity(0.14, palette["primary"]),
+            ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.22, palette["primary"]),
+        }
 
         self.new_chat_button = ft.FilledTonalButton(
             text="新しいチャット",
@@ -550,17 +564,18 @@ class CopilotApp:
             disabled=True,
             style=ft.ButtonStyle(
                 shape=button_shape,
-                padding=ft.Padding(18, 12, 18, 12),
+                padding=ft.Padding(20, 12, 20, 12),
+                bgcolor=button_bg,
+                color=palette["on_primary"],
                 overlay_color=button_overlay,
             ),
         )
 
         dropdown_style = {
-            "border_radius": 18,
-            "border_color": palette["outline_variant"],
+            "border_radius": 22,
+            "border_color": ft.Colors.with_opacity(0.24, palette["outline"]),
             "focused_border_color": palette["primary"],
-            "fill_color": palette["surface_variant"],
-            # Slightly smaller text keeps long workbook/sheet names visible without clipping.
+            "fill_color": glass_surface(0.52),
             "text_style": ft.TextStyle(color=palette["on_surface"], size=12, font_family=self._primary_font_family),
             "hint_style": ft.TextStyle(color=palette["on_surface_variant"], size=12, font_family=self._primary_font_family),
             "disabled": True,
@@ -568,9 +583,11 @@ class CopilotApp:
             "suffix_icon": ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, color=palette["on_surface_variant"]),
         }
 
+        subtitle_scale = TYPE_SCALE["subtitle"]
         self._context_summary_text = ft.Text(
             "選択中: ブック未選択 / シート未選択",
-            size=12,
+            size=subtitle_scale["size"],
+            weight=subtitle_scale["weight"],
             color=palette["on_surface_variant"],
             font_family=self._hint_font_family,
         )
@@ -612,7 +629,9 @@ class CopilotApp:
             disabled=True,
             style=ft.ButtonStyle(
                 shape=button_shape,
-                padding=ft.Padding(18, 12, 18, 12),
+                padding=ft.Padding(20, 12, 20, 12),
+                bgcolor=button_bg,
+                color=palette["on_primary"],
                 overlay_color=button_overlay,
             ),
         )
@@ -635,10 +654,11 @@ class CopilotApp:
                 spacing=12,
                 tight=True,
             ),
-            bgcolor=ft.Colors.with_opacity(0.55, palette["surface_variant"]),
-            border_radius=18,
-            padding=ft.Padding(18, 18, 18, 20),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
+            bgcolor=glass_surface(0.68),
+            border_radius=22,
+            padding=ft.Padding(20, 20, 20, 22),
+            border=glass_border(0.32),
+            shadow=floating_shadow("sm"),
         )
 
         self._context_actions = ft.ResponsiveRow(
@@ -652,7 +672,7 @@ class CopilotApp:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        actions_divider = ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.1, palette["outline"]))
+        actions_divider = ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.08, palette["outline"]))
 
         context_column = ft.Column(
             controls=[status_card, selector_card, actions_divider, self._context_actions],
@@ -661,22 +681,20 @@ class CopilotApp:
         )
 
         self._context_panel = ft.Container(
-            bgcolor=palette["surface"],
-            border_radius=24,
-            padding=ft.Padding(24, 28, 24, 28),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=14,
-                color=ft.Colors.with_opacity(0.06, "#0F172A"),
-                offset=ft.Offset(0, 8),
-            ),
+            bgcolor=glass_surface(0.9),
+            gradient=elevated_surface_gradient(),
+            border_radius=28,
+            padding=ft.Padding(26, 30, 26, 30),
+            border=glass_border(0.42),
+            shadow=floating_shadow("md"),
             content=context_column,
         )
 
+        caption_scale = TYPE_SCALE["caption"]
         self._chat_header_subtitle = ft.Text(
             "処理ログと結果が最新順に表示されます。",
-            size=12,
+            size=caption_scale["size"],
+            weight=caption_scale["weight"],
             color=palette["on_surface_variant"],
             font_family=self._hint_font_family,
         )
@@ -721,8 +739,8 @@ class CopilotApp:
             ),
             padding=ft.Padding(28, 24, 28, 24),
             border_radius=16,
-            border=ft.border.all(1, ft.Colors.with_opacity(0.06, palette["outline_variant"])),
-            bgcolor=ft.Colors.with_opacity(0.18, palette["surface_variant"]),
+            border=glass_border(0.24),
+            bgcolor=glass_surface(0.58),
             visible=True,
             alignment=ft.alignment.center,
         )
@@ -738,17 +756,12 @@ class CopilotApp:
 
         self._chat_panel = ft.Container(
             expand=True,
-            bgcolor=palette["surface_high"],
+            bgcolor=glass_surface(0.95),
             gradient=elevated_surface_gradient(),
-            border_radius=24,
-            padding=ft.Padding(28, 32, 28, 32),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=18,
-                color=ft.Colors.with_opacity(0.06, "#0F172A"),
-                offset=ft.Offset(0, 10),
-            ),
+            border_radius=30,
+            padding=ft.Padding(30, 34, 30, 34),
+            border=glass_border(0.4),
+            shadow=floating_shadow("lg"),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=ft.Column(
                 controls=[chat_header_section, self._chat_empty_state, self.chat_list],
@@ -758,6 +771,99 @@ class CopilotApp:
         )
 
         self._form_panel = self._build_form_panel()
+
+        hero_title_scale = TYPE_SCALE["hero"]
+        body_scale = TYPE_SCALE["body"]
+        hero_state_label = {
+            AppState.INITIALIZING: "初期化中",
+            AppState.READY: "READY",
+            AppState.TASK_IN_PROGRESS: "実行中",
+            AppState.STOPPING: "停止要求中",
+            AppState.ERROR: "エラー",
+        }.get(self.app_state, "初期化中")
+        hero_stats = [
+            ("状態", hero_state_label),
+            ("モード", MODE_LABELS.get(self.mode, "-")),
+            ("ブック", self.current_workbook_name or "未選択"),
+        ]
+        hero_stat_controls = []
+        for label, value in hero_stats:
+            hero_stat_controls.append(
+                ft.Container(
+                    col={"xs": 12, "sm": 4},
+                    padding=ft.Padding(0, 6, 0, 6),
+                    content=ft.Column(
+                        [
+                            ft.Text(
+                                label,
+                                size=caption_scale["size"],
+                                weight=caption_scale["weight"],
+                                color=ft.Colors.with_opacity(0.82, palette["inverse_on_surface"]),
+                                font_family=self._hint_font_family,
+                            ),
+                            ft.Text(
+                                value,
+                                size=body_scale["size"],
+                                weight=ft.FontWeight.W_600,
+                                color=palette["inverse_on_surface"],
+                                font_family=self._primary_font_family,
+                            ),
+                        ],
+                        spacing=2,
+                        tight=True,
+                    ),
+                )
+            )
+
+        hero_badge = ft.Container(
+            padding=ft.Padding(16, 6, 18, 6),
+            border_radius=999,
+            gradient=accent_glow_gradient(),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.25, palette["inverse_on_surface"])),
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.AUTO_AWESOME_ROUNDED, size=16, color=palette["inverse_on_surface"]),
+                    ft.Text(
+                        "世界をとるビジョン",
+                        size=caption_scale["size"],
+                        weight=caption_scale["weight"],
+                        color=palette["inverse_on_surface"],
+                        font_family=self._primary_font_family,
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=8,
+            ),
+        )
+
+        hero_banner = ft.Container(
+            gradient=primary_surface_gradient(),
+            border_radius=40,
+            padding=ft.Padding(32, 32, 32, 36),
+            shadow=floating_shadow("lg"),
+            content=ft.Column(
+                [
+                    hero_badge,
+                    ft.Text(
+                        "Setouchi Excel Copilot",
+                        size=hero_title_scale["size"],
+                        weight=hero_title_scale["weight"],
+                        color=palette["inverse_on_surface"],
+                        font_family=self._primary_font_family,
+                    ),
+                    ft.Text(
+                        "Apple 由来の余白と質感で、翻訳オペレーションを静かに加速。",
+                        size=body_scale["size"],
+                        weight=body_scale["weight"],
+                        color=ft.Colors.with_opacity(0.92, palette["inverse_on_surface"]),
+                        font_family=self._hint_font_family,
+                    ),
+                    ft.ResponsiveRow(hero_stat_controls, spacing=12, run_spacing=12),
+                ],
+                spacing=14,
+                tight=True,
+            ),
+        )
 
         self._layout = ft.ResponsiveRow(
             controls=[
@@ -785,16 +891,25 @@ class CopilotApp:
         )
 
         page_body = ft.Column(
-            controls=[self._layout],
-            spacing=0,
+            controls=[hero_banner, self._layout],
+            spacing=32,
             expand=True,
         )
 
         self._content_container = ft.Container(
             content=page_body,
             expand=True,
-            padding=ft.Padding(28, 36, 28, 36),
+            padding=ft.Padding(32, 42, 32, 44),
             alignment=ft.alignment.top_center,
+            bgcolor=palette["background"],
+            gradient=ft.LinearGradient(
+                begin=ft.alignment.top_center,
+                end=ft.alignment.bottom_center,
+                colors=[
+                    ft.Colors.with_opacity(0.95, palette["surface_dim"]),
+                    palette["background"],
+                ],
+            ),
         )
 
         self._update_context_summary()
@@ -829,11 +944,31 @@ class CopilotApp:
             font_family=self._hint_font_family,
         )
 
+        pill_shape = ft.StadiumBorder()
+        submit_style = ft.ButtonStyle(
+            shape=pill_shape,
+            padding=ft.Padding(28, 12, 28, 12),
+            bgcolor={
+                ft.MaterialState.DEFAULT: palette["primary"],
+                ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.9, palette["primary"]),
+            },
+            color=palette["on_primary"],
+            overlay_color=ft.Colors.with_opacity(0.08, palette["on_primary"]),
+        )
+        cancel_style = ft.ButtonStyle(
+            shape=pill_shape,
+            padding=ft.Padding(24, 12, 24, 12),
+            side=ft.BorderSide(1, ft.Colors.with_opacity(0.4, palette["outline"])),
+            color=palette["on_surface"],
+            overlay_color=ft.Colors.with_opacity(0.06, palette["on_surface"]),
+        )
+
         self._form_submit_button = ft.FilledButton(
             "フォームを送信",
             icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
             on_click=self._submit_form,
             disabled=not can_interact,
+            style=submit_style,
         )
 
         self._form_cancel_button = ft.OutlinedButton(
@@ -842,6 +977,7 @@ class CopilotApp:
             on_click=self._stop_task,
             disabled=True,
             visible=False,
+            style=cancel_style,
         )
 
         self._form_progress_indicator = ft.ProgressRing(
@@ -871,7 +1007,7 @@ class CopilotApp:
         )
         action_bar = ft.Column(
             controls=[
-                ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.08, palette["outline"])),
+                ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.06, palette["outline"])),
                 ft.Row(
                     controls=[progress_cluster, action_buttons],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -890,16 +1026,12 @@ class CopilotApp:
 
         panel = ft.Container(
             content=content,
-            bgcolor=palette["surface_high"],
-            border_radius=24,
-            padding=ft.Padding(22, 24, 22, 24),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline"])),
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=18,
-                color=ft.Colors.with_opacity(0.06, "#0F172A"),
-                offset=ft.Offset(0, 10),
-            ),
+            bgcolor=glass_surface(0.94),
+            gradient=elevated_surface_gradient(),
+            border_radius=30,
+            padding=ft.Padding(26, 28, 26, 30),
+            border=glass_border(0.4),
+            shadow=floating_shadow("md"),
             clip_behavior=ft.ClipBehavior.NONE,
         )
 
