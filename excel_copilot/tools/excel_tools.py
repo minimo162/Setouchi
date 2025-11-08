@@ -1,5 +1,4 @@
 import html
-import ast
 import json
 import re
 import difflib
@@ -1065,8 +1064,6 @@ def translate_range_contents(
     target_reference_urls: Optional[List[str]] = None,
     translation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
-    length_ratio_limit: Optional[float] = None,
-    length_ratio_min: Optional[float] = None,
     rows_per_batch: Optional[int] = None,
     stop_event: Optional[Event] = None,
     output_mode: str = "translation_with_context",
@@ -1085,10 +1082,6 @@ def translate_range_contents(
         target_reference_urls: URLs to the target-language reference documents used for pairing.
         translation_output_range: Range where translated content, process notes, and reference pairs are written.
         overwrite_source: Whether to overwrite the source range directly.
-        length_ratio_limit: Optional upper bound for the ratio (translated UTF-16 length / source UTF-16 length)
-            enforced in translation-only mode. When None, no upper limit is applied.
-        length_ratio_min: Optional lower bound for the ratio (translated UTF-16 length / source UTF-16 length)
-            enforced in translation-only mode. When None, no lower limit is applied.
         rows_per_batch: Optional cap for batch size when chunking the translation work.
         stop_event: Optional cancellation event set when the user interrupts the operation.
         output_mode: Controls whether contextual columns (process notes / reference pairs) are emitted.
@@ -1152,237 +1145,6 @@ def translate_range_contents(
             _MIN_CONTEXT_BLOCK_WIDTH if include_context_columns else 1
         )
 
-        effective_length_ratio_limit: Optional[float] = None
-        effective_length_ratio_min: Optional[float] = None
-        if length_ratio_limit is not None:
-            try:
-                candidate_limit = float(length_ratio_limit)
-            except (TypeError, ValueError):
-                raise ToolExecutionError("length_ratio_limit は数値で指定してください。") from None
-            if not math.isfinite(candidate_limit) or candidate_limit <= 0:
-                raise ToolExecutionError("length_ratio_limit には 0 より大きい有限の数値を指定してください。")
-            effective_length_ratio_limit = candidate_limit
-        if length_ratio_min is not None:
-            try:
-                candidate_min = float(length_ratio_min)
-            except (TypeError, ValueError):
-                raise ToolExecutionError("length_ratio_min は数値で指定してください。") from None
-            if not math.isfinite(candidate_min) or candidate_min < 0:
-                raise ToolExecutionError("length_ratio_min には 0 以上の有限の数値を指定してください。")
-            effective_length_ratio_min = candidate_min
-        if (
-            effective_length_ratio_min is not None
-            and effective_length_ratio_limit is not None
-            and effective_length_ratio_min > effective_length_ratio_limit
-        ):
-            raise ToolExecutionError("length_ratio_min は length_ratio_limit 以下にしてください。")
-
-        enforce_length_limit = (
-            output_mode == "translation_only"
-            and (
-                effective_length_ratio_limit is not None
-                or effective_length_ratio_min is not None
-            )
-        )
-
-        length_metrics: Dict[Tuple[int, int], Dict[str, Any]] = {}
-        length_limit_violations: List[str] = []
-        length_violation_positions: Set[Tuple[int, int]] = set()
-
-        def _compute_length_ratio(source_units: int, translated_units: int) -> float:
-            if source_units <= 0:
-                return 0.0 if translated_units <= 0 else math.inf
-            return translated_units / source_units
-
-        def _ratio_violation_kind(ratio_value: float) -> Optional[str]:
-            if effective_length_ratio_min is not None and ratio_value < effective_length_ratio_min:
-                return "below"
-            if effective_length_ratio_limit is not None and ratio_value > effective_length_ratio_limit:
-                return "above"
-            return None
-
-        def _format_ratio_bounds_for_display() -> str:
-            if (
-                effective_length_ratio_min is not None
-                and effective_length_ratio_limit is not None
-            ):
-                return f"{effective_length_ratio_min:.2f}〜{effective_length_ratio_limit:.2f}"
-            if effective_length_ratio_min is not None:
-                return f"{effective_length_ratio_min:.2f} 以上"
-            if effective_length_ratio_limit is not None:
-                return f"{effective_length_ratio_limit:.2f} 以下"
-            return ""
-
-        def _format_ratio(value: float) -> str:
-            if not math.isfinite(value):
-                return "∞"
-            return f"{value:.2f}"
-
-        _METADATA_RATIO_TOLERANCE = 0.01
-
-        def _coerce_int(value: Any) -> Optional[int]:
-            if isinstance(value, bool):
-                return None
-            if isinstance(value, int):
-                return value
-            if isinstance(value, float):
-                if not math.isfinite(value):
-                    return None
-                rounded = int(round(value))
-                if abs(value - rounded) < 1e-6:
-                    return rounded
-                return None
-            if isinstance(value, str):
-                cleaned = value.strip()
-                if not cleaned:
-                    return None
-                try:
-                    if "." in cleaned or "e" in cleaned.lower():
-                        candidate = float(cleaned)
-                        if not math.isfinite(candidate):
-                            return None
-                        rounded = int(round(candidate))
-                        if abs(candidate - rounded) < 1e-6:
-                            return rounded
-                        return None
-                    return int(cleaned)
-                except ValueError:
-                    return None
-            return None
-
-        def _coerce_float(value: Any) -> Optional[float]:
-            if isinstance(value, bool):
-                return None
-            if isinstance(value, (int, float)):
-                if not math.isfinite(float(value)):
-                    return None
-                return float(value)
-            if isinstance(value, str):
-                cleaned = value.strip()
-                if not cleaned:
-                    return None
-                try:
-                    candidate = float(cleaned)
-                except ValueError:
-                    return None
-                if not math.isfinite(candidate):
-                    return None
-                return candidate
-            return None
-
-        def _extract_reported_length_metadata(payload_item: Mapping[str, Any]) -> Tuple[Optional[int], Optional[int], Optional[float]]:
-            reported_source = _coerce_int(payload_item.get("source_length"))
-            reported_translated = _coerce_int(payload_item.get("translated_length"))
-            reported_ratio = _coerce_float(payload_item.get("length_ratio"))
-            if (
-                reported_source is None
-                or reported_translated is None
-                or reported_ratio is None
-            ) and isinstance(payload_item.get("length_verification"), Mapping):
-                verification = payload_item.get("length_verification")
-                result_mapping = verification.get("result") if isinstance(verification.get("result"), Mapping) else None  # type: ignore[assignment]
-                if isinstance(result_mapping, Mapping):
-                    if reported_source is None:
-                        reported_source = _coerce_int(result_mapping.get("source_length"))
-                    if reported_translated is None:
-                        reported_translated = _coerce_int(result_mapping.get("translated_length"))
-                    if reported_ratio is None:
-                        reported_ratio = _coerce_float(result_mapping.get("length_ratio"))
-            return reported_source, reported_translated, reported_ratio
-
-
-        def _repair_unescaped_length_verification_result(response_text: Any) -> Tuple[Any, Optional[str]]:
-            if not isinstance(response_text, str):
-                return response_text, "non_string"
-            if '"length_verification"' not in response_text:
-                return response_text, "no_length_verification_section"
-
-            cursor = 0
-            text = response_text
-            marker_token = '"length_verification"'
-            attempted_repair = False
-            repair_applied = False
-            repair_failed = False
-
-            while cursor < len(text):
-                marker_index = text.find(marker_token, cursor)
-                if marker_index == -1:
-                    break
-
-                result_index = text.find('"result"', marker_index)
-                if result_index == -1:
-                    cursor = marker_index + len(marker_token)
-                    continue
-
-                colon_index = text.find(":", result_index)
-                if colon_index == -1:
-                    cursor = result_index + 7
-                    continue
-
-                value_quote_index = text.find('"', colon_index)
-                if value_quote_index == -1:
-                    cursor = colon_index + 1
-                    continue
-
-                inner_start_index = value_quote_index + 1
-                if inner_start_index >= len(text) or text[inner_start_index] != "{":
-                    cursor = inner_start_index
-                    continue
-
-                brace_depth = 0
-                position = inner_start_index
-                closing_brace_index: Optional[int] = None
-                while position < len(text):
-                    char = text[position]
-                    if char == "{":
-                        brace_depth += 1
-                    elif char == "}":
-                        brace_depth -= 1
-                        if brace_depth == 0:
-                            closing_brace_index = position
-                            break
-                    position += 1
-
-                if closing_brace_index is None:
-                    break
-
-                closing_quote_index = closing_brace_index + 1
-                if closing_quote_index >= len(text) or text[closing_quote_index] != '"':
-                    cursor = closing_brace_index + 1
-                    continue
-
-                inner_payload = text[inner_start_index : closing_brace_index + 1]
-                attempted_repair = True
-                try:
-                    parsed_payload = json.loads(inner_payload)
-                except json.JSONDecodeError:
-                    try:
-                        parsed_payload = ast.literal_eval(inner_payload)
-                    except (ValueError, SyntaxError):
-                        repair_failed = True
-                        cursor = closing_brace_index + 1
-                        continue
-                if not isinstance(parsed_payload, (dict, list)):
-                    cursor = closing_brace_index + 1
-                    continue
-
-                safe_payload = json.dumps(parsed_payload, ensure_ascii=False)
-                text = (
-                    text[:value_quote_index]
-                    + safe_payload
-                    + text[closing_quote_index + 1 :]
-                )
-                if safe_payload != inner_payload:
-                    repair_applied = True
-                cursor = value_quote_index + len(safe_payload)
-
-            if repair_applied:
-                return text, "repaired"
-            if repair_failed:
-                return text, "repair_failed"
-            if attempted_repair:
-                return text, "repair_not_needed"
-            return text, "no_length_verification_section"
 
         def _strip_json_code_fences(text: str) -> str:
             if not isinstance(text, str):
@@ -1649,7 +1411,6 @@ def translate_range_contents(
             return variants
 
 
-        ratio_bounds_display = _format_ratio_bounds_for_display() if enforce_length_limit else ""
         prompt_parts: List[str]
         if include_context_columns:
             prompt_parts = [
@@ -1658,11 +1419,8 @@ def translate_range_contents(
                 "参照ペアに含まれる訳語・表現を最優先で再利用し、同じ概念であれば語彙・句・スタイルを可能な限り一致させてください。\n",
                 "参照ペアに完全一致する表現がない場合も、近い表現を組み合わせるなどして用語と表現の一貫性を維持してください。\n",
                 f"自然な {target_language} の文章になるよう文法を整えて構いませんが、原文と参照ペアに含まれない情報や語釈を追加しないでください。\n",
-                "出力は JSON 配列のみです。各要素には次のキーを必ず含めてください。\n",
+                "出力は JSON 配列のみです。各要素には次のキーを含めてください。\n",
                 f"- \"translated_text\": {target_language} での翻訳文。\n",
-                "- \"source_length\": 原文の UTF-16 コードユニット数（整数）。\n",
-                "- \"translated_length\": 訳文の UTF-16 コードユニット数（整数）。\n",
-                "- \"length_ratio\": translated_length / source_length（数値）。\n",
                 "- \"process_notes_jp\": 日本語で数行の翻訳メモ。訳語の根拠や参照ペアの使い方を簡潔に記述してください。\n",
                 "- \"reference_pairs\": 実際に参照したペアの配列。利用しなかった場合は空配列を返してください。\n",
                 "余計なコメントやマークダウンを付けず、純粋な JSON だけを返してください。\n",
@@ -1671,11 +1429,8 @@ def translate_range_contents(
             prompt_preamble = "".join(prompt_parts)
         else:
 
-            has_lower_bound = effective_length_ratio_min is not None
-            has_upper_bound = effective_length_ratio_limit is not None
-
             prompt_lines: List[str] = [
-                "あなたは English への翻訳専任アシスタントです。日本語テキスト配列を入力順に翻訳し、各訳文が指定された長さ要件を満たすまで内部で調整してから結果を確定してください。\n",
+                "あなたは English への翻訳専任アシスタントです。日本語テキスト配列を入力順に翻訳し、余計な装飾や説明を加えずにすべての行を自然な英語へ変換してください。\n",
                 "\n",
                 "【出力フォーマット】\n",
                 "* 応答全体は ASCII のみを使用。\n",
@@ -1685,65 +1440,15 @@ def translate_range_contents(
                 '* `"translated_text"` は ASCII 範囲 (U+0020〜U+007E) の非空文字列。タブ/改行/先頭末尾スペース/重複スペースは禁止。語間スペースは半角 1 個、列挙にはカンマまたはスラッシュを用い、`and` は使用しないこと。\n',
                 "* `---OUTPUT---` の後に JSON 以外のテキストを置かないでください。\n",
                 "\n",
-                "【内部検証ルール】\n",
-                "* 入力で渡す `source_length` をそのまま利用し、`translated_text` の UTF-16 長さと倍率を内部で計測します。\n",
-                "* いずれかの訳文が条件未達の場合は JSON を出力せず内部で訳文を再調整し、達成後にまとめて出力してください。\n",
-                "* 調整手順や長さ検証の結果は `---THOUGHT---` 区間で手順・理由・数値を明確に記述します（ASCII のみ）。\n",
+                "【翻訳ルール】\n",
+                "* 各訳文は簡潔で読みやすい English に整え、原文に含まれない情報を追加しないでください。\n",
+                "* 半角スペース 1 個で語を区切り、見出し・ラベルは 1〜2 語以内に抑えてください。\n",
+                "* 箇条書きや並列表現はカンマまたはスラッシュで表し、`and` は使用しないでください。\n",
+                "* 同一の概念や表現は行をまたいで一貫した語彙を使用し、日本語が残らないようにしてください。\n",
+                "\n",
+                "【最終確認】\n",
+                "* すべての訳文が非空で自然な英語になっていることを確認し、問題があれば JSON を出す前に修正してください。\n",
             ]
-
-            if enforce_length_limit:
-                prompt_lines.append("\n【長さパラメータ】\n")
-                if has_lower_bound and has_upper_bound:
-                    ratio_lower_display = f"{effective_length_ratio_min:.2f}"
-                    ratio_upper_display = f"{effective_length_ratio_limit:.2f}"
-                    target_ratio_value = (effective_length_ratio_min + effective_length_ratio_limit) / 2
-                    target_ratio_display = f"{target_ratio_value:.2f}"
-                    prompt_lines.extend(
-                        [
-                            f"* 許容倍率: **{ratio_lower_display}〜{ratio_upper_display}**\n",
-                            f"* 目標倍率: **TGT = {target_ratio_display}**（レンジ外なら自動補正）\n",
-                            "* 各行で `SL = source_length`\n",
-                            f"* `min_len = ceil(SL × {ratio_lower_display})`、`max_len = floor(SL × {ratio_upper_display})`\n",
-                            f"* `target_len = RHU_INT(SL × {target_ratio_display})` を設定し、レンジ外なら `min_len` または `max_len` に補正\n",
-                        ]
-                    )
-                elif has_lower_bound:
-                    prompt_lines.extend(
-                        [
-                            f"* 最小倍率: **{effective_length_ratio_min:.2f}**\n",
-                            f"* `min_len = ceil(SL × {effective_length_ratio_min:.2f})` まで内部で調整\n",
-                        ]
-                    )
-                elif has_upper_bound:
-                    prompt_lines.extend(
-                        [
-                            f"* 最大倍率: **{effective_length_ratio_limit:.2f}**\n",
-                            f"* `max_len = floor(SL × {effective_length_ratio_limit:.2f})` を超えないよう内部で調整\n",
-                        ]
-                    )
-
-                prompt_lines.append("\n【調整ガイド】\n")
-                prompt_lines.append("* TL = UTF16_LEN(translated_text) を測定し、必要に応じて以下を適用。\n")
-                if has_upper_bound:
-                    prompt_lines.extend(
-                        [
-                            "* 縮約: `the/a/an/and` の削除、冗長表現簡略化（`due to the fact → because` など）、短形同義語化（`information → info` など）、自然な複合語再構成。\n",
-                        ]
-                    )
-                if has_lower_bound:
-                    prompt_lines.extend(
-                        [
-                            "* 膨張: 意味を維持した補語を最小限追加。使用できる語は `status, note, detail, record, update, flag` のみ。\n",
-                        ]
-                    )
-
-            prompt_lines.extend(
-                [
-                    "\n【最終確認】\n",
-                    "* すべての訳文が条件を満たしたことを確認した上で `---OUTPUT---` 配下に JSON を出力。\n",
-                    "* 訳文に日本語を残さず、自然で流暢な English を維持してください。\n",
-                ]
-            )
 
             prompt_preamble = "".join(prompt_lines)
 
@@ -1844,12 +1549,6 @@ def translate_range_contents(
 
             applied_changes = False
             translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
-            cell_ref_for_metrics = _cell_reference(
-                output_start_row,
-                output_start_col,
-                local_row,
-                translation_col_index_seed,
-            )
 
             existing_output_value = ""
             try:
@@ -1881,36 +1580,6 @@ def translate_range_contents(
             reused_translation_detected = True
             if applied_changes:
                 any_translation = True
-
-            source_text_canonical = source_key
-            source_length_units = _measure_utf16_length(source_text_canonical)
-            translated_length_units = _measure_utf16_length(translation_value)
-            ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-
-            violation_kind = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
-
-            metric_entry = {
-                "source_length": source_length_units,
-                "translated_length": translated_length_units,
-                "ratio": ratio_value,
-                "cell_ref": cell_ref_for_metrics,
-                "limit": effective_length_ratio_limit,
-                "min_limit": effective_length_ratio_min,
-                "status": violation_kind or "ok",
-                "reported_source_length": None,
-                "reported_translated_length": None,
-                "reported_ratio": None,
-            }
-            length_metrics[(local_row, col_idx)] = metric_entry
-
-            if enforce_length_limit and violation_kind and (local_row, col_idx) not in length_violation_positions:
-                direction_label = "上限" if violation_kind == "above" else "下限"
-                ratio_text = _format_ratio(ratio_value)
-                length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
-                length_violation_positions.add((local_row, col_idx))
-                actions.log_progress(
-                    f"既存の翻訳 {cell_ref_for_metrics} が文字数倍率制約を満たしていません: ×{ratio_text}（{direction_label}逸脱）。処理を継続します。"
-                )
 
             pending_cols = pending_columns_by_row.get(local_row)
             if pending_cols is not None:
@@ -2403,42 +2072,6 @@ def translate_range_contents(
                         )
 
                         if cached_entry_for_source and isinstance(cached_entry_for_source.get("translation"), str):
-                            translation_value_existing = (
-                                existing_output_value
-                                if isinstance(existing_output_value, str)
-                                else existing_output_normalized
-                            )
-                            if not isinstance(translation_value_existing, str):
-                                translation_value_existing = str(translation_value_existing)
-
-                            source_length_units = _measure_utf16_length(canonical_source)
-                            translated_length_units = _measure_utf16_length(translation_value_existing)
-                            ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
-                            violation_kind = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
-
-                            metric_entry_existing = {
-                                "source_length": source_length_units,
-                                "translated_length": translated_length_units,
-                                "ratio": ratio_value,
-                                "cell_ref": cell_ref_for_metrics,
-                                "limit": effective_length_ratio_limit,
-                                "min_limit": effective_length_ratio_min,
-                                "status": violation_kind or "ok",
-                                "reported_source_length": None,
-                                "reported_translated_length": None,
-                                "reported_ratio": None,
-                            }
-                            length_metrics[(local_row, col_idx)] = metric_entry_existing
-
-                            if enforce_length_limit and violation_kind and (local_row, col_idx) not in length_violation_positions:
-                                direction_label = "上限" if violation_kind == "above" else "下限"
-                                ratio_text = _format_ratio(ratio_value)
-                                length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
-                                length_violation_positions.add((local_row, col_idx))
-                                actions.log_progress(
-                                    f"既存の翻訳 {cell_ref_for_metrics} が文字数倍率制約を満たしていません: ×{ratio_text} ({direction_label}逸脱)。"
-                                )
-
                             pending_cols = pending_columns_by_row.get(local_row)
                             if pending_cols is not None:
                                 pending_cols.discard(col_idx)
@@ -2544,12 +2177,6 @@ def translate_range_contents(
                     current_texts,
                 )
 
-                source_lengths: Optional[List[int]] = None
-                source_lengths_json: Optional[str] = None
-                if enforce_length_limit:
-                    source_lengths = [_measure_utf16_length(text) for text in current_texts]
-                    source_lengths_json = json.dumps(source_lengths, ensure_ascii=False)
-
                 texts_json = json.dumps(current_texts, ensure_ascii=False)
 
                 translation_context = []
@@ -2569,7 +2196,7 @@ def translate_range_contents(
                 def _run_translation_request(
                     extra_notice: Optional[str],
                     include_supporting: bool,
-                ) -> Tuple[Optional[List[Any]], Any, Optional[str], Optional[str]]:
+                ) -> Tuple[Optional[List[Any]], Any, Optional[str]]:
                     prompt_sections: List[str] = [prompt_preamble]
                     if extra_notice:
                         prompt_sections.append(extra_notice)
@@ -2577,11 +2204,6 @@ def translate_range_contents(
                         "Source sentences:",
                         texts_json,
                     ])
-                    if source_lengths_json is not None:
-                        prompt_sections.extend([
-                            "Source UTF-16 lengths (JSON):",
-                            source_lengths_json,
-                        ])
                     if include_supporting and has_supporting_data:
                         prompt_sections.extend([
                             "Supporting data (JSON):",
@@ -2590,13 +2212,8 @@ def translate_range_contents(
                     prompt_text = "\n".join(prompt_sections) + "\n"
                     _ensure_not_stopped()
                     response_local = browser_manager.ask(prompt_text, stop_event=stop_event)
-                    repaired_response_local, repair_status_local = _repair_unescaped_length_verification_result(response_local)
-                    parsed_payload_local, parse_error_code_local = _extract_first_json_payload(repaired_response_local)
-                    if parsed_payload_local is None:
-                        fallback_payload_local, fallback_error_code_local = _extract_first_json_payload(response_local)
-                        parse_error_code_local = parse_error_code_local or fallback_error_code_local
-                        parsed_payload_local = fallback_payload_local
-                    return parsed_payload_local, response_local, parse_error_code_local, repair_status_local
+                    parsed_payload_local, parse_error_code_local = _extract_first_json_payload(response_local)
+                    return parsed_payload_local, response_local, parse_error_code_local
 
                 def _merge_notices(primary: Optional[str], secondary: Optional[str]) -> Optional[str]:
                     if not secondary:
@@ -2641,12 +2258,12 @@ def translate_range_contents(
                     for notice in notices_queue:
                         json_retry_attempts = 0
                         while True:
-                            parsed_payload_local, response_local, parse_error_code_local, repair_status_local = _run_translation_request(
+                            parsed_payload_local, response_local, parse_error_code_local = _run_translation_request(
                                 notice,
                                 include_supporting=True,
                             )
                             if parsed_payload_local is None and has_supporting_data:
-                                parsed_payload_local, response_local, parse_error_code_local, repair_status_local = _run_translation_request(
+                                parsed_payload_local, response_local, parse_error_code_local = _run_translation_request(
                                     notice,
                                     include_supporting=False,
                                 )
@@ -2654,7 +2271,7 @@ def translate_range_contents(
                             if isinstance(parsed_payload_local, list) and len(parsed_payload_local) == len(current_texts):
                                 return parsed_payload_local
 
-                            error_code_for_retry = parse_error_code_local or repair_status_local or "unknown"
+                            error_code_for_retry = parse_error_code_local or "unknown"
                             if parsed_payload_local is not None:
                                 if not isinstance(parsed_payload_local, list) or len(parsed_payload_local) != len(current_texts):
                                     error_code_for_retry = "invalid_structure"
@@ -2734,7 +2351,6 @@ def translate_range_contents(
                     parsed_payload = _obtain_translation_payload(extra_notice=retry_notice)
 
                 pending_updates: List[Dict[str, Any]] = []
-                metadata_corrections: List[str] = []
 
                 for item_index, (item, position_group) in enumerate(zip(parsed_payload, current_position_groups)):
                         if not position_group:
@@ -2814,18 +2430,8 @@ def translate_range_contents(
                             raise ToolExecutionError("Translation response returned an empty 'translated_text' value.")
                         translation_value = translation_value_raw
 
-                        translation_col_index_seed = col_idx if writing_to_source_directly else col_idx * translation_block_width
-                        cell_ref_for_metrics = _cell_reference(
-                            output_start_row,
-                            output_start_col,
-                            local_row,
-                            translation_col_index_seed,
-                        )
                         source_text_canonical = current_texts[item_index]
                         source_cell_value = source_text_canonical
-                        source_length_units = _measure_utf16_length(source_cell_value)
-                        translated_length_units = _measure_utf16_length(translation_value)
-                        ratio_value = _compute_length_ratio(source_length_units, translated_length_units)
 
                         source_value_for_comparison = source_cell_value.strip()
                         if translation_value_stripped == source_value_for_comparison and _contains_japanese(translation_value_stripped):
@@ -2835,28 +2441,6 @@ def translate_range_contents(
                         if target_language and target_language.lower().startswith("english") and _contains_japanese(translation_value_stripped):
                             raise ToolExecutionError(
                                 "翻訳結果に日本語が含まれているため、英語への翻訳が完了していません。"
-                            )
-
-                        violation_kind: Optional[str] = _ratio_violation_kind(ratio_value) if enforce_length_limit else None
-                        reported_source_length, reported_translated_length, reported_ratio = (
-                            _extract_reported_length_metadata(item) if isinstance(item, Mapping) else (None, None, None)
-                        )
-                        metadata_fragments: List[str] = []
-                        if reported_source_length is not None and reported_source_length != source_length_units:
-                            metadata_fragments.append(f"source_length {reported_source_length} -> {source_length_units}")
-                        if reported_translated_length is not None and reported_translated_length != translated_length_units:
-                            metadata_fragments.append(f"translated_length {reported_translated_length} -> {translated_length_units}")
-                        if (
-                            reported_ratio is not None
-                            and math.isfinite(reported_ratio)
-                            and abs(reported_ratio - ratio_value) > _METADATA_RATIO_TOLERANCE
-                        ):
-                            metadata_fragments.append(
-                                f"length_ratio {_format_ratio(reported_ratio)} -> {_format_ratio(ratio_value)}"
-                            )
-                        if metadata_fragments:
-                            metadata_corrections.append(
-                                f"{cell_ref_for_metrics}: length metadata auto-corrected ({', '.join(metadata_fragments)})"
                             )
 
                         process_notes_text = (
@@ -2933,16 +2517,6 @@ def translate_range_contents(
                                     "target_sentence": target_clean,
                                 })
 
-                        if enforce_length_limit and violation_kind:
-                            if (local_row, col_idx) not in length_violation_positions:
-                                direction_label = "上限" if violation_kind == "above" else "下限"
-                                ratio_text = _format_ratio(ratio_value)
-                                length_limit_violations.append(f"{cell_ref_for_metrics}: ×{ratio_text} ({direction_label}逸脱)")
-                                length_violation_positions.add((local_row, col_idx))
-                                actions.log_progress(
-                                    f"文字数倍率制約を逸脱した訳文を検出しました（{cell_ref_for_metrics}: ×{ratio_text}、{direction_label}逸脱）。処理を継続します。"
-                                )
-
                         pending_updates.append(
                             {
                                 "local_row": local_row,
@@ -2954,22 +2528,11 @@ def translate_range_contents(
                                 "reference_pairs_list": reference_pairs_list,
                                 "sanitized_pairs": sanitized_pairs,
                                 "source_text_canonical": source_text_canonical,
-                                "source_length_units": source_length_units,
-                                "translated_length_units": translated_length_units,
-                                "ratio_value": ratio_value,
-                                "violation_kind": violation_kind,
-                                "cell_ref": cell_ref_for_metrics,
-                                "reported_source_length": reported_source_length,
-                                "reported_translated_length": reported_translated_length,
-                                "reported_ratio": reported_ratio,
                                 "item_index": item_index,
                                 "total_items": len(current_texts),
                                 "expected_pair_count": len(source_references_per_item[item_index]) if include_context_columns and item_index < len(source_references_per_item) else 0,
                             }
                         )
-
-                        for message in metadata_corrections:
-                            actions.log_progress(message)
 
                         for update in pending_updates:
                             local_row = update["local_row"]
@@ -3038,19 +2601,6 @@ def translate_range_contents(
                                     extra_row, extra_col = extra_position
                                     _apply_cached_translation(extra_row, extra_col, update["source_text_canonical"], cached_entry)
 
-                            metric_entry = {
-                                "source_length": update["source_length_units"],
-                                "translated_length": update["translated_length_units"],
-                                "ratio": update["ratio_value"],
-                                "cell_ref": update["cell_ref"],
-                                "limit": effective_length_ratio_limit,
-                                "min_limit": effective_length_ratio_min,
-                                "status": update["violation_kind"] or "ok",
-                                "reported_source_length": update["reported_source_length"],
-                                "reported_translated_length": update["reported_translated_length"],
-                                "reported_ratio": update["reported_ratio"],
-                            }
-                            length_metrics[(local_row, col_idx)] = metric_entry
                             any_translation = True
 
                             pending_cols = pending_columns_by_row.get(local_row)
@@ -3187,17 +2737,6 @@ def translate_range_contents(
         if include_context_columns and explanation_fallback_notes:
             messages.insert(0, "process_notes_jp が不足していたセルに既定の説明文を補いました: " + " / ".join(explanation_fallback_notes))
 
-        if enforce_length_limit and length_limit_violations:
-            bounds_text = _format_ratio_bounds_for_display() or "設定範囲"
-            failure_summary = "; ".join(length_limit_violations[:5])
-            if len(length_limit_violations) > 5:
-                failure_summary += "; ..."
-            warning_message = (
-                f"文字数倍率制約の警告: {len(length_limit_violations)} 件のセルが許容レンジ {bounds_text} を逸脱しました（例: {failure_summary}）。処理は継続済みです。"
-            )
-            actions.log_progress(warning_message)
-            messages.append(warning_message)
-
         write_messages: List[str] = []
 
         if range_adjustment_note:
@@ -3207,17 +2746,6 @@ def translate_range_contents(
         write_messages.extend(incremental_row_messages)
         if reference_warning_notes:
             write_messages.extend(reference_warning_notes)
-
-        if include_context_columns and length_metrics:
-            total_length_entries = len(length_metrics)
-            sample_entries = sorted(length_metrics.values(), key=lambda entry: entry.get("cell_ref", ""))[:5]
-            preview = [
-                f"{entry['cell_ref']}: ×{_format_ratio(entry['ratio'])}"
-                for entry in sample_entries
-                if entry.get('cell_ref')
-            ]
-            if preview:
-                write_messages.append("翻訳文字数メトリクス: " + "; ".join(preview))
 
         _ensure_not_stopped()
 
@@ -3251,15 +2779,12 @@ def translate_range_without_references(
     sheet_name: Optional[str] = None,
     translation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
-    length_ratio_limit: Optional[float] = None,
-    length_ratio_min: Optional[float] = None,
     rows_per_batch: Optional[int] = None,
     stop_event: Optional[Event] = None,
 ) -> str:
     """Translate ranges without using external reference material.
 
-    Optionally enforces a UTF-16 ベースの文字数倍率制限を適用できます。
-    Supports defining both upper (length_ratio_limit) and lower (length_ratio_min) bounds."""
+    Returns a log describing how the translations were written to the workbook."""
     if rows_per_batch is not None and rows_per_batch < 1:
         raise ToolExecutionError("rows_per_batch must be at least 1 when provided.")
 
@@ -3276,8 +2801,6 @@ def translate_range_without_references(
         reference_urls=None,
         translation_output_range=translation_output_range,
         overwrite_source=overwrite_source,
-        length_ratio_limit=length_ratio_limit,
-        length_ratio_min=length_ratio_min,
         rows_per_batch=rows_per_batch,
         stop_event=stop_event,
         output_mode="translation_only",
@@ -3297,8 +2820,6 @@ def translate_range_with_references(
     citation_output_range: Optional[str] = None,
     overwrite_source: bool = False,
     stop_event: Optional[Event] = None,
-    length_ratio_limit: Optional[float] = None,
-    length_ratio_min: Optional[float] = None,
 ) -> str:
     """Translate ranges while consulting paired reference materials in both languages.
 
@@ -3315,8 +2836,6 @@ def translate_range_with_references(
         citation_output_range: Optional range for structured citation output.
         overwrite_source: Whether to overwrite the source cells directly.
         stop_event: Optional cancellation event set when the user interrupts execution.
-        length_ratio_limit: Optional upper bound for UTF-16 length ratio enforced in translation-only mode.
-        length_ratio_min: Optional lower bound for UTF-16 length ratio enforced in translation-only mode.
     """
     normalized_source_refs = source_reference_urls or reference_urls
     if not normalized_source_refs and not target_reference_urls:
@@ -3336,8 +2855,6 @@ def translate_range_with_references(
         target_reference_urls=target_reference_urls,
         translation_output_range=translation_output_range,
         overwrite_source=overwrite_source,
-        length_ratio_limit=length_ratio_limit,
-        length_ratio_min=length_ratio_min,
         rows_per_batch=1,
         stop_event=stop_event,
     )

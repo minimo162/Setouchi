@@ -46,24 +46,6 @@ class CollectFormPayloadTests(unittest.TestCase):
         assert summary_arguments is not None
         self.assertEqual(summary_arguments["translation_output_range"], "B2:B5")
 
-    def test_translation_mode_applies_length_ratio_bounds(self) -> None:
-        control_values = {
-            "cell_range": "C3:C10",
-            "translation_output_range": "D3:D10",
-            "length_ratio_limit": "1.75",
-            "length_ratio_min": "0.80",
-        }
-        app = _build_app_for_mode(CopilotMode.TRANSLATION, control_values)
-
-        payload, error_message, _ = CopilotApp._collect_form_payload(app)
-
-        self.assertIsNone(error_message)
-        self.assertIsNotNone(payload)
-        assert payload is not None
-        arguments = payload["arguments"]
-        self.assertEqual(arguments["length_ratio_limit"], 1.75)
-        self.assertEqual(arguments["length_ratio_min"], 0.80)
-
     def test_reference_mode_requires_reference_urls(self) -> None:
         control_values = {
             "cell_range": "A2:A5",
