@@ -349,6 +349,17 @@ class CopilotApp:
         self._context_panel: Optional[ft.Container] = None
         self._context_actions: Optional[ft.ResponsiveRow] = None
         self._chat_panel: Optional[ft.Container] = None
+        self._chat_floating_shell: Optional[ft.Container] = None
+        self._body_stack: Optional[ft.Stack] = None
+        self._context_drawer: Optional[ft.AnimatedContainer] = None
+        self._drawer_scrim: Optional[ft.Container] = None
+        self._drawer_scrim_gesture: Optional[ft.GestureDetector] = None
+        self._context_drawer_visible = False
+        self._drawer_toggle_button: Optional[ft.FilledButton] = None
+        self._hero_state_value: Optional[ft.Text] = None
+        self._hero_mode_value: Optional[ft.Text] = None
+        self._hero_workbook_value: Optional[ft.Text] = None
+        self._hero_sheet_value: Optional[ft.Text] = None
         self._mode_panel_container: Optional[ft.Container] = None
         self._content_container: Optional[ft.Container] = None
         self._layout: Optional[ft.ResponsiveRow] = None
@@ -693,10 +704,7 @@ class CopilotApp:
         )
 
         self._context_actions = ft.ResponsiveRow(
-            controls=[
-                ft.Container(content=self.workbook_refresh_button, col={"xs": 12, "sm": 6}),
-                ft.Container(content=self.new_chat_button, col={"xs": 12, "sm": 6}),
-            ],
+            controls=[ft.Container(content=self.workbook_refresh_button, col={"xs": 12, "sm": 12})],
             spacing=12,
             run_spacing=12,
             alignment=ft.MainAxisAlignment.END,
@@ -813,15 +821,24 @@ class CopilotApp:
             AppState.ERROR: "エラー",
         }.get(self.app_state, "初期化中")
         hero_stats = [
-            ("状態", hero_state_label),
-            ("モード", MODE_LABELS.get(self.mode, "-")),
-            ("ブック", self.current_workbook_name or "未選択"),
+            ("状態", hero_state_label, "_hero_state_value"),
+            ("モード", MODE_LABELS.get(self.mode, "-"), "_hero_mode_value"),
+            ("ブック", self.current_workbook_name or "未選択", "_hero_workbook_value"),
+            ("シート", self.current_sheet_name or "未選択", "_hero_sheet_value"),
         ]
         hero_stat_controls = []
-        for label, value in hero_stats:
+        for label, value, attr_name in hero_stats:
+            value_text = ft.Text(
+                value,
+                size=body_scale["size"],
+                weight=ft.FontWeight.W_600,
+                color=palette["inverse_on_surface"],
+                font_family=self._primary_font_family,
+            )
+            setattr(self, attr_name, value_text)
             hero_stat_controls.append(
                 ft.Container(
-                    col={"xs": 12, "sm": 4},
+                    col={"xs": 12, "sm": 6, "md": 3},
                     padding=ft.Padding(0, 6, 0, 6),
                     content=ft.Column(
                         [
@@ -832,13 +849,7 @@ class CopilotApp:
                                 color=ft.Colors.with_opacity(0.82, palette["inverse_on_surface"]),
                                 font_family=self._hint_font_family,
                             ),
-                            ft.Text(
-                                value,
-                                size=body_scale["size"],
-                                weight=ft.FontWeight.W_600,
-                                color=palette["inverse_on_surface"],
-                                font_family=self._primary_font_family,
-                            ),
+                            value_text,
                         ],
                         spacing=2,
                         tight=True,
@@ -867,6 +878,34 @@ class CopilotApp:
             ),
         )
 
+        drawer_button_style = ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=26),
+            padding=ft.Padding(24, 12, 24, 12),
+            bgcolor={
+                ft.MaterialState.DEFAULT: ft.Colors.with_opacity(0.22, palette["inverse_on_surface"]),
+                ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.32, palette["inverse_on_surface"]),
+            },
+            color=palette["inverse_on_surface"],
+            overlay_color=ft.Colors.with_opacity(0.12, palette["inverse_on_surface"]),
+        )
+        self._drawer_toggle_button = ft.FilledButton(
+            text="コンテキストを開く",
+            icon=ft.Icons.TUNE,
+            on_click=self._toggle_context_drawer,
+            style=drawer_button_style,
+        )
+
+        hero_actions = ft.ResponsiveRow(
+            controls=[
+                ft.Container(content=self._drawer_toggle_button, col={"xs": 12, "sm": 6, "md": 4}),
+                ft.Container(content=self.new_chat_button, col={"xs": 12, "sm": 6, "md": 4}),
+            ],
+            spacing=12,
+            run_spacing=12,
+            alignment=ft.MainAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
         hero_banner = ft.Container(
             gradient=primary_surface_gradient(),
             border_radius=40,
@@ -890,8 +929,9 @@ class CopilotApp:
                         font_family=self._hint_font_family,
                     ),
                     ft.ResponsiveRow(hero_stat_controls, spacing=12, run_spacing=12),
+                    hero_actions,
                 ],
-                spacing=14,
+                spacing=18,
                 tight=True,
             ),
         )
@@ -899,30 +939,38 @@ class CopilotApp:
         self._layout = ft.ResponsiveRow(
             controls=[
                 ft.Container(
-                    content=ft.Column([self._context_panel], spacing=16),
-                    col={"xs": 12, "sm": 12, "md": 4, "lg": 4},
-                    expand=True,
-                ),
-                ft.Container(
                     content=self._form_panel,
-                    col={"xs": 12, "sm": 12, "md": 4, "lg": 4},
+                    col={"xs": 12, "sm": 11, "md": 9, "lg": 8},
                     expand=True,
-                ),
-                ft.Container(
-                    content=self._chat_panel,
-                    col={"xs": 12, "sm": 12, "md": 4, "lg": 4},
-                    expand=True,
-                ),
+                )
             ],
-            spacing=32,
-            run_spacing=32,
+            spacing=28,
+            run_spacing=28,
             alignment=ft.MainAxisAlignment.CENTER,
             vertical_alignment=ft.CrossAxisAlignment.START,
             expand=True,
         )
 
+        self._chat_floating_shell = ft.Container(
+            content=ft.ResponsiveRow(
+                controls=[
+                    ft.Container(
+                        content=self._chat_panel,
+                        col={"xs": 12, "sm": 12, "md": 10, "lg": 8},
+                        expand=True,
+                    )
+                ],
+                spacing=0,
+                run_spacing=0,
+                alignment=ft.MainAxisAlignment.CENTER,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+            expand=False,
+            alignment=ft.alignment.bottom_center,
+        )
+
         page_body = ft.Column(
-            controls=[hero_banner, self._layout],
+            controls=[hero_banner, self._layout, self._chat_floating_shell],
             spacing=32,
             expand=True,
         )
@@ -943,14 +991,49 @@ class CopilotApp:
             ),
         )
 
+        scrim_color = ft.Colors.with_opacity(0.35, palette["on_surface"])
+        self._drawer_scrim = ft.Container(
+            expand=True,
+            bgcolor=scrim_color,
+            visible=False,
+            opacity=0.0,
+            animate_opacity=300,
+        )
+        self._drawer_scrim_gesture = ft.GestureDetector(
+            content=self._drawer_scrim,
+            on_tap=self._toggle_context_drawer,
+            visible=False,
+        )
+        self._context_drawer = ft.AnimatedContainer(
+            content=self._context_panel,
+            width=420,
+            alignment=ft.alignment.center_right,
+            offset=ft.Offset(1.1, 0),
+            animate_offset=350,
+            visible=False,
+        )
+        drawer_wrapper = ft.Container(
+            content=self._context_drawer,
+            alignment=ft.alignment.center_right,
+            expand=True,
+            padding=ft.Padding(16, 32, 16, 32),
+        )
+
+        self._body_stack = ft.Stack(
+            controls=[self._content_container, self._drawer_scrim_gesture, drawer_wrapper],
+            expand=True,
+        )
+
         self._update_context_summary()
         self._update_chat_empty_state()
+        self._update_context_action_button()
+        self._update_hero_overview()
 
         current_width = getattr(self.page, "width", None) or getattr(self.page.window, "width", None)
         current_height = getattr(self.page, "height", None) or getattr(self.page.window, "height", None)
         self._apply_responsive_layout(current_width, current_height)
 
-        self.page.add(self._content_container)
+        self.page.add(self._body_stack)
 
     def _build_form_panel(self) -> ft.Container:
         palette = EXPRESSIVE_PALETTE
@@ -1720,6 +1803,79 @@ class CopilotApp:
                 chat_height = preferred_chat_height
             self._chat_panel.height = chat_height
 
+    def _toggle_context_drawer(self, e: Optional[ft.ControlEvent] = None):
+        self._set_context_drawer_visibility(not self._context_drawer_visible)
+
+    def _set_context_drawer_visibility(self, visible: bool) -> None:
+        self._context_drawer_visible = visible
+        if self._context_drawer:
+            self._context_drawer.visible = visible
+            self._context_drawer.offset = ft.Offset(0, 0) if visible else ft.Offset(1.1, 0)
+            try:
+                self._context_drawer.update()
+            except Exception:
+                pass
+        if self._drawer_scrim:
+            self._drawer_scrim.visible = visible
+            self._drawer_scrim.opacity = 1.0 if visible else 0.0
+            try:
+                self._drawer_scrim.update()
+            except Exception:
+                pass
+        if self._drawer_scrim_gesture:
+            self._drawer_scrim_gesture.visible = visible
+        self._update_context_action_button()
+        self._update_ui()
+
+    def _update_context_action_button(self) -> None:
+        if not self._drawer_toggle_button:
+            return
+        if self._context_drawer_visible:
+            self._drawer_toggle_button.text = "コンテキストを閉じる"
+            self._drawer_toggle_button.icon = ft.Icons.CLOSE
+        else:
+            self._drawer_toggle_button.text = "コンテキストを開く"
+            self._drawer_toggle_button.icon = ft.Icons.TUNE
+        try:
+            self._drawer_toggle_button.update()
+        except Exception:
+            pass
+
+    def _update_hero_overview(self) -> None:
+        state_label = {
+            AppState.INITIALIZING: "初期化中",
+            AppState.READY: "READY",
+            AppState.TASK_IN_PROGRESS: "実行中",
+            AppState.STOPPING: "停止要求中",
+            AppState.ERROR: "エラー",
+        }.get(self.app_state, "初期化中")
+        if self._hero_state_value:
+            self._hero_state_value.value = state_label
+            try:
+                self._hero_state_value.update()
+            except Exception:
+                pass
+        if self._hero_mode_value:
+            self._hero_mode_value.value = MODE_LABELS.get(self.mode, self.mode.value)
+            try:
+                self._hero_mode_value.update()
+            except Exception:
+                pass
+        workbook = self.current_workbook_name or "未選択"
+        sheet = self.current_sheet_name or "未選択"
+        if self._hero_workbook_value:
+            self._hero_workbook_value.value = workbook
+            try:
+                self._hero_workbook_value.update()
+            except Exception:
+                pass
+        if self._hero_sheet_value:
+            self._hero_sheet_value.value = sheet
+            try:
+                self._hero_sheet_value.update()
+            except Exception:
+                pass
+
     def _build_mode_cards(self) -> ft.ResponsiveRow:
         palette = EXPRESSIVE_PALETTE
         options = [
@@ -1839,6 +1995,7 @@ class CopilotApp:
         self._refresh_form_panel()
         if self.request_queue:
             self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
+        self._update_hero_overview()
         self._update_ui()
 
     def _on_mode_change(self, e: Optional[ft.ControlEvent]):
@@ -1879,6 +2036,9 @@ class CopilotApp:
             "info": EXPRESSIVE_PALETTE["on_surface_variant"],
         }
 
+        if not can_interact and self._context_drawer_visible:
+            self._set_context_drawer_visibility(False)
+
         if self.form_controls:
             for control in self.form_controls.values():
                 control.disabled = not can_interact
@@ -1910,6 +2070,8 @@ class CopilotApp:
                 self.new_chat_button.disabled = True
             elif not self._browser_reset_in_progress and can_interact:
                 self.new_chat_button.disabled = False
+        if self._drawer_toggle_button:
+            self._drawer_toggle_button.disabled = not can_interact
 
         if self.workbook_refresh_button:
             if self._manual_refresh_in_progress:
@@ -1918,6 +2080,10 @@ class CopilotApp:
                 self.workbook_refresh_button.disabled = not can_interact
             if not self._manual_refresh_in_progress and can_interact:
                 self.workbook_refresh_button.text = self._workbook_refresh_button_default_text
+            try:
+                self.workbook_refresh_button.update()
+            except Exception:
+                pass
 
         icon_config = {
             AppState.READY: (ft.Icons.CHECK_CIRCLE_OUTLINE, status_palette["ready"]),
@@ -1969,6 +2135,7 @@ class CopilotApp:
                 self.status_label.color = status_palette["base"]
 
         self._update_form_progress_message()
+        self._update_hero_overview()
         self._update_ui()
 
     def _update_form_progress_message(self, message: Optional[str] = None) -> None:
@@ -2013,6 +2180,7 @@ class CopilotApp:
                 self._sync_status_text.update()
             except Exception:
                 pass
+        self._update_hero_overview()
 
     def _update_ui(self):
         try:
