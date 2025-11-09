@@ -5,40 +5,40 @@ from __future__ import annotations
 import flet as ft
 
 
-# Apple の Human Interface Guidelines をヒントに、柔らかいニュートラルと
-# 深海のようなアクセントカラーを組み合わせたカラーパレット。
+# Apple のハードウェア仕上げや visionOS のフォググラスを意識した、
+# 涼しいメタリックブルーとオーロラライクなアクセントを持つ新パレット。
 EXPRESSIVE_PALETTE: dict[str, str] = {
-    "primary": "#0071E3",
-    "on_primary": "#FFFFFF",
-    "primary_container": "#D8ECFF",
-    "on_primary_container": "#01305A",
-    "secondary": "#5E5CE6",
-    "on_secondary": "#FFFFFF",
-    "secondary_container": "#E3E0FF",
-    "on_secondary_container": "#21105E",
-    "tertiary": "#30D158",
-    "on_tertiary": "#00250D",
-    "tertiary_container": "#C9F9D6",
-    "on_tertiary_container": "#06391A",
-    "background": "#F4F5FA",
+    "primary": "#0A84FF",
+    "on_primary": "#F4FBFF",
+    "primary_container": "#CFE7FF",
+    "on_primary_container": "#00274A",
+    "secondary": "#7D7AFF",
+    "on_secondary": "#F8F7FF",
+    "secondary_container": "#E5E3FF",
+    "on_secondary_container": "#1B0E5C",
+    "tertiary": "#31DFC3",
+    "on_tertiary": "#01211D",
+    "tertiary_container": "#C2FFF1",
+    "on_tertiary_container": "#01362F",
+    "background": "#F5F7FB",
     "surface": "#FFFFFF",
-    "surface_high": "#FCFDFF",
-    "surface_dim": "#EEF1F7",
-    "surface_variant": "#E4E7F1",
-    "on_surface": "#0A0C18",
-    "on_surface_variant": "#4B4F64",
-    "outline": "#D3D7E4",
-    "outline_variant": "#E8EBF4",
-    "inverse_surface": "#1D2033",
-    "inverse_on_surface": "#F6F8FF",
-    "error": "#FF453A",
+    "surface_high": "#F3F7FF",
+    "surface_dim": "#E8EDF5",
+    "surface_variant": "#DDE2F1",
+    "on_surface": "#040A17",
+    "on_surface_variant": "#4B5166",
+    "outline": "#C4CBDA",
+    "outline_variant": "#E1E6F3",
+    "inverse_surface": "#0F1422",
+    "inverse_on_surface": "#E4EBFF",
+    "error": "#FF5B5B",
     "on_error": "#FFFFFF",
-    "error_container": "#FFE2DE",
-    "on_error_container": "#5F1410",
-    "success": "#248A3D",
-    "warning": "#F2A43C",
-    "info": "#5C6AC4",
-    "shadow": "#020817",
+    "error_container": "#FFE3E0",
+    "on_error_container": "#5E1412",
+    "success": "#2BD37D",
+    "warning": "#F7B849",
+    "info": "#4B73FF",
+    "shadow": "#040714",
 }
 
 
@@ -58,9 +58,10 @@ def primary_surface_gradient() -> ft.LinearGradient:
         begin=ft.alignment.top_left,
         end=ft.alignment.bottom_right,
         colors=[
-            "#0B9BFF",
-            "#0071E3",
-            "#5E5CE6",
+            "#53E4FF",
+            "#0A84FF",
+            "#7D7AFF",
+            "#FF87D1",
         ],
     )
 
@@ -73,7 +74,8 @@ def elevated_surface_gradient() -> ft.LinearGradient:
         end=ft.alignment.bottom_center,
         colors=[
             "#FFFFFF",
-            "#F7F9FE",
+            "#F4F7FF",
+            "#EBF1FF",
         ],
     )
 
@@ -85,8 +87,8 @@ def accent_glow_gradient() -> ft.RadialGradient:
         center=ft.Alignment(0, 0),
         radius=1.25,
         colors=[
-            "#5E5CE6EE",
-            "#5E5CE608",
+            "#7D7AFFDD",
+            "#31DFC300",
         ],
     )
 

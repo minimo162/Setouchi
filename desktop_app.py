@@ -360,6 +360,22 @@ class CopilotApp:
         self._hero_mode_value: Optional[ft.Text] = None
         self._hero_workbook_value: Optional[ft.Text] = None
         self._hero_sheet_value: Optional[ft.Text] = None
+        self._hero_stat_cards: Dict[str, Dict[str, Any]] = {}
+        self._hero_metric_history: Dict[str, Any] = {}
+        self._hero_completed_jobs = 0
+        self._hero_rows_processed = 0
+        self._hero_banner_container: Optional[ft.Container] = None
+        self._hero_foreground_layer: Optional[ft.Container] = None
+        self._hero_particle_layer: Optional[ft.Container] = None
+        self._hero_title_switcher: Optional[ft.AnimatedSwitcher] = None
+        self._hero_title_value: str = ""
+        self._hero_tagline_richtext: Optional[ft.RichText] = None
+        self._hero_tagline_dynamic_span: Optional[ft.TextSpan] = None
+        self._hero_parallax_offset = 0.0
+        self._hero_breathing_timer: Optional[threading.Timer] = None
+        self._hero_breathing_toggle = False
+        self._hero_breathing_active = False
+        self._command_palette_dialog: Optional[ft.AlertDialog] = None
         self._mode_panel_container: Optional[ft.Container] = None
         self._content_container: Optional[ft.Container] = None
         self._layout: Optional[ft.ResponsiveRow] = None
@@ -813,47 +829,14 @@ class CopilotApp:
 
         hero_title_scale = TYPE_SCALE["hero"]
         body_scale = TYPE_SCALE["body"]
-        hero_state_label = {
-            AppState.INITIALIZING: "初期化中",
-            AppState.READY: "READY",
-            AppState.TASK_IN_PROGRESS: "実行中",
-            AppState.STOPPING: "停止要求中",
-            AppState.ERROR: "エラー",
-        }.get(self.app_state, "初期化中")
-        hero_stats = [
-            ("状態", hero_state_label, "_hero_state_value"),
-            ("モード", MODE_LABELS.get(self.mode, "-"), "_hero_mode_value"),
-            ("ブック", self.current_workbook_name or "未選択", "_hero_workbook_value"),
-            ("シート", self.current_sheet_name or "未選択", "_hero_sheet_value"),
-        ]
-        hero_stat_controls = []
-        for label, value, attr_name in hero_stats:
-            value_text = ft.Text(
-                value,
-                size=body_scale["size"],
-                weight=ft.FontWeight.W_600,
-                color=palette["inverse_on_surface"],
-                font_family=self._primary_font_family,
-            )
-            setattr(self, attr_name, value_text)
+        initial_metrics = self._collect_hero_metrics(suppress_delta=True)
+        hero_stat_controls: List[ft.Control] = []
+        for metric in initial_metrics:
             hero_stat_controls.append(
                 ft.Container(
-                    col={"xs": 12, "sm": 6, "md": 3},
-                    padding=ft.Padding(0, 6, 0, 6),
-                    content=ft.Column(
-                        [
-                            ft.Text(
-                                label,
-                                size=caption_scale["size"],
-                                weight=caption_scale["weight"],
-                                color=ft.Colors.with_opacity(0.82, palette["inverse_on_surface"]),
-                                font_family=self._hint_font_family,
-                            ),
-                            value_text,
-                        ],
-                        spacing=2,
-                        tight=True,
-                    ),
+                    col={"xs": 12, "sm": 6, "md": 4, "lg": 4},
+                    padding=ft.Padding(2, 6, 2, 6),
+                    content=self._build_hero_stat_card(metric, body_scale, caption_scale),
                 )
             )
 
@@ -877,6 +860,20 @@ class CopilotApp:
                 spacing=8,
             ),
         )
+        hero_badge_wrapper = ft.Stack(
+            controls=[
+                ft.Container(
+                    width=240,
+                    height=50,
+                    border_radius=999,
+                    gradient=accent_glow_gradient(),
+                    opacity=0.32,
+                    shadow=floating_shadow("sm"),
+                ),
+                ft.Container(content=hero_badge, alignment=ft.alignment.center),
+            ],
+            height=50,
+        )
 
         drawer_button_style = ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=26),
@@ -895,10 +892,12 @@ class CopilotApp:
             style=drawer_button_style,
         )
 
+        command_palette_button = self._build_command_palette_button()
         hero_actions = ft.ResponsiveRow(
             controls=[
                 ft.Container(content=self._drawer_toggle_button, col={"xs": 12, "sm": 6, "md": 4}),
                 ft.Container(content=self.new_chat_button, col={"xs": 12, "sm": 6, "md": 4}),
+                ft.Container(content=command_palette_button, col={"xs": 12, "sm": 12, "md": 4}),
             ],
             spacing=12,
             run_spacing=12,
@@ -906,35 +905,110 @@ class CopilotApp:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        hero_banner = ft.Container(
-            gradient=primary_surface_gradient(),
-            border_radius=40,
+        primary_title = self._compose_hero_title_value()
+        hero_title_control = ft.Text(
+            primary_title,
+            size=hero_title_scale["size"],
+            weight=hero_title_scale["weight"],
+            color=palette["inverse_on_surface"],
+            font_family=self._primary_font_family,
+        )
+        self._hero_title_switcher = ft.AnimatedSwitcher(
+            hero_title_control,
+            transition=ft.AnimatedSwitcherTransition.SCALE,
+            duration=350,
+        )
+        self._hero_title_value = primary_title
+
+        tagline_intro = ft.TextSpan(
+            "Apple 由来の余白と質感で、",
+            style=ft.TextStyle(
+                size=body_scale["size"],
+                color=ft.Colors.with_opacity(0.88, palette["inverse_on_surface"]),
+                font_family=self._hint_font_family,
+            ),
+        )
+        tagline_accent = ft.TextSpan(
+            "世界をとる",
+            style=ft.TextStyle(
+                size=body_scale["size"],
+                weight=ft.FontWeight.W_600,
+                color=palette["inverse_on_surface"],
+                font_family=self._primary_font_family,
+            ),
+        )
+        tagline_dynamic = ft.TextSpan(
+            self._resolve_mode_tagline(),
+            style=ft.TextStyle(
+                size=body_scale["size"],
+                color=ft.Colors.with_opacity(0.88, palette["inverse_on_surface"]),
+                font_family=self._hint_font_family,
+            ),
+        )
+        hero_tagline = ft.RichText(
+            spans=[tagline_intro, tagline_accent, ft.TextSpan(" "), tagline_dynamic],
+            width=620,
+        )
+        self._hero_tagline_richtext = hero_tagline
+        self._hero_tagline_dynamic_span = tagline_dynamic
+
+        hero_stat_row = ft.ResponsiveRow(hero_stat_controls, spacing=12, run_spacing=12)
+
+        hero_foreground = ft.Container(
             padding=ft.Padding(32, 32, 32, 36),
-            shadow=floating_shadow("lg"),
+            border_radius=40,
             content=ft.Column(
                 [
-                    hero_badge,
-                    ft.Text(
-                        "Setouchi Excel Copilot",
-                        size=hero_title_scale["size"],
-                        weight=hero_title_scale["weight"],
-                        color=palette["inverse_on_surface"],
-                        font_family=self._primary_font_family,
-                    ),
-                    ft.Text(
-                        "Apple 由来の余白と質感で、翻訳オペレーションを静かに加速。",
-                        size=body_scale["size"],
-                        weight=body_scale["weight"],
-                        color=ft.Colors.with_opacity(0.92, palette["inverse_on_surface"]),
-                        font_family=self._hint_font_family,
-                    ),
-                    ft.ResponsiveRow(hero_stat_controls, spacing=12, run_spacing=12),
+                    hero_badge_wrapper,
+                    self._hero_title_switcher,
+                    hero_tagline,
+                    hero_stat_row,
                     hero_actions,
                 ],
-                spacing=18,
+                spacing=20,
                 tight=True,
             ),
         )
+        hero_foreground.offset = ft.Offset(0, 0)
+        self._hero_foreground_layer = hero_foreground
+
+        hero_background = ft.Container(
+            gradient=primary_surface_gradient(),
+            border_radius=40,
+            expand=True,
+        )
+        hero_overlay = ft.Container(
+            border_radius=40,
+            gradient=ft.RadialGradient(
+                center=ft.alignment.center_right,
+                radius=1.3,
+                colors=[
+                    ft.Colors.with_opacity(0.38, palette["primary"]),
+                    ft.colors.TRANSPARENT,
+                ],
+            ),
+            expand=True,
+            opacity=0.9,
+        )
+        particle_layer = self._build_hero_particle_layer()
+        particle_layer.offset = ft.Offset(0, 0)
+        self._hero_particle_layer = particle_layer
+
+        hero_stack = ft.Stack(
+            controls=[hero_background, hero_overlay, particle_layer, hero_foreground],
+            expand=True,
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        )
+
+        hero_banner = ft.Container(
+            content=hero_stack,
+            border_radius=40,
+            shadow=floating_shadow("lg"),
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        )
+        hero_banner.animate_scale = ft.animation.Animation(620, "easeInOut")
+        hero_banner.scale = ft.transform.Scale(1.0, 1.0, 1.0)
+        self._hero_banner_container = hero_banner
 
         self._layout = ft.ResponsiveRow(
             controls=[
@@ -1676,6 +1750,7 @@ class CopilotApp:
         self.page.window.on_event = self._on_window_event
         self.page.on_resize = self._handle_page_resize
         self.page.on_disconnect = self._on_page_disconnect
+        self.page.on_scroll = self._handle_page_scroll
 
     def _handle_page_resize(self, e: Optional[ft.ControlEvent]):
         width = getattr(self.page.window, "width", None) or getattr(self.page, "width", None)
@@ -1803,6 +1878,431 @@ class CopilotApp:
                 chat_height = preferred_chat_height
             self._chat_panel.height = chat_height
 
+    def _build_hero_particle_layer(self) -> ft.Container:
+        palette = EXPRESSIVE_PALETTE
+        particle_specs = [
+            {"left": 32, "top": 24, "size": 10, "opacity": 0.5},
+            {"left": 180, "top": 64, "size": 6, "opacity": 0.35},
+            {"left": 320, "top": 20, "size": 8, "opacity": 0.4},
+            {"left": 420, "top": 90, "size": 5, "opacity": 0.45},
+            {"left": 220, "top": 110, "size": 12, "opacity": 0.28},
+            {"left": 520, "top": 40, "size": 7, "opacity": 0.38},
+        ]
+        particles: List[ft.Control] = []
+        for spec in particle_specs:
+            particles.append(
+                ft.Positioned(
+                    left=spec["left"],
+                    top=spec["top"],
+                    child=ft.Container(
+                        width=spec["size"],
+                        height=spec["size"],
+                        border_radius=999,
+                        bgcolor=ft.Colors.with_opacity(spec["opacity"], palette["inverse_on_surface"]),
+                        shadow=floating_shadow("sm"),
+                    ),
+                )
+            )
+        return ft.Container(
+            content=ft.Stack(controls=particles, expand=True),
+            border_radius=40,
+            expand=True,
+            padding=ft.Padding(0, 0, 0, 0),
+        )
+
+    def _build_command_palette_button(self) -> ft.Control:
+        palette = EXPRESSIVE_PALETTE
+        button = ft.FilledTonalButton(
+            text="コマンドパレット",
+            icon=ft.Icons.KEYBOARD_COMMAND_KEY,
+            on_click=self._open_command_palette,
+            tooltip="⌘K / Ctrl+K",
+            style=ft.ButtonStyle(
+                padding=ft.Padding(22, 12, 22, 12),
+                bgcolor={
+                    ft.MaterialState.DEFAULT: ft.Colors.with_opacity(0.16, palette["inverse_on_surface"]),
+                    ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.28, palette["inverse_on_surface"]),
+                },
+                color=palette["inverse_on_surface"],
+                overlay_color=ft.Colors.with_opacity(0.12, palette["inverse_on_surface"]),
+            ),
+        )
+        self._command_palette_button = button
+        return button
+
+    def _open_command_palette(self, e: Optional[ft.ControlEvent] = None):
+        palette = EXPRESSIVE_PALETTE
+        shortcuts = [
+            ("⌘ + Enter / Ctrl + Enter", "フォームを即時送信"),
+            ("⌘ + R / Ctrl + R", "ブック情報を最新化"),
+            ("⌘ + B / Ctrl + B", "コンテキストドロワー切替"),
+            ("Esc", "処理の中断要求"),
+        ]
+        rows: List[ft.Control] = []
+        for combo, desc in shortcuts:
+            rows.append(
+                ft.Row(
+                    controls=[
+                        ft.Text(
+                            combo,
+                            size=13,
+                            weight=ft.FontWeight.W_600,
+                            color=palette["on_surface"],
+                            font_family=self._primary_font_family,
+                        ),
+                        ft.Text(
+                            desc,
+                            size=13,
+                            color=palette["on_surface_variant"],
+                            font_family=self._hint_font_family,
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+            )
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Command Palette", font_family=self._primary_font_family, size=18),
+            content=ft.Column(rows, spacing=8, width=440, tight=True),
+            actions=[ft.TextButton("閉じる", on_click=self._close_command_palette)],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._command_palette_dialog = dialog
+        self.page.dialog = dialog
+        dialog.open = True
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
+    def _close_command_palette(self, e: Optional[ft.ControlEvent] = None):
+        if not self._command_palette_dialog:
+            return
+        self._command_palette_dialog.open = False
+        try:
+            self._command_palette_dialog.update()
+        except Exception:
+            pass
+        self.page.dialog = None
+        self._command_palette_dialog = None
+
+    def _read_queue_size(self) -> int:
+        if not self.request_queue:
+            return 0
+        try:
+            return self.request_queue.qsize()
+        except Exception:
+            return 0
+
+    def _collect_hero_metrics(self, suppress_delta: bool = False) -> List[Dict[str, Any]]:
+        hero_state_label = {
+            AppState.INITIALIZING: "初期化中",
+            AppState.READY: "READY",
+            AppState.TASK_IN_PROGRESS: "実行中",
+            AppState.STOPPING: "停止要求中",
+            AppState.ERROR: "エラー",
+        }.get(self.app_state, "初期化中")
+        workbook = self.current_workbook_name or "未選択"
+        sheet = self.current_sheet_name or "未選択"
+        queue_size = self._read_queue_size()
+        metrics: List[Dict[str, Any]] = [
+            {"id": "state", "label": "状態", "value": hero_state_label, "raw": hero_state_label},
+            {"id": "mode", "label": "モード", "value": MODE_LABELS.get(self.mode, self.mode.value), "raw": self.mode.value},
+            {"id": "workbook", "label": "ブック", "value": workbook, "raw": workbook},
+            {"id": "sheet", "label": "シート", "value": sheet, "raw": sheet},
+            {"id": "queue", "label": "待ちジョブ", "value": str(queue_size), "raw": queue_size, "unit": "件"},
+            {
+                "id": "jobs",
+                "label": "完了ジョブ",
+                "value": str(self._hero_completed_jobs),
+                "raw": self._hero_completed_jobs,
+                "unit": "件",
+            },
+            {
+                "id": "rows",
+                "label": "処理セル",
+                "value": str(self._hero_rows_processed),
+                "raw": self._hero_rows_processed,
+                "unit": "行",
+            },
+        ]
+
+        enriched: List[Dict[str, Any]] = []
+        for metric in metrics:
+            metric_id = metric["id"]
+            value_raw = metric.get("raw", metric.get("value"))
+            prev_value = self._hero_metric_history.get(metric_id)
+            delta_text: Optional[str] = None
+            trend_icon: Optional[str] = None
+            if isinstance(value_raw, (int, float)) and not suppress_delta and prev_value is not None:
+                diff = value_raw - prev_value
+                if diff > 0:
+                    delta_text = f"+{diff}"
+                    trend_icon = ft.Icons.TRENDING_UP
+                elif diff < 0:
+                    delta_text = str(diff)
+                    trend_icon = ft.Icons.TRENDING_DOWN
+                else:
+                    delta_text = "安定"
+                    trend_icon = ft.Icons.DRAG_HANDLE
+            metric["delta_text"] = delta_text
+            metric["trend_icon"] = trend_icon
+            enriched.append(metric)
+            self._hero_metric_history[metric_id] = value_raw
+        return enriched
+
+    def _compose_hero_title_value(self) -> str:
+        mode_label = MODE_LABELS.get(self.mode, self.mode.value)
+        return f"Setouchi Excel Copilot · {mode_label}"
+
+    def _build_hero_value_text(self, value: Optional[str], body_scale: Dict[str, Any]) -> ft.Text:
+        palette = EXPRESSIVE_PALETTE
+        display_value = value if value is not None and str(value).strip() else "—"
+        return ft.Text(
+            display_value,
+            size=body_scale["size"] + 2,
+            weight=ft.FontWeight.W_600,
+            color=palette["inverse_on_surface"],
+            font_family=self._primary_font_family,
+        )
+
+    def _build_hero_stat_card(
+        self,
+        metric: Dict[str, Any],
+        body_scale: Dict[str, Any],
+        caption_scale: Dict[str, Any],
+    ) -> ft.Control:
+        palette = EXPRESSIVE_PALETTE
+        metric_id = metric.get("id", "")
+        value_text = self._build_hero_value_text(metric.get("value"), body_scale)
+        value_switcher = ft.AnimatedSwitcher(value_text, duration=260)
+        unit_label = ft.Text(
+            metric.get("unit", ""),
+            size=12,
+            color=ft.Colors.with_opacity(0.78, palette["inverse_on_surface"]),
+            visible=bool(metric.get("unit")),
+            font_family=self._hint_font_family,
+        )
+        delta_text = ft.Text(
+            metric.get("delta_text") or "",
+            size=12,
+            color=ft.Colors.with_opacity(0.9, palette["inverse_on_surface"]),
+            visible=bool(metric.get("delta_text")),
+            font_family=self._hint_font_family,
+        )
+        trend_icon = ft.Icon(
+            metric.get("trend_icon") or ft.Icons.LENS,
+            size=14,
+            color=palette["inverse_on_surface"],
+            visible=bool(metric.get("trend_icon")),
+        )
+        delta_row = ft.Row(
+            controls=[trend_icon, delta_text],
+            spacing=6,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            visible=bool(metric.get("delta_text")),
+        )
+        card = ft.AnimatedContainer(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text(
+                                metric.get("label", "-"),
+                                size=caption_scale["size"],
+                                weight=caption_scale["weight"],
+                                color=ft.Colors.with_opacity(0.82, palette["inverse_on_surface"]),
+                                font_family=self._hint_font_family,
+                            ),
+                            unit_label,
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    value_switcher,
+                    delta_row,
+                ],
+                spacing=10,
+                tight=True,
+            ),
+            border_radius=26,
+            gradient=ft.LinearGradient(
+                begin=ft.alignment.top_left,
+                end=ft.alignment.bottom_right,
+                colors=[
+                    ft.Colors.with_opacity(0.22, palette["inverse_on_surface"]),
+                    ft.Colors.with_opacity(0.08, palette["surface_variant"]),
+                ],
+            ),
+            border=glass_border(0.18),
+            padding=ft.Padding(20, 18, 20, 18),
+            shadow=floating_shadow("md"),
+            on_hover=lambda e, key=metric_id: self._handle_hero_card_hover(key, e),
+        )
+        card.scale = ft.transform.Scale(1.0, 1.0, 1.0)
+        self._hero_stat_cards[metric_id] = {
+            "container": card,
+            "value_switcher": value_switcher,
+            "unit_label": unit_label,
+            "delta_text": delta_text,
+            "trend_icon": trend_icon,
+            "delta_row": delta_row,
+        }
+        return card
+
+    def _handle_hero_card_hover(self, metric_id: str, e: Optional[ft.ControlEvent]):
+        card_state = self._hero_stat_cards.get(metric_id)
+        if not card_state:
+            return
+        container = card_state.get("container")
+        if not container:
+            return
+        is_hovered = str(getattr(e, "data", "")).lower() == "true"
+        container.animate_scale = ft.animation.Animation(220, "easeOut")
+        container.scale = ft.transform.Scale(1.02 if is_hovered else 1.0, 1.02 if is_hovered else 1.0, 1.0)
+        self._safe_update_control(container)
+
+    def _update_metric_card(self, metric: Dict[str, Any]):
+        metric_id = metric.get("id")
+        card_state = self._hero_stat_cards.get(metric_id)
+        if not card_state:
+            return
+        value_switcher: Optional[ft.AnimatedSwitcher] = card_state.get("value_switcher")
+        if value_switcher:
+            new_value = self._build_hero_value_text(metric.get("value"), TYPE_SCALE["body"])
+            value_switcher.content = new_value
+            self._safe_update_control(value_switcher)
+        unit_label: Optional[ft.Text] = card_state.get("unit_label")
+        if unit_label:
+            unit_value = metric.get("unit", "")
+            unit_label.value = unit_value
+            unit_label.visible = bool(unit_value)
+            self._safe_update_control(unit_label)
+        delta_text: Optional[ft.Text] = card_state.get("delta_text")
+        trend_icon: Optional[ft.Icon] = card_state.get("trend_icon")
+        delta_row: Optional[ft.Row] = card_state.get("delta_row")
+        has_delta = bool(metric.get("delta_text"))
+        if delta_text:
+            delta_text.value = metric.get("delta_text") or ""
+            delta_text.visible = has_delta
+            self._safe_update_control(delta_text)
+        if trend_icon:
+            icon_name = metric.get("trend_icon") or ft.Icons.LENS
+            trend_icon.name = icon_name
+            trend_icon.visible = has_delta and metric.get("trend_icon") is not None
+            self._safe_update_control(trend_icon)
+        if delta_row:
+            delta_row.visible = has_delta
+            self._safe_update_control(delta_row)
+
+    def _resolve_mode_tagline(self) -> str:
+        taglines = {
+            CopilotMode.TRANSLATION: "翻訳をエレガントに量産する集中モード。",
+            CopilotMode.TRANSLATION_WITH_REFERENCES: "参照と調和しながら精度を極める演算。",
+            CopilotMode.REVIEW: "ニュアンスチェックと差分検証を光速で。",
+        }
+        return taglines.get(self.mode, "静かな熱量でオペレーションを底上げします。")
+
+    def _update_hero_title_text(self, new_value: str) -> None:
+        if not self._hero_title_switcher or not new_value:
+            return
+        if new_value == self._hero_title_value:
+            return
+        hero_scale = TYPE_SCALE["hero"]
+        updated_title = ft.Text(
+            new_value,
+            size=hero_scale["size"],
+            weight=hero_scale["weight"],
+            color=EXPRESSIVE_PALETTE["inverse_on_surface"],
+            font_family=self._primary_font_family,
+        )
+        self._hero_title_switcher.content = updated_title
+        self._hero_title_value = new_value
+        self._safe_update_control(self._hero_title_switcher)
+
+    def _update_hero_tagline(self) -> None:
+        if not self._hero_tagline_dynamic_span or not self._hero_tagline_richtext:
+            return
+        new_text = self._resolve_mode_tagline()
+        if self._hero_tagline_dynamic_span.text == new_text:
+            return
+        self._hero_tagline_dynamic_span.text = new_text
+        self._safe_update_control(self._hero_tagline_richtext)
+
+    def _handle_page_scroll(self, e: Optional[ft.ControlEvent]):
+        if not e:
+            return
+        delta_value = 0.0
+        raw = getattr(e, "data", None)
+        if isinstance(raw, str) and raw.strip():
+            try:
+                payload = json.loads(raw)
+                delta_value = float(payload.get("pixels_y") or payload.get("offset") or 0.0)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                try:
+                    delta_value = float(raw)
+                except (TypeError, ValueError):
+                    delta_value = 0.0
+        elif isinstance(raw, (int, float)):
+            delta_value = float(raw)
+        self._update_hero_parallax(delta_value)
+
+    def _update_hero_parallax(self, delta_y: float) -> None:
+        try:
+            delta_value = float(delta_y or 0.0)
+        except (TypeError, ValueError):
+            delta_value = 0.0
+        normalized = max(-1.0, min(1.0, delta_value / 900.0))
+        self._hero_parallax_offset = normalized
+        if self._hero_foreground_layer:
+            self._hero_foreground_layer.offset = ft.Offset(0, normalized * 0.6)
+            self._safe_update_control(self._hero_foreground_layer)
+        if self._hero_particle_layer:
+            self._hero_particle_layer.offset = ft.Offset(0, normalized * 0.9)
+            self._safe_update_control(self._hero_particle_layer)
+
+    def _toggle_hero_breathing(self, enabled: bool) -> None:
+        if enabled:
+            if self._hero_breathing_active:
+                return
+            self._hero_breathing_active = True
+            self._schedule_hero_breath()
+            return
+        self._hero_breathing_active = False
+        self._stop_hero_breathing_timer()
+        if self._hero_banner_container:
+            self._hero_banner_container.scale = ft.transform.Scale(1.0, 1.0, 1.0)
+            self._safe_update_control(self._hero_banner_container)
+
+    def _schedule_hero_breath(self):
+        if not self._hero_breathing_active:
+            return
+        self._hero_breathing_toggle = not self._hero_breathing_toggle
+        target_scale = 1.015 if self._hero_breathing_toggle else 0.99
+        if self._hero_banner_container:
+            self._hero_banner_container.animate_scale = ft.animation.Animation(600, "easeInOut")
+            self._hero_banner_container.scale = ft.transform.Scale(target_scale, target_scale, 1.0)
+            self._safe_update_control(self._hero_banner_container)
+        self._stop_hero_breathing_timer()
+        self._hero_breathing_timer = threading.Timer(0.6, self._schedule_hero_breath)
+        self._hero_breathing_timer.daemon = True
+        self._hero_breathing_timer.start()
+
+    def _stop_hero_breathing_timer(self):
+        if self._hero_breathing_timer:
+            self._hero_breathing_timer.cancel()
+            self._hero_breathing_timer = None
+
+    def _safe_update_control(self, control: Optional[ft.Control]) -> None:
+        if not control:
+            return
+        try:
+            control.update()
+        except Exception:
+            pass
+
     def _toggle_context_drawer(self, e: Optional[ft.ControlEvent] = None):
         self._set_context_drawer_visibility(not self._context_drawer_visible)
 
@@ -1842,39 +2342,11 @@ class CopilotApp:
             pass
 
     def _update_hero_overview(self) -> None:
-        state_label = {
-            AppState.INITIALIZING: "初期化中",
-            AppState.READY: "READY",
-            AppState.TASK_IN_PROGRESS: "実行中",
-            AppState.STOPPING: "停止要求中",
-            AppState.ERROR: "エラー",
-        }.get(self.app_state, "初期化中")
-        if self._hero_state_value:
-            self._hero_state_value.value = state_label
-            try:
-                self._hero_state_value.update()
-            except Exception:
-                pass
-        if self._hero_mode_value:
-            self._hero_mode_value.value = MODE_LABELS.get(self.mode, self.mode.value)
-            try:
-                self._hero_mode_value.update()
-            except Exception:
-                pass
-        workbook = self.current_workbook_name or "未選択"
-        sheet = self.current_sheet_name or "未選択"
-        if self._hero_workbook_value:
-            self._hero_workbook_value.value = workbook
-            try:
-                self._hero_workbook_value.update()
-            except Exception:
-                pass
-        if self._hero_sheet_value:
-            self._hero_sheet_value.value = sheet
-            try:
-                self._hero_sheet_value.update()
-            except Exception:
-                pass
+        metrics = self._collect_hero_metrics()
+        for metric in metrics:
+            self._update_metric_card(metric)
+        self._update_hero_title_text(self._compose_hero_title_value())
+        self._update_hero_tagline()
 
     def _build_mode_cards(self) -> ft.ResponsiveRow:
         palette = EXPRESSIVE_PALETTE
@@ -2072,6 +2544,8 @@ class CopilotApp:
                 self.new_chat_button.disabled = False
         if self._drawer_toggle_button:
             self._drawer_toggle_button.disabled = not can_interact
+        if self._command_palette_button:
+            self._command_palette_button.disabled = not can_interact
 
         if self.workbook_refresh_button:
             if self._manual_refresh_in_progress:
@@ -2134,6 +2608,7 @@ class CopilotApp:
                 self._status_color_override = None
                 self.status_label.color = status_palette["base"]
 
+        self._toggle_hero_breathing(is_task_in_progress)
         self._update_form_progress_message()
         self._update_hero_overview()
         self._update_ui()
@@ -3378,6 +3853,11 @@ class CopilotApp:
 
         if job and is_translation_mode:
             pairs = self._build_translation_pairs(final_text, job)
+            processed_pairs = len(pairs)
+            self._hero_completed_jobs += 1
+            if processed_pairs:
+                self._hero_rows_processed += processed_pairs
+            self._update_hero_overview()
             self._display_translation_summary(pairs, final_text, job, response.metadata)
             self._latest_translation_job = None
         elif final_text:
@@ -3677,6 +4157,8 @@ class CopilotApp:
             self.shutdown_finalized = True
 
         self._flush_pending_form_value_save()
+        self._hero_breathing_active = False
+        self._stop_hero_breathing_timer()
         print(f"Shutdown finalization started. reason={normalized_reason}")
 
         worker_active = self.worker_thread is not None and self.worker_thread.is_alive()
