@@ -48,6 +48,7 @@ TYPE_SCALE: dict[str, dict[str, object]] = {
     "subtitle": {"size": 14, "weight": ft.FontWeight.W_500},
     "body": {"size": 13, "weight": ft.FontWeight.W_400},
     "caption": {"size": 12, "weight": ft.FontWeight.W_400},
+    "eyebrow": {"size": 11, "weight": ft.FontWeight.W_600},
 }
 
 EXTENDED_TYPE_SCALE: dict[str, dict[str, object]] = {
@@ -59,6 +60,7 @@ EXTENDED_TYPE_SCALE: dict[str, dict[str, object]] = {
     "body": TYPE_SCALE["body"],
     "body_sm": {"size": 11, "weight": ft.FontWeight.W_500},
     "caption": TYPE_SCALE["caption"],
+    "eyebrow": TYPE_SCALE["eyebrow"],
 }
 
 DEPTH_TOKENS: dict[str, dict[str, float]] = {
@@ -76,17 +78,23 @@ MOTION_TOKENS: dict[str, dict[str, object]] = {
     "long": {"duration": 480, "curve": "easeInOut"},
 }
 
-AURORA_NOISE_TOKEN: dict[str, object] = {
-    "opacity": 0.22,
-    "blur": 46,
-    "scale": 1.4,
+RUNWAY_NOISE_TOKEN: dict[str, object] = {
+    "opacity": 0.18,
+    "blur": 52,
+    "scale": 1.45,
+    "blend_mode": ft.BlendMode.SOFT_LIGHT,
 }
 
-AURORA_PARTICLE_TOKEN: dict[str, object] = {
-    "count": 14,
-    "min_size": 4,
-    "max_size": 14,
+RUNWAY_PARTICLE_TOKEN: dict[str, object] = {
+    "count": 18,
+    "min_size": 3,
+    "max_size": 18,
+    "opacity": 0.85,
 }
+
+# 従来トークンとの互換性を維持するために alias を残す。
+AURORA_NOISE_TOKEN = RUNWAY_NOISE_TOKEN
+AURORA_PARTICLE_TOKEN = RUNWAY_PARTICLE_TOKEN
 
 
 def primary_surface_gradient() -> ft.LinearGradient:
@@ -104,6 +112,24 @@ def primary_surface_gradient() -> ft.LinearGradient:
     )
 
 
+def metallic_bloom_gradient(reverse: bool = False) -> ft.LinearGradient:
+    """Aurora Runway のベースとなるメタリックグラデーション。"""
+
+    colors = [
+        "#A6EDFF",
+        "#3F9CFF",
+        "#7D7AFF",
+        "#FF8FD8",
+    ]
+    if reverse:
+        colors = list(reversed(colors))
+    return ft.LinearGradient(
+        begin=ft.alignment.top_left if not reverse else ft.alignment.bottom_right,
+        end=ft.alignment.bottom_right if not reverse else ft.alignment.top_left,
+        colors=colors,
+    )
+
+
 def elevated_surface_gradient() -> ft.LinearGradient:
     """カードやモーダルのベースに使う柔らかな艶感。"""
 
@@ -115,6 +141,16 @@ def elevated_surface_gradient() -> ft.LinearGradient:
             "#F4F7FF",
             "#EBF1FF",
         ],
+    )
+
+
+def prism_card_gradient() -> ft.LinearGradient:
+    """Prism Command Dock 用の繊細なカードグラデーション。"""
+
+    return ft.LinearGradient(
+        begin=ft.alignment.top_center,
+        end=ft.alignment.bottom_center,
+        colors=["#fdfdff", "#f1f6ff", "#e5ecff"],
     )
 
 
@@ -189,8 +225,12 @@ __all__ = [
     "MOTION_TOKENS",
     "AURORA_NOISE_TOKEN",
     "AURORA_PARTICLE_TOKEN",
+    "RUNWAY_NOISE_TOKEN",
+    "RUNWAY_PARTICLE_TOKEN",
     "primary_surface_gradient",
+    "metallic_bloom_gradient",
     "elevated_surface_gradient",
+    "prism_card_gradient",
     "accent_glow_gradient",
     "floating_shadow",
     "depth_shadow",

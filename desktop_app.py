@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import queue
+import random
 import platform
 import re
 import sys
@@ -43,14 +44,18 @@ from excel_copilot.ui.messages import (
 from excel_copilot.ui.theme import (
     EXPRESSIVE_PALETTE,
     TYPE_SCALE,
+    RUNWAY_NOISE_TOKEN,
+    RUNWAY_PARTICLE_TOKEN,
     accent_glow_gradient,
     depth_shadow,
     elevated_surface_gradient,
     floating_shadow,
     glass_border,
     glass_surface,
+    metallic_bloom_gradient,
     motion_token,
     primary_surface_gradient,
+    prism_card_gradient,
 )
 from excel_copilot.ui.worker import CopilotWorker
 
@@ -344,6 +349,7 @@ class CopilotApp:
         self._form_cancel_button: Optional[ft.Control] = None
         self._form_body_column: Optional[ft.Container] = None
         self._form_sections: Optional[ft.Control] = None
+        self._group_status_indicators: Dict[str, Dict[str, ft.Control]] = {}
         self._form_progress_indicator: Optional[ft.ProgressRing] = None
         self._form_progress_text: Optional[ft.Text] = None
         self._process_timeline_step_refs: Dict[str, Dict[str, ft.Control]] = {}
@@ -378,6 +384,12 @@ class CopilotApp:
         self._hero_particle_layer: Optional[ft.Container] = None
         self._hero_context_pill_values: Dict[str, ft.Text] = {}
         self._hero_title_switcher: Optional[ft.AnimatedSwitcher] = None
+        self._hero_title_variants: List[str] = [
+            "CELL-TO-COSMOS RUNWAY",
+            "REFERENCE HYPERDRIVE",
+            "TRANSLATION CONTINUUM",
+        ]
+        self._hero_title_phrase_index = 0
         self._hero_title_value: str = ""
         self._hero_tagline_richtext: Optional[ft.RichText] = None
         self._hero_tagline_dynamic_span: Optional[ft.TextSpan] = None
@@ -861,30 +873,42 @@ class CopilotApp:
             )
 
         hero_badge = ft.Container(
-            padding=ft.Padding(16, 6, 18, 6),
+            padding=ft.Padding(18, 8, 22, 8),
             border_radius=999,
             gradient=accent_glow_gradient(),
-            border=ft.border.all(1, ft.Colors.with_opacity(0.25, palette["inverse_on_surface"])),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.32, palette["inverse_on_surface"])),
             content=ft.Row(
                 [
-                    ft.Icon(ft.Icons.AUTO_AWESOME_ROUNDED, size=16, color=palette["inverse_on_surface"]),
-                    ft.Text(
-                        "世界をとるビジョン",
-                        size=caption_scale["size"],
-                        weight=caption_scale["weight"],
-                        color=palette["inverse_on_surface"],
-                        font_family=self._primary_font_family,
+                    ft.Icon(ft.Icons.AUTO_AWESOME_ROUNDED, size=18, color=palette["inverse_on_surface"]),
+                    ft.Column(
+                        [
+                            ft.Text(
+                                "AURORA RUNWAY",
+                                size=TYPE_SCALE["eyebrow"]["size"],
+                                weight=TYPE_SCALE["eyebrow"]["weight"],
+                                color=palette["inverse_on_surface"],
+                                font_family=self._primary_font_family,
+                            ),
+                            ft.Text(
+                                "世界をとるフライトプラン",
+                                size=caption_scale["size"],
+                                color=ft.Colors.with_opacity(0.9, palette["inverse_on_surface"]),
+                                font_family=self._hint_font_family,
+                            ),
+                        ],
+                        spacing=2,
+                        tight=True,
                     ),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
-                spacing=8,
+                spacing=12,
             ),
         )
         hero_badge_wrapper = ft.Stack(
             controls=[
                 ft.Container(
-                    width=240,
-                    height=50,
+                    width=320,
+                    height=60,
                     border_radius=999,
                     gradient=accent_glow_gradient(),
                     opacity=0.32,
@@ -892,7 +916,7 @@ class CopilotApp:
                 ),
                 ft.Container(content=hero_badge, alignment=ft.alignment.center),
             ],
-            height=50,
+            height=60,
         )
 
         hero_context_pills, hero_pill_map = self._build_hero_context_pills()
@@ -944,7 +968,7 @@ class CopilotApp:
         self._hero_title_value = primary_title
 
         tagline_intro = ft.TextSpan(
-            "Apple 由来の余白と質感で、",
+            "セルから銀河まで翻訳の軌道をつなぐ、",
             style=ft.TextStyle(
                 size=body_scale["size"],
                 color=ft.Colors.with_opacity(0.88, palette["inverse_on_surface"]),
@@ -952,7 +976,7 @@ class CopilotApp:
             ),
         )
         tagline_accent = ft.TextSpan(
-            "世界をとる",
+            "Setouchi Runway",
             style=ft.TextStyle(
                 size=body_scale["size"],
                 weight=ft.FontWeight.W_600,
@@ -980,6 +1004,8 @@ class CopilotApp:
         hero_foreground = ft.Container(
             padding=ft.Padding(32, 32, 32, 36),
             border_radius=40,
+            gradient=elevated_surface_gradient(),
+            border=glass_border(0.18),
             content=ft.Column(
                 [
                     hero_badge_wrapper,
@@ -998,10 +1024,21 @@ class CopilotApp:
         self._hero_foreground_layer = hero_foreground
 
         hero_background = ft.Container(
-            gradient=primary_surface_gradient(),
+            gradient=metallic_bloom_gradient(),
             border_radius=40,
             expand=True,
         )
+        noise_spec = RUNWAY_NOISE_TOKEN
+        hero_noise_layer = ft.Container(
+            border_radius=40,
+            expand=True,
+            bgcolor=ft.Colors.with_opacity(noise_spec.get("opacity", 0.18), palette["inverse_on_surface"]),
+            blur=ft.Blur(noise_spec.get("blur", 48), noise_spec.get("blur", 48)),
+            opacity=noise_spec.get("opacity", 0.18),
+        )
+        blend_mode = noise_spec.get("blend_mode")
+        if blend_mode:
+            hero_noise_layer.blend_mode = blend_mode
         hero_aurora_layer = self._build_hero_aurora_layer()
         hero_aurora_layer.offset = ft.Offset(0, 0)
         self._hero_aurora_layer = hero_aurora_layer
@@ -1009,10 +1046,10 @@ class CopilotApp:
             border_radius=40,
             gradient=ft.RadialGradient(
                 center=ft.alignment.center_right,
-                radius=1.3,
+                radius=1.15,
                 colors=[
-                    ft.Colors.with_opacity(0.38, palette["primary"]),
-                    ft.colors.TRANSPARENT,
+                    ft.Colors.with_opacity(0.48, palette["secondary"]),
+                    ft.Colors.with_opacity(0.05, palette["surface"]),
                 ],
             ),
             expand=True,
@@ -1023,7 +1060,7 @@ class CopilotApp:
         self._hero_particle_layer = particle_layer
 
         hero_stack = ft.Stack(
-            controls=[hero_background, hero_aurora_layer, hero_overlay, particle_layer, hero_foreground],
+            controls=[hero_background, hero_noise_layer, hero_aurora_layer, hero_overlay, particle_layer, hero_foreground],
             expand=True,
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
@@ -1279,6 +1316,7 @@ class CopilotApp:
         new_controls: Dict[str, ft.TextField] = {}
         self._field_groups = {}
         self._group_summary_labels = {}
+        self._group_status_indicators = {}
 
         grouped_controls.setdefault("mode", []).append(self._build_mode_selection_control())
 
@@ -1389,6 +1427,20 @@ class CopilotApp:
                 border_radius=999,
                 bgcolor=ft.Colors.with_opacity(0.16, palette["surface_variant"]),
             )
+            status_text = ft.Text(
+                "Need Input",
+                size=11,
+                weight=ft.FontWeight.W_600,
+                color=palette["warning"],
+                font_family=self._primary_font_family,
+            )
+            status_chip = ft.Container(
+                content=status_text,
+                padding=ft.Padding(12, 4, 12, 4),
+                border_radius=999,
+                bgcolor=ft.Colors.with_opacity(0.16, palette["warning"]),
+            )
+            self._group_status_indicators[group_key] = {"label": status_text, "chip": status_chip}
 
             if group_key == "mode":
                 summary_label.value = f"現在: {MODE_LABELS.get(self.mode, self.mode.value)}"
@@ -1397,8 +1449,22 @@ class CopilotApp:
                         content=ft.Column(
                             [
                                 ft.Row(
-                                    [summary_chip],
-                                    alignment=ft.MainAxisAlignment.END,
+                                    [
+                                        ft.Text(
+                                            "MODE",
+                                            size=TYPE_SCALE["eyebrow"]["size"],
+                                            weight=TYPE_SCALE["eyebrow"]["weight"],
+                                            color=palette["primary"],
+                                            font_family=self._primary_font_family,
+                                        ),
+                                        ft.Row(
+                                            [status_chip, summary_chip],
+                                            spacing=8,
+                                            alignment=ft.MainAxisAlignment.END,
+                                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        ),
+                                    ],
+                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
                                 ft.Column(controls_for_group, spacing=10, tight=True),
@@ -1420,14 +1486,22 @@ class CopilotApp:
                             [
                                 ft.Row(
                                     [
-                                        ft.Text(
-                                            FORM_GROUP_LABELS.get(group_key, group_key.title()),
-                                            size=15,
-                                            weight=ft.FontWeight.W_600,
-                                            color=palette["primary"],
-                                            font_family=self._primary_font_family,
+                                        ft.Container(
+                                            content=ft.Text(
+                                                FORM_GROUP_LABELS.get(group_key, group_key.title()),
+                                                size=15,
+                                                weight=ft.FontWeight.W_600,
+                                                color=palette["primary"],
+                                                font_family=self._primary_font_family,
+                                            ),
+                                            expand=True,
                                         ),
-                                        summary_chip,
+                                        ft.Column(
+                                            [status_chip, summary_chip],
+                                            spacing=6,
+                                            alignment=ft.MainAxisAlignment.END,
+                                            horizontal_alignment=ft.CrossAxisAlignment.END,
+                                        ),
                                     ],
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1438,10 +1512,10 @@ class CopilotApp:
                             tight=True,
                         ),
                         border_radius=26,
-                        padding=ft.Padding(20, 18, 20, 20),
-                        bgcolor=glass_surface(0.9),
+                        padding=ft.Padding(20, 20, 22, 22),
+                        gradient=prism_card_gradient(),
                         border=glass_border(0.28),
-                        shadow=floating_shadow("sm"),
+                        shadow=depth_shadow("sm"),
                         col={"xs": 12, "md": 6},
                     )
                 )
@@ -1486,17 +1560,54 @@ class CopilotApp:
         ]
 
         self._process_timeline_step_refs = {}
-        step_controls: List[ft.Control] = []
+        step_rows: List[ft.Control] = []
+        total_steps = len(steps)
 
-        for spec in steps:
-            icon_chip = ft.Container(
-                width=34,
-                height=34,
-                border_radius=18,
+        timeline_title = ft.Text(
+            "Nebula Timeline",
+            size=TYPE_SCALE["title"]["size"],
+            weight=TYPE_SCALE["title"]["weight"],
+            color=palette["primary"],
+            font_family=self._primary_font_family,
+        )
+        timeline_caption = ft.Text(
+            "翻訳航路の現在地を色と光で可視化します。",
+            size=caption_scale["size"],
+            color=palette["on_surface_variant"],
+            font_family=self._hint_font_family,
+        )
+
+        for idx, spec in enumerate(steps):
+            icon_control = ft.Icon(spec["icon"], size=20, color=palette["on_surface_variant"])
+            halo = ft.Container(
+                width=52,
+                height=52,
+                border_radius=26,
                 alignment=ft.alignment.center,
-                bgcolor=ft.Colors.with_opacity(0.12, palette["on_surface"]),
-                content=ft.Icon(spec["icon"], size=18, color=palette["on_surface"]),
+                bgcolor=ft.Colors.with_opacity(0.18, palette["surface_variant"]),
+                content=icon_control,
             )
+            glow = ft.Container(
+                width=82,
+                height=82,
+                border_radius=999,
+                gradient=accent_glow_gradient(),
+                opacity=0.35,
+            )
+            axis_stack = ft.Stack([glow, halo], width=82, height=82)
+            connector = ft.Container(
+                width=4,
+                height=60,
+                bgcolor=ft.Colors.with_opacity(0.12, palette["outline"]),
+                visible=idx < total_steps - 1,
+            )
+            axis_column = ft.Column(
+                controls=[axis_stack, connector],
+                spacing=4,
+                alignment=ft.MainAxisAlignment.START,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
             title_text = ft.Text(
                 spec["title"],
                 size=body_scale["size"],
@@ -1512,41 +1623,55 @@ class CopilotApp:
                 max_lines=2,
                 overflow=ft.TextOverflow.ELLIPSIS,
             )
-            progress_bar = ft.Container(
-                height=3,
-                border_radius=999,
-                bgcolor=ft.Colors.with_opacity(0.12, palette["on_surface_variant"]),
-            )
-            self._process_timeline_step_refs[spec["key"]] = {
-                "icon": icon_chip,
-                "title": title_text,
-                "subtitle": subtitle_text,
-                "bar": progress_bar,
-            }
-            step_card = ft.Container(
-                col={"xs": 12, "sm": 4, "md": 4},
-                padding=ft.Padding(18, 14, 18, 16),
-                border_radius=26,
-                bgcolor=glass_surface(0.9),
-                border=glass_border(0.28),
-                shadow=floating_shadow("sm"),
+
+            card = ft.Container(
                 content=ft.Column(
                     [
-                        ft.Row([icon_chip, title_text], spacing=10, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        title_text,
                         subtitle_text,
-                        progress_bar,
                     ],
-                    spacing=8,
+                    spacing=6,
                     tight=True,
                 ),
+                padding=ft.Padding(22, 18, 24, 20),
+                border_radius=28,
+                gradient=prism_card_gradient(),
+                border=glass_border(0.26),
+                shadow=depth_shadow("micro"),
+                expand=True,
             )
-            step_controls.append(step_card)
 
-        row = ft.ResponsiveRow(controls=step_controls, spacing=12, run_spacing=12)
-        return ft.Container(
-            content=row,
-            padding=ft.Padding(2, 8, 2, 2),
+            step_row = ft.Row(
+                [
+                    ft.Container(content=axis_column, width=96),
+                    card,
+                ],
+                spacing=18,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            )
+            step_rows.append(step_row)
+
+            self._process_timeline_step_refs[spec["key"]] = {
+                "halo": halo,
+                "glow": glow,
+                "icon": icon_control,
+                "title": title_text,
+                "subtitle": subtitle_text,
+                "card": card,
+                "connector": connector if idx < total_steps - 1 else None,
+            }
+
+        column = ft.Column([timeline_title, timeline_caption, *step_rows], spacing=16, tight=True)
+        shell = ft.Container(
+            content=column,
+            border_radius=32,
+            padding=ft.Padding(26, 24, 26, 28),
+            bgcolor=glass_surface(0.95),
+            border=glass_border(0.32),
+            shadow=depth_shadow("md"),
         )
+        self._timeline_shell = shell
+        return shell
 
     def _update_process_timeline_state(self) -> None:
         if not self._process_timeline_step_refs:
@@ -1568,47 +1693,59 @@ class CopilotApp:
 
         variants = {
             "idle": {
-                "icon_bg": ft.Colors.with_opacity(0.12, palette["surface_variant"]),
+                "halo_bg": ft.Colors.with_opacity(0.18, palette["surface_variant"]),
+                "halo_gradient": None,
                 "icon_color": palette["on_surface_variant"],
-                "title_color": palette["on_surface_variant"],
+                "title_color": palette["on_surface"],
                 "subtitle_color": ft.Colors.with_opacity(0.85, palette["on_surface_variant"]),
-                "bar_bg": ft.Colors.with_opacity(0.12, palette["on_surface_variant"]),
-                "bar_gradient": None,
+                "glow_opacity": 0.3,
+                "card_border_color": ft.Colors.with_opacity(0.22, palette["outline"]),
+                "shadow_level": "micro",
+                "connector_color": ft.Colors.with_opacity(0.12, palette["outline"]),
             },
             "active": {
-                "icon_bg": ft.Colors.with_opacity(0.35, palette["primary"]),
+                "halo_bg": ft.Colors.with_opacity(0.4, palette["primary"]),
+                "halo_gradient": metallic_bloom_gradient(),
                 "icon_color": palette["on_primary"],
                 "title_color": palette["on_surface"],
-                "subtitle_color": ft.Colors.with_opacity(0.9, palette["on_surface"]),
-                "bar_bg": None,
-                "bar_gradient": ft.LinearGradient(
-                    begin=ft.alignment.center_left,
-                    end=ft.alignment.center_right,
+                "subtitle_color": ft.Colors.with_opacity(0.95, palette["on_surface"]),
+                "glow_opacity": 0.65,
+                "card_border_color": ft.Colors.with_opacity(0.46, palette["primary"]),
+                "shadow_level": "sm",
+                "connector_gradient": ft.LinearGradient(
+                    begin=ft.alignment.top_center,
+                    end=ft.alignment.bottom_center,
                     colors=[palette["primary"], palette["secondary"]],
                 ),
             },
             "complete": {
-                "icon_bg": ft.Colors.with_opacity(0.32, palette["tertiary"]),
+                "halo_bg": ft.Colors.with_opacity(0.32, palette["tertiary"]),
+                "halo_gradient": metallic_bloom_gradient(True),
                 "icon_color": palette["on_tertiary"],
                 "title_color": palette["on_surface"],
                 "subtitle_color": ft.Colors.with_opacity(0.95, palette["on_surface"]),
-                "bar_bg": None,
-                "bar_gradient": ft.LinearGradient(
-                    begin=ft.alignment.center_left,
-                    end=ft.alignment.center_right,
-                    colors=[palette["tertiary"], palette["secondary"]],
+                "glow_opacity": 0.55,
+                "card_border_color": ft.Colors.with_opacity(0.38, palette["tertiary"]),
+                "shadow_level": "sm",
+                "connector_gradient": ft.LinearGradient(
+                    begin=ft.alignment.top_center,
+                    end=ft.alignment.bottom_center,
+                    colors=[palette["tertiary"], palette["primary"]],
                 ),
             },
             "error": {
-                "icon_bg": ft.Colors.with_opacity(0.32, palette["error"]),
+                "halo_bg": ft.Colors.with_opacity(0.3, palette["error"]),
+                "halo_gradient": None,
                 "icon_color": palette["on_error"],
                 "title_color": palette["error"],
                 "subtitle_color": palette["on_error"],
-                "bar_bg": None,
-                "bar_gradient": ft.LinearGradient(
-                    begin=ft.alignment.center_left,
-                    end=ft.alignment.center_right,
-                    colors=[palette["error"], ft.Colors.with_opacity(0.5, palette["error"])],
+                "glow_opacity": 0.5,
+                "card_border_color": ft.Colors.with_opacity(0.5, palette["error"]),
+                "shadow_level": "md",
+                "connector_gradient": ft.LinearGradient(
+                    begin=ft.alignment.top_center,
+                    end=ft.alignment.bottom_center,
+                    colors=[palette["error"], ft.Colors.with_opacity(0.4, palette["error"])],
                 ),
             },
         }
@@ -1618,18 +1755,23 @@ class CopilotApp:
             if not refs:
                 continue
             variant = variants.get(state_name, variants["idle"])
+            halo = refs.get("halo")
+            glow = refs.get("glow")
             icon_chip = refs.get("icon")
             title_text = refs.get("title")
             subtitle_text = refs.get("subtitle")
-            progress_bar = refs.get("bar")
-            if icon_chip:
-                icon_chip.bgcolor = variant["icon_bg"]
-                if hasattr(icon_chip, "content") and isinstance(icon_chip.content, ft.Icon):
-                    icon_chip.content.color = variant["icon_color"]
-                try:
-                    icon_chip.update()
-                except Exception:
-                    pass
+            card = refs.get("card")
+            connector = refs.get("connector")
+            if isinstance(halo, ft.Container):
+                halo.bgcolor = variant.get("halo_bg")
+                halo.gradient = variant.get("halo_gradient")
+                self._safe_update_control(halo)
+            if isinstance(glow, ft.Container):
+                glow.opacity = variant.get("glow_opacity", glow.opacity or 0.3)
+                self._safe_update_control(glow)
+            if isinstance(icon_chip, ft.Icon):
+                icon_chip.color = variant.get("icon_color", icon_chip.color)
+                self._safe_update_control(icon_chip)
             if title_text:
                 title_text.color = variant["title_color"]
                 try:
@@ -1642,18 +1784,23 @@ class CopilotApp:
                     subtitle_text.update()
                 except Exception:
                     pass
-            if progress_bar:
-                bar_gradient = variant.get("bar_gradient")
-                if bar_gradient:
-                    progress_bar.gradient = bar_gradient
-                    progress_bar.bgcolor = None
+            if isinstance(card, ft.Container):
+                border_color = variant.get("card_border_color")
+                if border_color:
+                    card.border = ft.border.all(1, border_color)
+                shadow_level = variant.get("shadow_level")
+                if shadow_level:
+                    card.shadow = depth_shadow(shadow_level)
+                self._safe_update_control(card)
+            if isinstance(connector, ft.Container):
+                gradient = variant.get("connector_gradient")
+                if gradient:
+                    connector.gradient = gradient
+                    connector.bgcolor = None
                 else:
-                    progress_bar.gradient = None
-                    progress_bar.bgcolor = variant.get("bar_bg")
-                try:
-                    progress_bar.update()
-                except Exception:
-                    pass
+                    connector.gradient = None
+                    connector.bgcolor = variant.get("connector_color")
+                self._safe_update_control(connector)
 
     def _refresh_form_panel(self) -> None:
         if not self._form_body_column:
@@ -1721,6 +1868,8 @@ class CopilotApp:
             label.update()
         except Exception:
             pass
+        status_state = self._resolve_group_status_state(group_key, summary_value)
+        self._update_group_status_chip(group_key, status_state)
 
     def _compute_group_summary(self, group_key: str) -> str:
         if group_key == "mode":
@@ -1758,6 +1907,44 @@ class CopilotApp:
         if group_key == "output" and len(values) > 1:
             return f"{values[0]} ほか{len(values) - 1} 件"
         return values[0]
+
+    def _resolve_group_status_state(self, group_key: str, summary_value: str) -> str:
+        normalized = (summary_value or "").strip()
+        if group_key == "mode":
+            return "ready"
+        if not normalized or normalized in {"未入力", "未登録"}:
+            return "pending"
+        if normalized.startswith("0 件"):
+            return "pending"
+        return "ready"
+
+    def _update_group_status_chip(self, group_key: str, status_name: str) -> None:
+        indicators = self._group_status_indicators.get(group_key)
+        if not indicators:
+            return
+        palette = EXPRESSIVE_PALETTE
+        styles = {
+            "pending": {
+                "label": "Need Input",
+                "text_color": palette["warning"],
+                "bgcolor": ft.Colors.with_opacity(0.18, palette["warning"]),
+            },
+            "ready": {
+                "label": "Ready",
+                "text_color": palette["success"],
+                "bgcolor": ft.Colors.with_opacity(0.18, palette["success"]),
+            },
+        }
+        style = styles.get(status_name, styles["pending"])
+        status_label = indicators.get("label")
+        if isinstance(status_label, ft.Text):
+            status_label.value = style["label"]
+            status_label.color = style["text_color"]
+            self._safe_update_control(status_label)
+        chip_control = indicators.get("chip")
+        if isinstance(chip_control, ft.Container):
+            chip_control.bgcolor = style["bgcolor"]
+            self._safe_update_control(chip_control)
 
     def _split_list_values(self, raw_text: str) -> List[str]:
         tokens: List[str] = []
@@ -2228,27 +2415,51 @@ class CopilotApp:
 
     def _build_hero_particle_layer(self) -> ft.Container:
         palette = EXPRESSIVE_PALETTE
-        particle_specs = [
-            {"left": 32, "top": 24, "size": 10, "opacity": 0.5},
-            {"left": 180, "top": 64, "size": 6, "opacity": 0.35},
-            {"left": 320, "top": 20, "size": 8, "opacity": 0.4},
-            {"left": 420, "top": 90, "size": 5, "opacity": 0.45},
-            {"left": 220, "top": 110, "size": 12, "opacity": 0.28},
-            {"left": 520, "top": 40, "size": 7, "opacity": 0.38},
-        ]
+        token = RUNWAY_PARTICLE_TOKEN
+        particle_count = int(token.get("count", 14))
+        min_size = float(token.get("min_size", 4))
+        max_size = float(token.get("max_size", 14))
+        base_opacity = float(token.get("opacity", 0.8))
+        rand = random.Random(0x5E70C1)
+        width = 560
+        height = 220
+
+        def _particle_color() -> str:
+            return rand.choice([
+                palette["inverse_on_surface"],
+                palette["tertiary"],
+                palette["secondary"],
+                palette["primary_container"],
+            ])
+
         particles: List[ft.Control] = []
-        for spec in particle_specs:
+        for _ in range(particle_count):
+            size = rand.uniform(min_size, max_size)
+            opacity = rand.uniform(base_opacity * 0.35, base_opacity)
+            hue = _particle_color()
+            glow = ft.Container(
+                width=size * 3.2,
+                height=size * 3.2,
+                border_radius=999,
+                gradient=ft.RadialGradient(
+                    center=ft.Alignment(0, 0),
+                    radius=1.1,
+                    colors=[ft.Colors.with_opacity(opacity * 0.6, hue), ft.Colors.with_opacity(0, hue)],
+                ),
+                blur=ft.Blur(size * 1.4, size * 1.6),
+                opacity=opacity,
+            )
+            dot = ft.Container(
+                width=size,
+                height=size,
+                border_radius=999,
+                bgcolor=ft.Colors.with_opacity(opacity, hue),
+            )
             particles.append(
                 ft.Positioned(
-                    left=spec["left"],
-                    top=spec["top"],
-                    child=ft.Container(
-                        width=spec["size"],
-                        height=spec["size"],
-                        border_radius=999,
-                        bgcolor=ft.Colors.with_opacity(spec["opacity"], palette["inverse_on_surface"]),
-                        shadow=floating_shadow("sm"),
-                    ),
+                    left=rand.uniform(-40, width),
+                    top=rand.uniform(0, height),
+                    child=ft.Stack([glow, dot]),
                 )
             )
         return ft.Container(
@@ -2507,9 +2718,17 @@ class CopilotApp:
             self._hero_metric_history[metric_id] = value_raw
         return enriched
 
+    def _advance_hero_title_phrase(self) -> None:
+        if not self._hero_title_variants:
+            return
+        self._hero_title_phrase_index = (self._hero_title_phrase_index + 1) % len(self._hero_title_variants)
+
     def _compose_hero_title_value(self) -> str:
         mode_label = MODE_LABELS.get(self.mode, self.mode.value)
-        return f"Setouchi Excel Copilot · {mode_label}"
+        if not self._hero_title_variants:
+            return f"Setouchi Excel Copilot · {mode_label}"
+        phrase = self._hero_title_variants[self._hero_title_phrase_index]
+        return f"{phrase} · {mode_label}"
 
     def _build_hero_value_text(self, value: Optional[str], body_scale: Dict[str, Any]) -> ft.Text:
         palette = EXPRESSIVE_PALETTE
@@ -2826,6 +3045,7 @@ class CopilotApp:
         metrics = self._collect_hero_metrics()
         for metric in metrics:
             self._update_metric_card(metric)
+        self._advance_hero_title_phrase()
         self._update_hero_title_text(self._compose_hero_title_value())
         self._update_hero_tagline()
         self._update_hero_context_pills()
