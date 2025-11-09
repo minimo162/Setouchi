@@ -19,11 +19,17 @@
 ## 2. システム構成
 
 ### 2.1 デスクトップ UI（`desktop_app.py`）
-- Flet を用い、上部ヒーロー（状態/統計/ショートカット）、左側コンテキストパネル（ブック・シート選択、同期ステータス、アクション）、タブ式フォーム、右側チャットタイムラインを備えた 3 カラムレイアウトを構築します。画面幅に応じてコンテキストをドロワー化し、ヒーロー内の数値カードやタイトルはレスポンシブに再配置されます。
+- Flet 製 UI は「AuroraShell」コンテナで統括し、ヒーローとコンテキスト選択を一体化した **Aurora Runway**、12pt グリッド上に再構成したフォーム領域 **Prism Command Dock**、時間軸ビュー **Nebula Timeline** の 3 セクションで構成します。標準幅ではヒーロー内にブック／シート選択ピルと主要指標が常時表示され、狭幅ではドロワーにスライドします。
+- Prism Command Dock はタブではなくモード別セグメントコントロールを用い、`MODE / SCOPE / OUTPUT / OPTIONS / REFERENCES` の各フォーム群を 2 カラムのカード群として展開します。各カードはリアルタイムバリデーション結果をトップピルに表示し、送信ボタンはプログレスリングと同期したライトピルに更新します。
+- Nebula Timeline はチャットログを縦タイムラインとして描画し、`ResponseType` ごとに色分けされたカードとグローラインで「翻訳航路」を可視化します。新規レスポンスを受信するたびにヒーローの統計カードと連動モーションを発火させ、処理全体のストーリー性を担保します。
 - Excel のアクティブブック／シートは `_refresh_excel_context` とバックグラウンドポーリングスレッドで追跡し、候補ドロップダウンを常に最新化します。状態は `COPILOT_USER_DATA_DIR/setouchi_state.json` と `setouchi_logs` に永続化され、次回起動時に前回選択したブック・シート・フォーム値を復元します。
 - フォーム送信時に `RequestMessage(USER_INPUT)` をエンキューし、UI 状態を `TASK_IN_PROGRESS` に遷移。進行中はプログレスリングとステータス文がアクションバーに表示され、停止ボタン（`RequestMessage(STOP)`）とブラウザリセットボタン（`RESET_BROWSER`）が活性化されます。
 - チャットタイムラインは `ResponseType` ごとにカードスタイルを変え、LLM へ送ったプロンプトや Copilot 応答（`CHAT_PROMPT` / `CHAT_RESPONSE`）を含むすべてのログを時系列で残します。ログ保存／エクスポート、コマンドパレット、Excel フォーカス呼び出し (`_focus_excel_window`) といった補助操作もここから行えます。
 - 起動時に `CopilotWorker` スレッドとレスポンス監視スレッドを生成し、UI スレッドからメッセージキュー越しに制御します。環境変数 `COPILOT_AUTOTEST_*` が設定されている場合は、指定のワークブック・シート・参照 URL・遅延・タイムアウトで自動テスト用フォーム送信を行い、終了後にアプリを自動終了します。
+
+#### Setouchi Pearl デザインシステム拡張
+- テーマ層（`excel_copilot/ui/theme.py`）には Deep Depth Scale（`floating_shadow_sm/md/lg` などのシャドウプリセット）、Motion Tokens（120/240/360ms のスプリング／ベジェ設定）、拡張タイプスケール（32/28/24/20/16/13/11pt）、ガラス質感 LUT、Aurora ノイズ／パーティクル設定を追加し、Hero やフォーム、タイムラインで共通利用します。
+- ステータスピル・アクションボタン・進捗リングはすべて共通トークンで駆動し、Excel コンテキスト更新やタスク進行に合わせて `ft.AnimatedSwitcher` + `ft.Transform` による呼吸アニメーションを発火させます。
 
 ### 2.2 メッセージングとバックグラウンドワーカー（`excel_copilot/ui/messages.py`, `excel_copilot/ui/worker.py`）
 - `RequestMessage`/`ResponseMessage` はシリアライズ可能な辞書構造で、UI ↔ ワーカー間の境界を明確化します。主なリクエスト種別は `USER_INPUT`, `STOP`, `QUIT`, `UPDATE_CONTEXT`, `RESET_BROWSER`。

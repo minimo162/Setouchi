@@ -44,10 +44,12 @@ from excel_copilot.ui.theme import (
     EXPRESSIVE_PALETTE,
     TYPE_SCALE,
     accent_glow_gradient,
+    depth_shadow,
     elevated_surface_gradient,
     floating_shadow,
     glass_border,
     glass_surface,
+    motion_token,
     primary_surface_gradient,
 )
 from excel_copilot.ui.worker import CopilotWorker
@@ -335,21 +337,27 @@ class CopilotApp:
         self.save_log_button: Optional[ft.TextButton] = None
         self.workbook_refresh_button: Optional[ft.TextButton] = None
         self.new_chat_button: Optional[ft.TextButton] = None
-        self.mode_card_row: Optional[ft.ResponsiveRow] = None
+        self._mode_segment_row: Optional[ft.Row] = None
         self.form_controls: Dict[str, ft.TextField] = {}
         self.form_error_text: Optional[ft.Text] = None
         self._form_submit_button: Optional[ft.Control] = None
         self._form_cancel_button: Optional[ft.Control] = None
         self._form_body_column: Optional[ft.Container] = None
-        self._form_tabs: Optional[ft.Tabs] = None
+        self._form_sections: Optional[ft.Control] = None
         self._form_progress_indicator: Optional[ft.ProgressRing] = None
         self._form_progress_text: Optional[ft.Text] = None
+        self._process_timeline_step_refs: Dict[str, Dict[str, ft.Control]] = {}
         self._form_panel: Optional[ft.Container] = None
-        self._mode_card_map: dict[str, ft.Container] = {}
-        self._context_panel: Optional[ft.Container] = None
+        self._mode_segment_map: dict[str, ft.Container] = {}
+        self._runway_context_capsule: Optional[ft.Container] = None
+        self._runway_context_host: Optional[ft.Container] = None
+        self._drawer_context_host: Optional[ft.Container] = None
+        self._context_capsule_parent: Optional[ft.Container] = None
         self._context_actions: Optional[ft.ResponsiveRow] = None
         self._chat_panel: Optional[ft.Container] = None
         self._chat_floating_shell: Optional[ft.Container] = None
+        self._command_dock_container: Optional[ft.Container] = None
+        self._timeline_shell: Optional[ft.Container] = None
         self._body_stack: Optional[ft.Stack] = None
         self._context_drawer: Optional[ft.AnimatedContainer] = None
         self._drawer_scrim: Optional[ft.Container] = None
@@ -366,7 +374,9 @@ class CopilotApp:
         self._hero_rows_processed = 0
         self._hero_banner_container: Optional[ft.Container] = None
         self._hero_foreground_layer: Optional[ft.Container] = None
+        self._hero_aurora_layer: Optional[ft.Container] = None
         self._hero_particle_layer: Optional[ft.Container] = None
+        self._hero_context_pill_values: Dict[str, ft.Text] = {}
         self._hero_title_switcher: Optional[ft.AnimatedSwitcher] = None
         self._hero_title_value: str = ""
         self._hero_tagline_richtext: Optional[ft.RichText] = None
@@ -595,17 +605,10 @@ class CopilotApp:
             spacing=10,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        status_card = ft.Container(
-            content=ft.Column(
-                [status_row, self._sync_status_text],
-                spacing=6,
-                tight=True,
-            ),
-            bgcolor=glass_surface(0.72),
-            border_radius=22,
-            padding=ft.Padding(20, 16, 20, 18),
-            border=glass_border(0.35),
-            shadow=floating_shadow("sm"),
+        status_cluster = ft.Column(
+            controls=[status_row, self._sync_status_text],
+            spacing=4,
+            tight=True,
         )
 
         button_shape = ft.RoundedRectangleBorder(radius=22)
@@ -694,56 +697,73 @@ class CopilotApp:
             ),
         )
 
-        selector_card = ft.Container(
-            content=ft.Column(
-                [
-                    self._context_summary_text,
-                    ft.Column(
+        selector_labels = ft.Column(
+            controls=[
+                ft.Text("ブック", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
+                self.workbook_selector_wrapper,
+                ft.Text("シート", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
+                self.sheet_selector_wrapper,
+            ],
+            spacing=10,
+            tight=True,
+        )
+
+        selector_row = ft.ResponsiveRow(
+            controls=[
+                ft.Container(content=selector_labels, col={"xs": 12, "sm": 12, "md": 6}),
+                ft.Container(
+                    content=ft.Column(
                         [
-                            ft.Text("ブック", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
-                            self.workbook_selector_wrapper,
-                            ft.Text("シート", size=13, color=palette["on_surface_variant"], font_family=self._primary_font_family),
-                            self.sheet_selector_wrapper,
+                            ft.Text(
+                                "現在の選択",
+                                size=12,
+                                color=palette["on_surface_variant"],
+                                font_family=self._hint_font_family,
+                            ),
+                            self._context_summary_text,
                         ],
-                        spacing=14,
+                        spacing=6,
                         tight=True,
                     ),
-                ],
-                spacing=12,
-                tight=True,
-            ),
-            bgcolor=glass_surface(0.68),
-            border_radius=22,
-            padding=ft.Padding(20, 20, 20, 22),
-            border=glass_border(0.32),
-            shadow=floating_shadow("sm"),
+                    col={"xs": 12, "sm": 12, "md": 6},
+                ),
+            ],
+            spacing=14,
+            run_spacing=14,
+            alignment=ft.MainAxisAlignment.START,
         )
 
         self._context_actions = ft.ResponsiveRow(
-            controls=[ft.Container(content=self.workbook_refresh_button, col={"xs": 12, "sm": 12})],
+            controls=[ft.Container(content=self.workbook_refresh_button, col={"xs": 12, "sm": 6, "md": 4})],
             spacing=12,
             run_spacing=12,
             alignment=ft.MainAxisAlignment.END,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        actions_divider = ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.08, palette["outline"]))
-
-        context_column = ft.Column(
-            controls=[status_card, selector_card, actions_divider, self._context_actions],
-            spacing=16,
-            tight=True,
-        )
-
-        self._context_panel = ft.Container(
-            bgcolor=glass_surface(0.9),
+        self._runway_context_capsule = ft.Container(
+            content=ft.Column(
+                [
+                    status_cluster,
+                    ft.Container(height=1, bgcolor=ft.Colors.with_opacity(0.08, palette["outline"])),
+                    selector_row,
+                    self._context_actions,
+                ],
+                spacing=14,
+                tight=True,
+            ),
+            bgcolor=glass_surface(0.82),
             gradient=elevated_surface_gradient(),
             border_radius=28,
-            padding=ft.Padding(26, 30, 26, 30),
-            border=glass_border(0.42),
-            shadow=floating_shadow("md"),
-            content=context_column,
+            padding=ft.Padding(24, 22, 24, 24),
+            border=glass_border(0.4),
+            shadow=depth_shadow("md"),
         )
+
+        self._runway_context_host = ft.Container(content=self._runway_context_capsule, expand=True)
+        self._drawer_context_host = ft.Container(expand=True)
+        self._context_capsule_parent = None
+        self._mount_context_capsule(self._runway_context_host)
 
         caption_scale = TYPE_SCALE["caption"]
         self._chat_header_subtitle = ft.Text(
@@ -875,6 +895,9 @@ class CopilotApp:
             height=50,
         )
 
+        hero_context_pills, hero_pill_map = self._build_hero_context_pills()
+        self._hero_context_pill_values = hero_pill_map
+
         drawer_button_style = ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=26),
             padding=ft.Padding(24, 12, 24, 12),
@@ -960,8 +983,10 @@ class CopilotApp:
             content=ft.Column(
                 [
                     hero_badge_wrapper,
+                    hero_context_pills,
                     self._hero_title_switcher,
                     hero_tagline,
+                    self._runway_context_host,
                     hero_stat_row,
                     hero_actions,
                 ],
@@ -977,6 +1002,9 @@ class CopilotApp:
             border_radius=40,
             expand=True,
         )
+        hero_aurora_layer = self._build_hero_aurora_layer()
+        hero_aurora_layer.offset = ft.Offset(0, 0)
+        self._hero_aurora_layer = hero_aurora_layer
         hero_overlay = ft.Container(
             border_radius=40,
             gradient=ft.RadialGradient(
@@ -995,7 +1023,7 @@ class CopilotApp:
         self._hero_particle_layer = particle_layer
 
         hero_stack = ft.Stack(
-            controls=[hero_background, hero_overlay, particle_layer, hero_foreground],
+            controls=[hero_background, hero_aurora_layer, hero_overlay, particle_layer, hero_foreground],
             expand=True,
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
@@ -1006,7 +1034,7 @@ class CopilotApp:
             shadow=floating_shadow("lg"),
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
-        hero_banner.animate_scale = ft.animation.Animation(620, "easeInOut")
+        hero_banner.animate_scale = motion_token("long")
         hero_banner.scale = ft.transform.Scale(1.0, 1.0, 1.0)
         self._hero_banner_container = hero_banner
 
@@ -1078,8 +1106,17 @@ class CopilotApp:
             on_tap=self._toggle_context_drawer,
             visible=False,
         )
+        drawer_panel = ft.Container(
+            bgcolor=glass_surface(0.9),
+            gradient=elevated_surface_gradient(),
+            border_radius=28,
+            padding=ft.Padding(26, 30, 26, 30),
+            border=glass_border(0.42),
+            shadow=depth_shadow("lg"),
+            content=self._drawer_context_host,
+        )
         self._context_drawer = ft.AnimatedContainer(
-            content=self._context_panel,
+            content=drawer_panel,
             width=420,
             alignment=ft.alignment.center_right,
             offset=ft.Offset(1.1, 0),
@@ -1113,14 +1150,12 @@ class CopilotApp:
         palette = EXPRESSIVE_PALETTE
         can_interact = self.app_state in {AppState.READY, AppState.ERROR}
 
-        tabs_control, controls_map = self._create_form_controls_for_mode(self.mode)
+        sections_control, controls_map = self._create_form_controls_for_mode(self.mode)
         self.form_controls = controls_map
-        self._form_tabs = tabs_control
-        self._form_tabs.expand = True
+        self._form_sections = sections_control
         self._form_body_column = ft.Container(
-            content=self._form_tabs,
-            height=420,
-            expand=False,
+            content=sections_control,
+            expand=True,
             padding=ft.Padding(4, 0, 4, 0),
         )
 
@@ -1206,9 +1241,11 @@ class CopilotApp:
             tight=True,
         )
 
+        timeline_block = self._build_process_timeline()
+
         content = ft.Column(
-            controls=[self._form_body_column, self.form_error_text, action_bar],
-            spacing=20,
+            controls=[self._form_body_column, timeline_block, self.form_error_text, action_bar],
+            spacing=24,
             tight=True,
         )
 
@@ -1219,19 +1256,21 @@ class CopilotApp:
             border_radius=30,
             padding=ft.Padding(26, 28, 26, 30),
             border=glass_border(0.4),
-            shadow=floating_shadow("md"),
+            shadow=depth_shadow("lg"),
             clip_behavior=ft.ClipBehavior.NONE,
         )
 
         self._mode_panel_container = panel
+        self._command_dock_container = panel
         self._update_all_group_summaries()
+        self._update_process_timeline_state()
         return panel
 
     def _create_form_controls_for_mode(
         self,
         mode: CopilotMode,
         initial_values: Optional[Dict[str, str]] = None,
-    ) -> Tuple[ft.Tabs, Dict[str, ft.TextField]]:
+    ) -> Tuple[ft.Control, Dict[str, ft.TextField]]:
         definitions = FORM_FIELD_DEFINITIONS.get(mode, [])
         seed_values = self._build_seed_form_values(mode, initial_values)
         palette = EXPRESSIVE_PALETTE
@@ -1331,7 +1370,8 @@ class CopilotApp:
                 text_field = _build_text_field(field, group_key)
                 grouped_controls.setdefault(group_key, []).append(text_field)
 
-        tabs: List[ft.Tab] = []
+        section_blocks: List[ft.Control] = []
+        grid_cards: List[ft.Control] = []
         for group_key in FORM_GROUP_ORDER:
             controls_for_group = grouped_controls.get(group_key) or []
             if not controls_for_group:
@@ -1343,55 +1383,277 @@ class CopilotApp:
                 font_family=self._hint_font_family,
             )
             self._group_summary_labels[group_key] = summary_label
+            summary_chip = ft.Container(
+                content=summary_label,
+                padding=ft.Padding(12, 4, 12, 4),
+                border_radius=999,
+                bgcolor=ft.Colors.with_opacity(0.16, palette["surface_variant"]),
+            )
 
             if group_key == "mode":
                 summary_label.value = f"現在: {MODE_LABELS.get(self.mode, self.mode.value)}"
-                header_row = ft.Row(
-                    controls=[summary_label],
-                    alignment=ft.MainAxisAlignment.END,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                )
-                tab_body_controls: List[ft.Control] = [header_row] + controls_for_group
-                body_spacing = 12
-            else:
-                header_row = ft.Row(
-                    controls=[
-                        ft.Text(
-                            FORM_GROUP_LABELS.get(group_key, group_key.title()),
-                            size=15,
-                            weight=ft.FontWeight.W_600,
-                            color=palette["primary"],
-                            font_family=self._primary_font_family,
+                section_blocks.append(
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Row(
+                                    [summary_chip],
+                                    alignment=ft.MainAxisAlignment.END,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                ft.Column(controls_for_group, spacing=10, tight=True),
+                            ],
+                            spacing=10,
+                            tight=True,
                         ),
-                        summary_label,
+                        border_radius=28,
+                        padding=ft.Padding(22, 18, 22, 20),
+                        bgcolor=glass_surface(0.92),
+                        border=glass_border(0.32),
+                        shadow=floating_shadow("sm"),
+                    )
+                )
+            else:
+                grid_cards.append(
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Row(
+                                    [
+                                        ft.Text(
+                                            FORM_GROUP_LABELS.get(group_key, group_key.title()),
+                                            size=15,
+                                            weight=ft.FontWeight.W_600,
+                                            color=palette["primary"],
+                                            font_family=self._primary_font_family,
+                                        ),
+                                        summary_chip,
+                                    ],
+                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                ft.Column(controls_for_group, spacing=10, tight=True),
+                            ],
+                            spacing=12,
+                            tight=True,
+                        ),
+                        border_radius=26,
+                        padding=ft.Padding(20, 18, 20, 20),
+                        bgcolor=glass_surface(0.9),
+                        border=glass_border(0.28),
+                        shadow=floating_shadow("sm"),
+                        col={"xs": 12, "md": 6},
+                    )
+                )
+
+        if grid_cards:
+            section_blocks.append(
+                ft.ResponsiveRow(
+                    controls=grid_cards,
+                    spacing=18,
+                    run_spacing=18,
+                    alignment=ft.MainAxisAlignment.START,
+                )
+            )
+
+        sections_control = ft.Column(section_blocks, spacing=18, tight=True)
+
+        return sections_control, new_controls
+
+    def _build_process_timeline(self) -> ft.Container:
+        palette = EXPRESSIVE_PALETTE
+        caption_scale = TYPE_SCALE["caption"]
+        body_scale = TYPE_SCALE["body"]
+        steps = [
+            {
+                "key": "context",
+                "title": "Excel コンテキスト",
+                "subtitle": "ブック/シート同期",
+                "icon": ft.Icons.SYNC_ALT,
+            },
+            {
+                "key": "copilot",
+                "title": "Copilot 対話",
+                "subtitle": "ブラウザオーケストレーション",
+                "icon": ft.Icons.SMART_TOY,
+            },
+            {
+                "key": "excel",
+                "title": "Excel 反映",
+                "subtitle": "セル書き込みと検証",
+                "icon": ft.Icons.GRID_ON,
+            },
+        ]
+
+        self._process_timeline_step_refs = {}
+        step_controls: List[ft.Control] = []
+
+        for spec in steps:
+            icon_chip = ft.Container(
+                width=34,
+                height=34,
+                border_radius=18,
+                alignment=ft.alignment.center,
+                bgcolor=ft.Colors.with_opacity(0.12, palette["on_surface"]),
+                content=ft.Icon(spec["icon"], size=18, color=palette["on_surface"]),
+            )
+            title_text = ft.Text(
+                spec["title"],
+                size=body_scale["size"],
+                weight=ft.FontWeight.W_600,
+                color=palette["on_surface"],
+                font_family=self._primary_font_family,
+            )
+            subtitle_text = ft.Text(
+                spec["subtitle"],
+                size=caption_scale["size"],
+                color=palette["on_surface_variant"],
+                font_family=self._hint_font_family,
+                max_lines=2,
+                overflow=ft.TextOverflow.ELLIPSIS,
+            )
+            progress_bar = ft.Container(
+                height=3,
+                border_radius=999,
+                bgcolor=ft.Colors.with_opacity(0.12, palette["on_surface_variant"]),
+            )
+            self._process_timeline_step_refs[spec["key"]] = {
+                "icon": icon_chip,
+                "title": title_text,
+                "subtitle": subtitle_text,
+                "bar": progress_bar,
+            }
+            step_card = ft.Container(
+                col={"xs": 12, "sm": 4, "md": 4},
+                padding=ft.Padding(18, 14, 18, 16),
+                border_radius=26,
+                bgcolor=glass_surface(0.9),
+                border=glass_border(0.28),
+                shadow=floating_shadow("sm"),
+                content=ft.Column(
+                    [
+                        ft.Row([icon_chip, title_text], spacing=10, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        subtitle_text,
+                        progress_bar,
                     ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                )
-                tab_body_controls = [header_row, ft.Column(controls_for_group, spacing=12, tight=True)]
-                body_spacing = 16
-
-            tab_content = ft.Column(
-                controls=tab_body_controls,
-                spacing=body_spacing,
-                tight=True,
+                    spacing=8,
+                    tight=True,
+                ),
             )
-            tabs.append(
-                ft.Tab(
-                    text=FORM_GROUP_LABELS.get(group_key, group_key.title()),
-                    content=ft.Container(tab_content, padding=ft.Padding(4, 6, 4, 6)),
-                )
-            )
+            step_controls.append(step_card)
 
-        tabs_control = ft.Tabs(
-            tabs=tabs,
-            animation_duration=200,
-            expand=True,
-            divider_color=ft.Colors.with_opacity(0.08, palette["outline"]),
-            indicator_color=palette["primary"],
+        row = ft.ResponsiveRow(controls=step_controls, spacing=12, run_spacing=12)
+        return ft.Container(
+            content=row,
+            padding=ft.Padding(2, 8, 2, 2),
         )
 
-        return tabs_control, new_controls
+    def _update_process_timeline_state(self) -> None:
+        if not self._process_timeline_step_refs:
+            return
+        palette = EXPRESSIVE_PALETTE
+        state = self.app_state or AppState.INITIALIZING
+        if state is AppState.INITIALIZING:
+            step_states = {"context": "active", "copilot": "idle", "excel": "idle"}
+        elif state is AppState.READY:
+            step_states = {"context": "complete", "copilot": "idle", "excel": "idle"}
+        elif state is AppState.TASK_IN_PROGRESS:
+            step_states = {"context": "complete", "copilot": "active", "excel": "idle"}
+        elif state is AppState.STOPPING:
+            step_states = {"context": "complete", "copilot": "complete", "excel": "active"}
+        elif state is AppState.ERROR:
+            step_states = {"context": "complete", "copilot": "error", "excel": "idle"}
+        else:
+            step_states = {"context": "idle", "copilot": "idle", "excel": "idle"}
+
+        variants = {
+            "idle": {
+                "icon_bg": ft.Colors.with_opacity(0.12, palette["surface_variant"]),
+                "icon_color": palette["on_surface_variant"],
+                "title_color": palette["on_surface_variant"],
+                "subtitle_color": ft.Colors.with_opacity(0.85, palette["on_surface_variant"]),
+                "bar_bg": ft.Colors.with_opacity(0.12, palette["on_surface_variant"]),
+                "bar_gradient": None,
+            },
+            "active": {
+                "icon_bg": ft.Colors.with_opacity(0.35, palette["primary"]),
+                "icon_color": palette["on_primary"],
+                "title_color": palette["on_surface"],
+                "subtitle_color": ft.Colors.with_opacity(0.9, palette["on_surface"]),
+                "bar_bg": None,
+                "bar_gradient": ft.LinearGradient(
+                    begin=ft.alignment.center_left,
+                    end=ft.alignment.center_right,
+                    colors=[palette["primary"], palette["secondary"]],
+                ),
+            },
+            "complete": {
+                "icon_bg": ft.Colors.with_opacity(0.32, palette["tertiary"]),
+                "icon_color": palette["on_tertiary"],
+                "title_color": palette["on_surface"],
+                "subtitle_color": ft.Colors.with_opacity(0.95, palette["on_surface"]),
+                "bar_bg": None,
+                "bar_gradient": ft.LinearGradient(
+                    begin=ft.alignment.center_left,
+                    end=ft.alignment.center_right,
+                    colors=[palette["tertiary"], palette["secondary"]],
+                ),
+            },
+            "error": {
+                "icon_bg": ft.Colors.with_opacity(0.32, palette["error"]),
+                "icon_color": palette["on_error"],
+                "title_color": palette["error"],
+                "subtitle_color": palette["on_error"],
+                "bar_bg": None,
+                "bar_gradient": ft.LinearGradient(
+                    begin=ft.alignment.center_left,
+                    end=ft.alignment.center_right,
+                    colors=[palette["error"], ft.Colors.with_opacity(0.5, palette["error"])],
+                ),
+            },
+        }
+
+        for key, state_name in step_states.items():
+            refs = self._process_timeline_step_refs.get(key)
+            if not refs:
+                continue
+            variant = variants.get(state_name, variants["idle"])
+            icon_chip = refs.get("icon")
+            title_text = refs.get("title")
+            subtitle_text = refs.get("subtitle")
+            progress_bar = refs.get("bar")
+            if icon_chip:
+                icon_chip.bgcolor = variant["icon_bg"]
+                if hasattr(icon_chip, "content") and isinstance(icon_chip.content, ft.Icon):
+                    icon_chip.content.color = variant["icon_color"]
+                try:
+                    icon_chip.update()
+                except Exception:
+                    pass
+            if title_text:
+                title_text.color = variant["title_color"]
+                try:
+                    title_text.update()
+                except Exception:
+                    pass
+            if subtitle_text:
+                subtitle_text.color = variant["subtitle_color"]
+                try:
+                    subtitle_text.update()
+                except Exception:
+                    pass
+            if progress_bar:
+                bar_gradient = variant.get("bar_gradient")
+                if bar_gradient:
+                    progress_bar.gradient = bar_gradient
+                    progress_bar.bgcolor = None
+                else:
+                    progress_bar.gradient = None
+                    progress_bar.bgcolor = variant.get("bar_bg")
+                try:
+                    progress_bar.update()
+                except Exception:
+                    pass
 
     def _refresh_form_panel(self) -> None:
         if not self._form_body_column:
@@ -1407,10 +1669,11 @@ class CopilotApp:
                     preserved_values[name] = value
                 elif value is not None:
                     preserved_values[name] = str(value)
-        tabs_control, controls_map = self._create_form_controls_for_mode(self.mode, preserved_values)
+        sections_control, controls_map = self._create_form_controls_for_mode(self.mode, preserved_values)
         self.form_controls = controls_map
-        self._form_tabs = tabs_control
-        self._form_body_column.content = tabs_control
+        self._form_sections = sections_control
+        if self._form_body_column:
+            self._form_body_column.content = sections_control
         self._set_form_error("")
         self._update_submit_button_state()
         self._update_all_group_summaries()
@@ -1817,7 +2080,8 @@ class CopilotApp:
         if self._content_container:
             self._content_container.padding = content_padding
 
-        for panel in (self._context_panel, self._chat_panel):
+        dock_panels = [self._chat_panel, self._form_panel]
+        for panel in dock_panels:
             if panel:
                 panel.padding = panel_padding
 
@@ -1841,13 +2105,33 @@ class CopilotApp:
             self.chat_list.padding = chat_padding
             self.chat_list.spacing = list_spacing
 
-        if self.mode_card_row:
-            mode_spacing = 12 if layout_key == "compact" else 18
-            self.mode_card_row.spacing = mode_spacing
-            self.mode_card_row.run_spacing = mode_spacing
+        if self._mode_segment_row:
+            mode_spacing = 8 if layout_key == "compact" else 14
+            self._mode_segment_row.spacing = mode_spacing
 
         if self._context_actions:
             self._context_actions.alignment = context_alignment
+
+        if layout_key == "compact":
+            self._mount_context_capsule(self._drawer_context_host)
+            if self._drawer_toggle_button:
+                self._drawer_toggle_button.visible = True
+                try:
+                    self._drawer_toggle_button.update()
+                except Exception:
+                    pass
+            if not self._context_drawer_visible:
+                self._set_context_drawer_visibility(False)
+        else:
+            self._mount_context_capsule(self._runway_context_host)
+            if self._drawer_toggle_button:
+                self._drawer_toggle_button.visible = False
+                try:
+                    self._drawer_toggle_button.update()
+                except Exception:
+                    pass
+            if self._context_drawer_visible:
+                self._set_context_drawer_visibility(False)
 
         available_height = 0.0
         if height_value > 0:
@@ -1877,6 +2161,70 @@ class CopilotApp:
             else:
                 chat_height = preferred_chat_height
             self._chat_panel.height = chat_height
+
+    def _build_hero_aurora_layer(self) -> ft.Container:
+        palette = EXPRESSIVE_PALETTE
+        ribbon_specs = [
+            {
+                "left": -80,
+                "top": 12,
+                "width": 420,
+                "height": 220,
+                "angle": -10,
+                "opacity": 0.55,
+                "colors": [palette["tertiary"], ft.Colors.with_opacity(0.4, palette["secondary"]), ft.Colors.with_opacity(0.1, palette["primary"])],
+                "blur": 95,
+            },
+            {
+                "left": 180,
+                "top": 40,
+                "width": 360,
+                "height": 180,
+                "angle": 12,
+                "opacity": 0.45,
+                "colors": [ft.Colors.with_opacity(0.6, palette["secondary"]), ft.Colors.with_opacity(0.2, palette["primary"])],
+                "blur": 85,
+            },
+            {
+                "left": 60,
+                "top": 140,
+                "width": 520,
+                "height": 200,
+                "angle": -4,
+                "opacity": 0.38,
+                "colors": [ft.Colors.with_opacity(0.55, palette["primary_container"]), ft.Colors.with_opacity(0.18, palette["secondary_container"])],
+                "blur": 75,
+            },
+        ]
+        ribbons: List[ft.Control] = []
+        for spec in ribbon_specs:
+            ribbon = ft.Container(
+                width=spec["width"],
+                height=spec["height"],
+                border_radius=360,
+                gradient=ft.LinearGradient(
+                    begin=ft.alignment.top_left,
+                    end=ft.alignment.bottom_right,
+                    colors=spec["colors"],
+                ),
+                opacity=spec["opacity"],
+                blur=ft.Blur(sigma_x=spec.get("blur", 80), sigma_y=spec.get("blur", 80)),
+            )
+            angle = math.radians(spec.get("angle", 0))
+            ribbon.rotate = ft.transform.Rotate(angle, alignment=ft.alignment.center)
+            ribbons.append(
+                ft.Positioned(
+                    left=spec["left"],
+                    top=spec["top"],
+                    child=ribbon,
+                )
+            )
+        return ft.Container(
+            content=ft.Stack(controls=ribbons, expand=True),
+            border_radius=40,
+            expand=True,
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        )
 
     def _build_hero_particle_layer(self) -> ft.Container:
         palette = EXPRESSIVE_PALETTE
@@ -1909,6 +2257,112 @@ class CopilotApp:
             expand=True,
             padding=ft.Padding(0, 0, 0, 0),
         )
+
+    def _build_hero_context_pills(self) -> Tuple[ft.ResponsiveRow, Dict[str, ft.Text]]:
+        palette = EXPRESSIVE_PALETTE
+        caption_scale = TYPE_SCALE["caption"]
+        body_scale = TYPE_SCALE["body"]
+        pill_specs = [
+            {
+                "key": "mode",
+                "label": "モード",
+                "icon": ft.Icons.AUTO_FIX_HIGH_ROUNDED,
+                "colors": [ft.Colors.with_opacity(0.4, palette["secondary"]), ft.Colors.with_opacity(0.14, palette["surface_high"])],
+            },
+            {
+                "key": "workbook",
+                "label": "ブック",
+                "icon": ft.Icons.INSERT_DRIVE_FILE_ROUNDED,
+                "colors": [ft.Colors.with_opacity(0.38, palette["primary"]), ft.Colors.with_opacity(0.12, palette["surface_high"])],
+            },
+            {
+                "key": "sheet",
+                "label": "シート",
+                "icon": ft.Icons.GRID_VIEW_ROUNDED,
+                "colors": [ft.Colors.with_opacity(0.35, palette["tertiary"]), ft.Colors.with_opacity(0.12, palette["surface_high"])],
+            },
+        ]
+        pill_values: Dict[str, ft.Text] = {}
+        controls: List[ft.Control] = []
+
+        def _default_value(key: str) -> str:
+            if key == "mode":
+                return MODE_LABELS.get(self.mode, self.mode.value)
+            if key == "workbook":
+                return self.current_workbook_name or "未選択"
+            if key == "sheet":
+                return self.current_sheet_name or "未選択"
+            return ""
+
+        for spec in pill_specs:
+            value_text = ft.Text(
+                _default_value(spec["key"]),
+                size=body_scale["size"],
+                weight=ft.FontWeight.W_600,
+                color=palette["inverse_on_surface"],
+                font_family=self._primary_font_family,
+                no_wrap=True,
+            )
+            pill_values[spec["key"]] = value_text
+            label_text = ft.Text(
+                spec["label"],
+                size=caption_scale["size"],
+                color=ft.Colors.with_opacity(0.82, palette["inverse_on_surface"]),
+                font_family=self._hint_font_family,
+            )
+            icon_container = ft.Container(
+                width=28,
+                height=28,
+                alignment=ft.alignment.center,
+                border_radius=14,
+                bgcolor=ft.Colors.with_opacity(0.18, palette["inverse_on_surface"]),
+                content=ft.Icon(spec["icon"], size=16, color=palette["inverse_on_surface"]),
+            )
+            pill = ft.Container(
+                col={"xs": 12, "sm": 4, "md": 4, "lg": 4},
+                padding=ft.Padding(18, 12, 18, 12),
+                border_radius=28,
+                bgcolor=glass_surface(0.48),
+                gradient=ft.LinearGradient(
+                    begin=ft.alignment.top_left,
+                    end=ft.alignment.bottom_right,
+                    colors=spec["colors"],
+                ),
+                border=glass_border(0.26),
+                shadow=floating_shadow("sm"),
+                content=ft.Column(
+                    [
+                        ft.Row([icon_container, label_text], spacing=8, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        value_text,
+                    ],
+                    spacing=6,
+                    tight=True,
+                ),
+            )
+            controls.append(pill)
+
+        row = ft.ResponsiveRow(controls=controls, spacing=12, run_spacing=12)
+        return row, pill_values
+
+    def _update_hero_context_pills(self) -> None:
+        if not self._hero_context_pill_values:
+            return
+        values = {
+            "mode": MODE_LABELS.get(self.mode, self.mode.value),
+            "workbook": self.current_workbook_name or "未選択",
+            "sheet": self.current_sheet_name or "未選択",
+        }
+        for key, control in self._hero_context_pill_values.items():
+            if not control:
+                continue
+            new_value = values.get(key)
+            if new_value is None or control.value == new_value:
+                continue
+            control.value = new_value
+            try:
+                control.update()
+            except Exception:
+                pass
 
     def _build_command_palette_button(self) -> ft.Control:
         palette = EXPRESSIVE_PALETTE
@@ -2303,6 +2757,33 @@ class CopilotApp:
         except Exception:
             pass
 
+    def _mount_context_capsule(self, host: Optional[ft.Container]) -> None:
+        if not self._runway_context_capsule:
+            return
+        if host is self._context_capsule_parent:
+            return
+        if self._context_capsule_parent:
+            self._context_capsule_parent.content = None
+            try:
+                self._context_capsule_parent.update()
+            except Exception:
+                pass
+        self._context_capsule_parent = host
+        if host:
+            host.content = self._runway_context_capsule
+            try:
+                host.update()
+            except Exception:
+                pass
+        for candidate in (self._runway_context_host, self._drawer_context_host):
+            if not candidate:
+                continue
+            candidate.visible = candidate is host
+            try:
+                candidate.update()
+            except Exception:
+                pass
+
     def _toggle_context_drawer(self, e: Optional[ft.ControlEvent] = None):
         self._set_context_drawer_visibility(not self._context_drawer_visible)
 
@@ -2347,8 +2828,9 @@ class CopilotApp:
             self._update_metric_card(metric)
         self._update_hero_title_text(self._compose_hero_title_value())
         self._update_hero_tagline()
+        self._update_hero_context_pills()
 
-    def _build_mode_cards(self) -> ft.ResponsiveRow:
+    def _build_mode_segmented_control(self) -> ft.Row:
         palette = EXPRESSIVE_PALETTE
         options = [
             {
@@ -2367,60 +2849,49 @@ class CopilotApp:
                 "icon": ft.Icons.SPELLCHECK,
             },
         ]
-        self._mode_card_map = {}
-        cards: list[ft.Control] = []
-        for item in options:
-            mode = item["mode"]
-            icon_container = ft.Container(
-                width=28,
-                height=28,
-                bgcolor=ft.Colors.with_opacity(0.16, palette["primary"]),
-                border_radius=14,
-                alignment=ft.alignment.center,
-                content=ft.Icon(item["icon"], size=16, color=palette["on_primary"]),
-            )
-            title_text = ft.Text(
-                item["title"],
-                size=14,
-                weight=ft.FontWeight.BOLD,
-                color=palette["on_surface"],
-                font_family=self._primary_font_family,
-            )
-            card_body = ft.Container(
-                bgcolor=ft.Colors.with_opacity(0.1, palette["surface_variant"]),
-                border_radius=12,
-                padding=ft.Padding(16, 14, 16, 14),
-                border=ft.border.all(1, ft.Colors.with_opacity(0.08, palette["outline_variant"])),
-                content=ft.Column(
+        self._mode_segment_map = {}
+        segments: List[ft.Control] = []
+        for spec in options:
+            mode = spec["mode"]
+            segment = ft.Container(
+                content=ft.Row(
                     [
-                        ft.Row(
-                            [icon_container, title_text],
-                            spacing=12,
-                            alignment=ft.MainAxisAlignment.START,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ft.Icon(spec["icon"], size=16, color=palette["primary"]),
+                        ft.Text(
+                            spec["title"],
+                            size=13,
+                            weight=ft.FontWeight.W_600,
+                            font_family=self._primary_font_family,
+                            color=palette["on_surface"],
                         ),
                     ],
                     spacing=8,
-                    tight=True,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-            )
-            gesture = ft.GestureDetector(
-                content=card_body,
-                on_tap=lambda e, value=mode: self._handle_mode_card_select(value),
+                padding=ft.Padding(18, 10, 18, 10),
+                border_radius=999,
+                bgcolor=glass_surface(0.6),
+                border=ft.border.all(1, ft.Colors.with_opacity(0.18, palette["outline_variant"])),
+                on_click=lambda e, value=mode: self._handle_mode_card_select(value),
                 mouse_cursor=ft.MouseCursor.CLICK,
             )
-            wrapper = ft.Container(content=gesture, col={"xs": 12, "sm": 6, "md": 4, "lg": 4})
-            cards.append(wrapper)
-            self._mode_card_map[mode.value] = card_body
-
-        row = ft.ResponsiveRow(controls=cards, spacing=18, run_spacing=18)
-        self._refresh_mode_cards()
+            segments.append(segment)
+            self._mode_segment_map[mode.value] = segment
+        row = ft.Row(
+            controls=segments,
+            spacing=10,
+            wrap=True,
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        self._mode_segment_row = row
+        self._refresh_mode_segments()
         return row
 
     def _build_mode_selection_control(self) -> ft.Container:
         palette = EXPRESSIVE_PALETTE
-        mode_row = self._build_mode_cards()
-        self.mode_card_row = mode_row
+        mode_row = self._build_mode_segmented_control()
         instruction = ft.Text(
             "実行する処理を選択してください",
             size=13,
@@ -2434,19 +2905,25 @@ class CopilotApp:
             tight=True,
         )
 
-    def _refresh_mode_cards(self):
+    def _refresh_mode_segments(self):
         palette = EXPRESSIVE_PALETTE
-        for mode_value, card in self._mode_card_map.items():
+        for mode_value, segment in self._mode_segment_map.items():
             is_selected = mode_value == self.mode.value
-            card.border = ft.border.all(
+            segment.bgcolor = (
+                ft.Colors.with_opacity(0.28, palette["primary"]) if is_selected else glass_surface(0.6)
+            )
+            segment.border = ft.border.all(
                 2 if is_selected else 1,
-                ft.Colors.with_opacity(0.9, palette["primary"]) if is_selected else ft.Colors.with_opacity(0.1, palette["outline_variant"]),
-            )
-            card.bgcolor = (
-                ft.Colors.with_opacity(0.18, palette["primary"])
+                ft.Colors.with_opacity(0.9, palette["primary"])
                 if is_selected
-                else ft.Colors.with_opacity(0.1, palette["surface_variant"])
+                else ft.Colors.with_opacity(0.18, palette["outline_variant"]),
             )
+            if isinstance(segment.content, ft.Row):
+                for inner in segment.content.controls:
+                    if isinstance(inner, ft.Text):
+                        inner.color = palette["on_primary"] if is_selected else palette["on_surface"]
+                    if isinstance(inner, ft.Icon):
+                        inner.color = palette["on_primary"] if is_selected else palette["primary"]
 
     def _handle_mode_card_select(self, new_mode: CopilotMode):
         if self.app_state not in {AppState.READY, AppState.ERROR}:
@@ -2463,7 +2940,7 @@ class CopilotApp:
         self._pending_form_seed = self._build_seed_form_values(new_mode)
         if self.mode_selector:
             self.mode_selector.value = self.mode.value
-        self._refresh_mode_cards()
+        self._refresh_mode_segments()
         self._refresh_form_panel()
         if self.request_queue:
             self.request_queue.put(RequestMessage(RequestType.UPDATE_CONTEXT, {"mode": self.mode.value}))
@@ -2609,6 +3086,7 @@ class CopilotApp:
                 self.status_label.color = status_palette["base"]
 
         self._toggle_hero_breathing(is_task_in_progress)
+        self._update_process_timeline_state()
         self._update_form_progress_message()
         self._update_hero_overview()
         self._update_ui()

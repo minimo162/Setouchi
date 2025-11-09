@@ -50,6 +50,44 @@ TYPE_SCALE: dict[str, dict[str, object]] = {
     "caption": {"size": 12, "weight": ft.FontWeight.W_400},
 }
 
+EXTENDED_TYPE_SCALE: dict[str, dict[str, object]] = {
+    "display": {"size": 32, "weight": ft.FontWeight.W_600},
+    "hero": TYPE_SCALE["hero"],
+    "title": TYPE_SCALE["title"],
+    "title_sm": {"size": 16, "weight": ft.FontWeight.W_600},
+    "subtitle": TYPE_SCALE["subtitle"],
+    "body": TYPE_SCALE["body"],
+    "body_sm": {"size": 11, "weight": ft.FontWeight.W_500},
+    "caption": TYPE_SCALE["caption"],
+}
+
+DEPTH_TOKENS: dict[str, dict[str, float]] = {
+    "micro": {"y": 2.0, "blur": 8.0, "spread": 0.0, "opacity": 0.06},
+    "sm": {"y": 6.0, "blur": 16.0, "spread": 0.0, "opacity": 0.08},
+    "md": {"y": 14.0, "blur": 28.0, "spread": 0.0, "opacity": 0.10},
+    "lg": {"y": 24.0, "blur": 52.0, "spread": 2.0, "opacity": 0.13},
+    "xl": {"y": 40.0, "blur": 84.0, "spread": 6.0, "opacity": 0.16},
+}
+
+MOTION_TOKENS: dict[str, dict[str, object]] = {
+    "micro": {"duration": 120, "curve": "easeOut"},
+    "short": {"duration": 200, "curve": "easeInOut"},
+    "medium": {"duration": 320, "curve": "easeInOut"},
+    "long": {"duration": 480, "curve": "easeInOut"},
+}
+
+AURORA_NOISE_TOKEN: dict[str, object] = {
+    "opacity": 0.22,
+    "blur": 46,
+    "scale": 1.4,
+}
+
+AURORA_PARTICLE_TOKEN: dict[str, object] = {
+    "count": 14,
+    "min_size": 4,
+    "max_size": 14,
+}
+
 
 def primary_surface_gradient() -> ft.LinearGradient:
     """アプリ全体のヒーローブロック向けグラデーション。"""
@@ -110,6 +148,18 @@ def floating_shadow(level: str = "md") -> ft.BoxShadow:
     )
 
 
+def depth_shadow(level: str = "md") -> ft.BoxShadow:
+    """デプススケールを直接参照するシャドウ。"""
+
+    spec = DEPTH_TOKENS.get(level, DEPTH_TOKENS["md"])
+    return ft.BoxShadow(
+        spread_radius=spec["spread"],
+        blur_radius=spec["blur"],
+        color=ft.Colors.with_opacity(spec["opacity"], EXPRESSIVE_PALETTE["shadow"]),
+        offset=ft.Offset(0, spec["y"]),
+    )
+
+
 def glass_surface(opacity: float = 0.78) -> str:
     """ガラス質感の背景色。"""
 
@@ -124,13 +174,27 @@ def glass_border(alpha: float = 0.32) -> ft.Border:
     return ft.border.all(1, ft.Colors.with_opacity(alpha, EXPRESSIVE_PALETTE["outline"]))
 
 
+def motion_token(name: str = "short") -> ft.animation.Animation:
+    """共通モーションプリセットを Animation に変換。"""
+
+    spec = MOTION_TOKENS.get(name, MOTION_TOKENS["short"])
+    return ft.animation.Animation(spec["duration"], spec["curve"])
+
+
 __all__ = [
     "EXPRESSIVE_PALETTE",
     "TYPE_SCALE",
+    "EXTENDED_TYPE_SCALE",
+    "DEPTH_TOKENS",
+    "MOTION_TOKENS",
+    "AURORA_NOISE_TOKEN",
+    "AURORA_PARTICLE_TOKEN",
     "primary_surface_gradient",
     "elevated_surface_gradient",
     "accent_glow_gradient",
     "floating_shadow",
+    "depth_shadow",
     "glass_surface",
     "glass_border",
+    "motion_token",
 ]
