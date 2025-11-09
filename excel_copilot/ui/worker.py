@@ -314,6 +314,7 @@ class CopilotWorker:
         self._emit_response(ResponseMessage(ResponseType.STATUS, f"{tool_name} を実行しています..."))
 
         excel_actions: Optional[ExcelActions] = None
+        final_message: Optional[str] = None
         try:
             with ExcelManager(self.workbook_name) as manager:
                 excel_actions = ExcelActions(manager, progress_callback=self._handle_progress_update)
@@ -328,7 +329,6 @@ class CopilotWorker:
                 if not self.stop_event.is_set():
                     message = result.strip() if isinstance(result, str) else ""
                     final_message = message or f"{tool_name} が完了しました。"
-                    self._emit_response(ResponseMessage(ResponseType.FINAL_ANSWER, final_message))
         except UserStopRequested:
             pass
         except ExcelConnectionError as exc:
@@ -343,6 +343,8 @@ class CopilotWorker:
                     excel_actions.consume_progress_messages()
                 except Exception:
                     pass
+        if final_message is not None and not self.stop_event.is_set():
+            self._emit_response(ResponseMessage(ResponseType.FINAL_ANSWER, final_message))
 
     def _prepare_tool_arguments(
         self,

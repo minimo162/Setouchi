@@ -224,6 +224,37 @@ def _flatten_field_definitions(definitions: List[Dict[str, Any]]) -> List[Dict[s
     return flat
 
 
+def _split_sheet_reference(range_ref: Optional[str], default_sheet: Optional[str]) -> Tuple[Optional[str], str]:
+    """Split a range like "Sheet1!A2:B5" into (sheet, range) pairs."""
+
+    if not isinstance(range_ref, str):
+        return default_sheet, ""
+
+    cleaned = range_ref.strip()
+    if not cleaned:
+        return default_sheet, ""
+
+    if "!" not in cleaned:
+        return default_sheet, cleaned
+
+    sheet_part, cell_part = cleaned.split("!", 1)
+    sheet_part = sheet_part.strip()
+    if sheet_part.startswith("[") and "]" in sheet_part:
+        sheet_part = sheet_part.split("]", 1)[1]
+    if sheet_part.startswith("'") and sheet_part.endswith("'"):
+        sheet_part = sheet_part[1:-1].replace("''", "'")
+    elif sheet_part.startswith('"') and sheet_part.endswith('"'):
+        sheet_part = sheet_part[1:-1]
+
+    cell_part = cell_part.strip()
+    if cell_part.startswith("'") and cell_part.endswith("'"):
+        cell_part = cell_part[1:-1].replace("''", "'")
+    elif cell_part.startswith('"') and cell_part.endswith('"'):
+        cell_part = cell_part[1:-1]
+
+    return (sheet_part or default_sheet), cell_part
+
+
 def _iter_mode_field_definitions(mode: CopilotMode) -> List[Dict[str, Any]]:
     return _flatten_field_definitions(FORM_FIELD_DEFINITIONS.get(mode, []))
 
@@ -2069,10 +2100,18 @@ class CopilotApp:
     def _read_range_matrix(self, workbook: Optional[str], sheet: Optional[str], cell_range: Optional[str]) -> List[List[Any]]:
         if not workbook or not cell_range:
             return []
+        resolved_sheet = sheet
+        resolved_range = cell_range.strip()
+        if "!" in resolved_range:
+            override_sheet, normalized = _split_sheet_reference(resolved_range, sheet)
+            resolved_sheet = override_sheet
+            resolved_range = normalized
+        if not resolved_range:
+            return []
         try:
             with ExcelManager(workbook) as manager:
                 actions = ExcelActions(manager)
-                raw_values = actions.read_range(cell_range, sheet)
+                raw_values = actions.read_range(resolved_range, resolved_sheet)
         except Exception as exc:
             print(f"Failed to read range '{cell_range}': {exc}")
             return []
