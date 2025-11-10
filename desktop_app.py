@@ -59,18 +59,19 @@ from excel_copilot.ui.theme import (
 )
 from excel_copilot.ui.worker import CopilotWorker
 
-HAS_MATERIAL_STATE = hasattr(ft, "MaterialState")
+_STATE_ENUM = getattr(ft, "MaterialState", getattr(ft, "ControlState", None))
 MOUSE_CURSOR_CLICK = getattr(getattr(ft, "MouseCursor", None), "CLICK", None)
+HAS_POSITIONED = hasattr(ft, "Positioned")
 
 
-def _material_state_value(default_value: Any, hovered_value: Optional[Any] = None) -> Any:
+def _stateful_style_value(default_value: Any, hovered_value: Optional[Any] = None) -> Any:
     """Return state-aware style values when supported by the current Flet build."""
-    if HAS_MATERIAL_STATE:
-        values = {ft.MaterialState.DEFAULT: default_value}
-        if hovered_value is not None:
-            values[ft.MaterialState.HOVERED] = hovered_value
-        return values
-    return default_value
+    if _STATE_ENUM is None:
+        return default_value
+    values = {_STATE_ENUM.DEFAULT: default_value}
+    if hovered_value is not None and hasattr(_STATE_ENUM, "HOVERED"):
+        values[_STATE_ENUM.HOVERED] = hovered_value
+    return values
 
 
 def _set_mouse_cursor(control: ft.Control, mouse_cursor: Any) -> None:
@@ -82,6 +83,27 @@ def _set_mouse_cursor(control: ft.Control, mouse_cursor: Any) -> None:
             control.mouse_cursor = mouse_cursor
         except Exception:
             pass
+
+
+def _position_control(
+    control: ft.Control,
+    left: Optional[float] = None,
+    top: Optional[float] = None,
+    right: Optional[float] = None,
+    bottom: Optional[float] = None,
+) -> ft.Control:
+    """Return a positioned wrapper when available, else assign coordinates directly."""
+    if HAS_POSITIONED:
+        return ft.Positioned(left=left, top=top, right=right, bottom=bottom, child=control)
+    if left is not None:
+        control.left = left
+    if top is not None:
+        control.top = top
+    if right is not None:
+        control.right = right
+    if bottom is not None:
+        control.bottom = bottom
+    return control
 
 def _ensure_console_logging() -> None:
     """Ensure root logger always streams to console so exceptions are visible."""
@@ -389,7 +411,7 @@ class CopilotApp:
         self._command_dock_container: Optional[ft.Container] = None
         self._timeline_shell: Optional[ft.Container] = None
         self._body_stack: Optional[ft.Stack] = None
-        self._context_drawer: Optional[ft.AnimatedContainer] = None
+        self._context_drawer: Optional[ft.Container] = None
         self._drawer_scrim: Optional[ft.Container] = None
         self._drawer_scrim_gesture: Optional[ft.GestureDetector] = None
         self._context_drawer_visible = False
@@ -415,7 +437,7 @@ class CopilotApp:
         ]
         self._hero_title_phrase_index = 0
         self._hero_title_value: str = ""
-        self._hero_tagline_richtext: Optional[ft.RichText] = None
+        self._hero_tagline_richtext: Optional[ft.Text] = None
         self._hero_tagline_dynamic_span: Optional[ft.TextSpan] = None
         self._hero_parallax_offset = 0.0
         self._hero_breathing_timer: Optional[threading.Timer] = None
@@ -649,7 +671,7 @@ class CopilotApp:
 
         button_shape = ft.RoundedRectangleBorder(radius=22)
         button_overlay = ft.Colors.with_opacity(0.08, palette["primary"])
-        button_bg = _material_state_value(
+        button_bg = _stateful_style_value(
             ft.Colors.with_opacity(0.14, palette["primary"]),
             ft.Colors.with_opacity(0.22, palette["primary"]),
         )
@@ -949,7 +971,7 @@ class CopilotApp:
         drawer_button_style = ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=26),
             padding=ft.Padding(24, 12, 24, 12),
-            bgcolor=_material_state_value(
+            bgcolor=_stateful_style_value(
                 ft.Colors.with_opacity(0.22, palette["inverse_on_surface"]),
                 ft.Colors.with_opacity(0.32, palette["inverse_on_surface"]),
             ),
@@ -1016,7 +1038,7 @@ class CopilotApp:
                 font_family=self._hint_font_family,
             ),
         )
-        hero_tagline = ft.RichText(
+        hero_tagline = ft.Text(
             spans=[tagline_intro, tagline_accent, ft.TextSpan(" "), tagline_dynamic],
             width=620,
         )
@@ -1096,7 +1118,7 @@ class CopilotApp:
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
         hero_banner.animate_scale = motion_token("long")
-        hero_banner.scale = ft.transform.Scale(1.0, 1.0, 1.0)
+        hero_banner.scale = ft.Scale(1.0, 1.0, 1.0)
         self._hero_banner_container = hero_banner
 
         self._layout = ft.ResponsiveRow(
@@ -1176,7 +1198,7 @@ class CopilotApp:
             shadow=depth_shadow("lg"),
             content=self._drawer_context_host,
         )
-        self._context_drawer = ft.AnimatedContainer(
+        self._context_drawer = ft.Container(
             content=drawer_panel,
             width=420,
             alignment=ft.alignment.center_right,
@@ -1232,7 +1254,7 @@ class CopilotApp:
         submit_style = ft.ButtonStyle(
             shape=pill_shape,
             padding=ft.Padding(28, 12, 28, 12),
-            bgcolor=_material_state_value(
+            bgcolor=_stateful_style_value(
                 palette["primary"],
                 ft.Colors.with_opacity(0.9, palette["primary"]),
             ),
@@ -2422,12 +2444,12 @@ class CopilotApp:
                 blur=ft.Blur(sigma_x=spec.get("blur", 80), sigma_y=spec.get("blur", 80)),
             )
             angle = math.radians(spec.get("angle", 0))
-            ribbon.rotate = ft.transform.Rotate(angle, alignment=ft.alignment.center)
+            ribbon.rotate = ft.Rotate(angle, alignment=ft.alignment.center)
             ribbons.append(
-                ft.Positioned(
+                _position_control(
+                    ribbon,
                     left=spec["left"],
                     top=spec["top"],
-                    child=ribbon,
                 )
             )
         return ft.Container(
@@ -2480,10 +2502,10 @@ class CopilotApp:
                 bgcolor=ft.Colors.with_opacity(opacity, hue),
             )
             particles.append(
-                ft.Positioned(
+                _position_control(
+                    ft.Stack([glow, dot]),
                     left=rand.uniform(-40, width),
                     top=rand.uniform(0, height),
-                    child=ft.Stack([glow, dot]),
                 )
             )
         return ft.Container(
@@ -2608,7 +2630,7 @@ class CopilotApp:
             tooltip="⌘K / Ctrl+K",
             style=ft.ButtonStyle(
                 padding=ft.Padding(22, 12, 22, 12),
-                bgcolor=_material_state_value(
+                bgcolor=_stateful_style_value(
                     ft.Colors.with_opacity(0.16, palette["inverse_on_surface"]),
                     ft.Colors.with_opacity(0.28, palette["inverse_on_surface"]),
                 ),
@@ -2801,7 +2823,7 @@ class CopilotApp:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             visible=bool(metric.get("delta_text")),
         )
-        card = ft.AnimatedContainer(
+        card = ft.Container(
             content=ft.Column(
                 [
                     ft.Row(
@@ -2838,7 +2860,7 @@ class CopilotApp:
             shadow=floating_shadow("md"),
             on_hover=lambda e, key=metric_id: self._handle_hero_card_hover(key, e),
         )
-        card.scale = ft.transform.Scale(1.0, 1.0, 1.0)
+        card.scale = ft.Scale(1.0, 1.0, 1.0)
         self._hero_stat_cards[metric_id] = {
             "container": card,
             "value_switcher": value_switcher,
@@ -2857,8 +2879,8 @@ class CopilotApp:
         if not container:
             return
         is_hovered = str(getattr(e, "data", "")).lower() == "true"
-        container.animate_scale = ft.animation.Animation(220, "easeOut")
-        container.scale = ft.transform.Scale(1.02 if is_hovered else 1.0, 1.02 if is_hovered else 1.0, 1.0)
+        container.animate_scale = ft.Animation(220, "easeOut")
+        container.scale = ft.Scale(1.02 if is_hovered else 1.0, 1.02 if is_hovered else 1.0, 1.0)
         self._safe_update_control(container)
 
     def _update_metric_card(self, metric: Dict[str, Any]):
@@ -2970,7 +2992,7 @@ class CopilotApp:
         self._hero_breathing_active = False
         self._stop_hero_breathing_timer()
         if self._hero_banner_container:
-            self._hero_banner_container.scale = ft.transform.Scale(1.0, 1.0, 1.0)
+            self._hero_banner_container.scale = ft.Scale(1.0, 1.0, 1.0)
             self._safe_update_control(self._hero_banner_container)
 
     def _schedule_hero_breath(self):
@@ -2979,8 +3001,8 @@ class CopilotApp:
         self._hero_breathing_toggle = not self._hero_breathing_toggle
         target_scale = 1.015 if self._hero_breathing_toggle else 0.99
         if self._hero_banner_container:
-            self._hero_banner_container.animate_scale = ft.animation.Animation(600, "easeInOut")
-            self._hero_banner_container.scale = ft.transform.Scale(target_scale, target_scale, 1.0)
+            self._hero_banner_container.animate_scale = ft.Animation(600, "easeInOut")
+            self._hero_banner_container.scale = ft.Scale(target_scale, target_scale, 1.0)
             self._safe_update_control(self._hero_banner_container)
         self._stop_hero_breathing_timer()
         self._hero_breathing_timer = threading.Timer(0.6, self._schedule_hero_breath)

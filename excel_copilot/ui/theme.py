@@ -210,11 +210,11 @@ def glass_border(alpha: float = 0.32) -> ft.Border:
     return ft.border.all(1, ft.Colors.with_opacity(alpha, EXPRESSIVE_PALETTE["outline"]))
 
 
-def motion_token(name: str = "short") -> ft.animation.Animation:
+def motion_token(name: str = "short") -> ft.Animation:
     """共通モーションプリセットを Animation に変換。"""
 
     spec = MOTION_TOKENS.get(name, MOTION_TOKENS["short"])
-    return ft.animation.Animation(spec["duration"], spec["curve"])
+    return ft.Animation(spec["duration"], spec["curve"])
 
 
 __all__ = [
