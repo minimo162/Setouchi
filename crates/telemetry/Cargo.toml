@@ -1,0 +1,13 @@
+[package]
+name = "setouchi-telemetry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+directories = "5"
+anyhow = { workspace = true }

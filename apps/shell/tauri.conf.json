@@ -1,0 +1,22 @@
+{
+  "productName": "Setouchi Copilot",
+  "mainBinaryName": "setouchi-shell",
+  "version": "0.1.0",
+  "identifier": "com.setouchi.copilot",
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Setouchi Copilot",
+        "width": 1280,
+        "height": 800,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi"],
+    "icon": ["icons/icon.png"]
+  }
+}

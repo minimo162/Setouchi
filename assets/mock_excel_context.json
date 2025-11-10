@@ -1,0 +1,14 @@
+{
+  "active_workbook": "Project_Runway.xlsx",
+  "active_sheet": "Translations",
+  "workbooks": [
+    {
+      "name": "Project_Runway.xlsx",
+      "sheets": ["Translations", "Reviews", "Glossary"]
+    },
+    {
+      "name": "Galaxy_Terms.xlsx",
+      "sheets": ["JP", "EN", "QA"]
+    }
+  ]
+}
