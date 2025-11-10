@@ -59,6 +59,18 @@ from excel_copilot.ui.theme import (
 )
 from excel_copilot.ui.worker import CopilotWorker
 
+HAS_MATERIAL_STATE = hasattr(ft, "MaterialState")
+
+
+def _material_state_value(default_value: Any, hovered_value: Optional[Any] = None) -> Any:
+    """Return state-aware style values when supported by the current Flet build."""
+    if HAS_MATERIAL_STATE:
+        values = {ft.MaterialState.DEFAULT: default_value}
+        if hovered_value is not None:
+            values[ft.MaterialState.HOVERED] = hovered_value
+        return values
+    return default_value
+
 def _ensure_console_logging() -> None:
     """Ensure root logger always streams to console so exceptions are visible."""
     root_logger = logging.getLogger()
@@ -625,10 +637,10 @@ class CopilotApp:
 
         button_shape = ft.RoundedRectangleBorder(radius=22)
         button_overlay = ft.Colors.with_opacity(0.08, palette["primary"])
-        button_bg = {
-            ft.MaterialState.DEFAULT: ft.Colors.with_opacity(0.14, palette["primary"]),
-            ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.22, palette["primary"]),
-        }
+        button_bg = _material_state_value(
+            ft.Colors.with_opacity(0.14, palette["primary"]),
+            ft.Colors.with_opacity(0.22, palette["primary"]),
+        )
 
         self.new_chat_button = ft.FilledTonalButton(
             text="新しいチャット",
@@ -925,10 +937,10 @@ class CopilotApp:
         drawer_button_style = ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=26),
             padding=ft.Padding(24, 12, 24, 12),
-            bgcolor={
-                ft.MaterialState.DEFAULT: ft.Colors.with_opacity(0.22, palette["inverse_on_surface"]),
-                ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.32, palette["inverse_on_surface"]),
-            },
+            bgcolor=_material_state_value(
+                ft.Colors.with_opacity(0.22, palette["inverse_on_surface"]),
+                ft.Colors.with_opacity(0.32, palette["inverse_on_surface"]),
+            ),
             color=palette["inverse_on_surface"],
             overlay_color=ft.Colors.with_opacity(0.12, palette["inverse_on_surface"]),
         )
@@ -1208,10 +1220,10 @@ class CopilotApp:
         submit_style = ft.ButtonStyle(
             shape=pill_shape,
             padding=ft.Padding(28, 12, 28, 12),
-            bgcolor={
-                ft.MaterialState.DEFAULT: palette["primary"],
-                ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.9, palette["primary"]),
-            },
+            bgcolor=_material_state_value(
+                palette["primary"],
+                ft.Colors.with_opacity(0.9, palette["primary"]),
+            ),
             color=palette["on_primary"],
             overlay_color=ft.Colors.with_opacity(0.08, palette["on_primary"]),
         )
@@ -2584,10 +2596,10 @@ class CopilotApp:
             tooltip="⌘K / Ctrl+K",
             style=ft.ButtonStyle(
                 padding=ft.Padding(22, 12, 22, 12),
-                bgcolor={
-                    ft.MaterialState.DEFAULT: ft.Colors.with_opacity(0.16, palette["inverse_on_surface"]),
-                    ft.MaterialState.HOVERED: ft.Colors.with_opacity(0.28, palette["inverse_on_surface"]),
-                },
+                bgcolor=_material_state_value(
+                    ft.Colors.with_opacity(0.16, palette["inverse_on_surface"]),
+                    ft.Colors.with_opacity(0.28, palette["inverse_on_surface"]),
+                ),
                 color=palette["inverse_on_surface"],
                 overlay_color=ft.Colors.with_opacity(0.12, palette["inverse_on_surface"]),
             ),
