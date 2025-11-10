@@ -60,6 +60,7 @@ from excel_copilot.ui.theme import (
 from excel_copilot.ui.worker import CopilotWorker
 
 HAS_MATERIAL_STATE = hasattr(ft, "MaterialState")
+MOUSE_CURSOR_CLICK = getattr(getattr(ft, "MouseCursor", None), "CLICK", None)
 
 
 def _material_state_value(default_value: Any, hovered_value: Optional[Any] = None) -> Any:
@@ -70,6 +71,17 @@ def _material_state_value(default_value: Any, hovered_value: Optional[Any] = Non
             values[ft.MaterialState.HOVERED] = hovered_value
         return values
     return default_value
+
+
+def _set_mouse_cursor(control: ft.Control, mouse_cursor: Any) -> None:
+    """Best-effort mouse cursor assignment for Flet versions that support it."""
+    if mouse_cursor is None:
+        return
+    if hasattr(control, "mouse_cursor"):
+        try:
+            control.mouse_cursor = mouse_cursor
+        except Exception:
+            pass
 
 def _ensure_console_logging() -> None:
     """Ensure root logger always streams to console so exceptions are visible."""
@@ -3106,8 +3118,8 @@ class CopilotApp:
                 bgcolor=glass_surface(0.6),
                 border=ft.border.all(1, ft.Colors.with_opacity(0.18, palette["outline_variant"])),
                 on_click=lambda e, value=mode: self._handle_mode_card_select(value),
-                mouse_cursor=ft.MouseCursor.CLICK,
             )
+            _set_mouse_cursor(segment, MOUSE_CURSOR_CLICK)
             segments.append(segment)
             self._mode_segment_map[mode.value] = segment
         row = ft.Row(
