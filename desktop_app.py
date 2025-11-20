@@ -4998,9 +4998,168 @@ def main(page: ft.Page):
     page.copilot_app = app
     app.mount()
 
+def _prompt_cli_value(label: str, required: bool = False, default: Optional[str] = None, field_type: str = "str"):
+    """簡易CLIプロンプト（必須・デフォルト・型変換対応）"""
+    while True:
+        suffix = f" [既定: {default}]" if default else ""
+        raw = input(f"{label}{suffix}: ").strip()
+        if not raw and default:
+            raw = str(default)
+        if not raw:
+            if required:
+                print("必須項目です。もう一度入力してください。")
+                continue
+            return None
+        try:
+            if field_type == "int":
+                return int(raw)
+            if field_type == "float":
+                value = float(raw)
+                if math.isnan(value) or math.isinf(value):
+                    raise ValueError("非数値")
+                return value
+            if field_type == "list":
+                return [item.strip() for item in re.split(r"[,\n]+", raw) if item.strip()]
+            return raw
+        except Exception as exc:  # pragma: no cover - CLI入力のため簡易ハンドリング
+            print(f"入力を解釈できませんでした: {exc}")
+
+def _collect_cli_payload(mode: CopilotMode, workbook_name: Optional[str], sheet_name: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """GUIを介さずにターミナル入力からペイロードを組み立てる"""
+    arguments: Dict[str, Any] = {}
+    definitions = _iter_mode_field_definitions(mode)
+    for field in definitions:
+        argument_key = field["argument"]
+        label = field.get("label", argument_key)
+        required = field.get("required", False)
+        default = field.get("default")
+        field_type = field.get("type", "str")
+        value = _prompt_cli_value(label, required=required, default=default, field_type=field_type)
+        if value is None:
+            continue
+        arguments[argument_key] = value
+
+    if mode in {CopilotMode.TRANSLATION, CopilotMode.TRANSLATION_WITH_REFERENCES}:
+        arguments.setdefault("target_language", "English")
+
+    if mode is CopilotMode.TRANSLATION_WITH_REFERENCES:
+        has_reference = any(arguments.get(key) for key in ("source_reference_urls", "target_reference_urls"))
+        if not has_reference:
+            return None, "参照URLを1件以上入力してください。"
+
+    if mode is CopilotMode.REVIEW:
+        combined_range = arguments.pop("review_output_range", None)
+        try:
+            derived_ranges = CopilotApp._derive_review_output_ranges(CopilotApp.__new__(CopilotApp), combined_range or "")
+        except ValueError as exc:
+            return None, str(exc)
+        arguments.update(derived_ranges)
+
+    tool_name = FORM_TOOL_NAMES.get(mode)
+    if not tool_name:
+        return None, "このモードに対応するツールが見つかりません。"
+
+    payload: Dict[str, Any] = {
+        "mode": mode.value,
+        "tool_name": tool_name,
+        "arguments": arguments,
+    }
+    if workbook_name:
+        payload["workbook_name"] = workbook_name
+    if sheet_name:
+        payload["sheet_name"] = sheet_name
+    return payload, None
+
+def _run_cli(args) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    mode_map = {
+        "translation": CopilotMode.TRANSLATION,
+        "with_references": CopilotMode.TRANSLATION_WITH_REFERENCES,
+        "translation_with_references": CopilotMode.TRANSLATION_WITH_REFERENCES,
+        "review": CopilotMode.REVIEW,
+    }
+    mode_value = args.mode or ""
+    if not mode_value:
+        print("モードを選択してください: [1] translation, [2] translation_with_references, [3] review")
+        choice = input("番号を入力 (既定: 2): ").strip() or "2"
+        mode_value = {"1": "translation", "2": "translation_with_references", "3": "review"}.get(choice, "translation_with_references")
+    mode = mode_map.get(mode_value.lower())
+    if not mode:
+        print(f"不正なモード指定です: {mode_value}")
+        return
+
+    workbook_name = args.workbook
+    sheet_name = args.sheet
+    if workbook_name is None:
+        workbook_name = input("対象のExcelブック名（空欄ならアクティブブック）: ").strip() or None
+    if sheet_name is None:
+        sheet_name = input("対象シート名（空欄ならアクティブシート）: ").strip() or None
+
+    payload, error = _collect_cli_payload(mode, workbook_name, sheet_name)
+    if error:
+        print(f"入力エラー: {error}")
+        return
+    assert payload is not None
+
+    print("ワーカーを起動します。ブラウザ自動化とExcel接続を開始します...")
+    request_q: "queue.Queue[RequestMessage]" = queue.Queue()
+    response_q: "queue.Queue[ResponseMessage]" = queue.Queue()
+    worker = CopilotWorker(request_q, response_q, sheet_name=sheet_name, workbook_name=workbook_name)
+    worker.mode = mode
+
+    worker_thread = threading.Thread(target=worker.run, daemon=True)
+    worker_thread.start()
+
+    def _print_response(msg: ResponseMessage) -> None:
+        prefix = msg.type.value.upper()
+        content = msg.content.strip()
+        if content:
+            print(f"[{prefix}] {content}")
+        else:
+            print(f"[{prefix}]")
+
+    # 初期化完了を待機
+    while True:
+        resp: ResponseMessage = response_q.get()
+        _print_response(resp)
+        if resp.type in {ResponseType.ERROR, ResponseType.INITIALIZATION_COMPLETE}:
+            break
+    if resp.type is ResponseType.ERROR:
+        request_q.put(RequestMessage(RequestType.QUIT))
+        worker_thread.join(timeout=5)
+        return
+
+    # モード・ブック・シートの更新を送信
+    request_q.put(RequestMessage(RequestType.UPDATE_CONTEXT, payload={
+        "mode": mode.value,
+        "workbook_name": workbook_name,
+        "sheet_name": sheet_name,
+    }))
+    request_q.put(RequestMessage(RequestType.USER_INPUT, payload))
+
+    try:
+        while True:
+            resp = response_q.get()
+            _print_response(resp)
+            if resp.type in {ResponseType.FINAL_ANSWER, ResponseType.ERROR}:
+                continue
+            if resp.type is ResponseType.END_OF_TASK:
+                break
+    except KeyboardInterrupt:
+        print("停止要求を受信しました。タスクを中断します...")
+        request_q.put(RequestMessage(RequestType.STOP))
+    finally:
+        request_q.put(RequestMessage(RequestType.QUIT))
+        worker_thread.join(timeout=5)
+
 def _parse_cli_args():
     parser = argparse.ArgumentParser(
-        description="Launch the Excel Copilot Flet application.")
+        description="Excel Copilot アプリケーション")
+    parser.add_argument("--flet-ui", action="store_true", help="従来のFlet GUIを起動する場合に指定。省略時はCLIモード。")
+    parser.add_argument("--mode", choices=["translation", "translation_with_references", "with_references", "review"],
+                        help="実行モード (translation / translation_with_references / review)")
+    parser.add_argument("--workbook", help="対象のExcelブック名。未指定時はアクティブブック。")
+    parser.add_argument("--sheet", help="対象のシート名。未指定時はアクティブシート。")
     parser.add_argument("--host", help="Host interface to bind the Flet web server.")
     parser.add_argument("--port", type=int, help="Port to bind the Flet web server.")
     parser.add_argument("--no-browser", action="store_true",
@@ -5011,6 +5170,9 @@ def _parse_cli_args():
 
 if __name__ == "__main__":
     args = _parse_cli_args()
+    if not args.flet_ui:
+        _run_cli(args)
+        sys.exit(0)
     app_kwargs = dict(target=main)
     app_kwargs["assets_dir"] = str(ASSETS_DIR)
     if args.host:

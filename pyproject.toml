@@ -1,0 +1,24 @@
+[project]
+name = "setouchi"
+version = "0.1.0"
+description = "Excel Copilot translation helper"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "docstring-parser",
+    "flet",
+    "playwright",
+    "pyperclip",
+    "streamlit",
+    "xlwings",
+]
+
+[tool.uv]
+python-preference = "managed"
+
+[tool.hatch.build.targets.wheel]
+packages = ["excel_copilot"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
