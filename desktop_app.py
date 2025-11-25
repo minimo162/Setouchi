@@ -437,7 +437,7 @@ class CopilotApp:
         ]
         self._hero_title_phrase_index = 0
         self._hero_title_value: str = ""
-        self._hero_tagline_richtext: Optional[ft.Text] = None
+        self._hero_tagline_richtext: Optional[ft.RichText] = None
         self._hero_tagline_dynamic_span: Optional[ft.TextSpan] = None
         self._hero_parallax_offset = 0.0
         self._hero_breathing_timer: Optional[threading.Timer] = None
@@ -1038,7 +1038,7 @@ class CopilotApp:
                 font_family=self._hint_font_family,
             ),
         )
-        hero_tagline = ft.Text(
+        hero_tagline = ft.RichText(
             spans=[tagline_intro, tagline_accent, ft.TextSpan(" "), tagline_dynamic],
             width=620,
         )
