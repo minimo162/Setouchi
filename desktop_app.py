@@ -1013,37 +1013,17 @@ class CopilotApp:
         )
         self._hero_title_value = primary_title
 
-        tagline_intro = ft.TextSpan(
-            "セルから銀河まで翻訳の軌道をつなぐ、",
-            style=ft.TextStyle(
-                size=body_scale["size"],
-                color=ft.Colors.with_opacity(0.88, palette["inverse_on_surface"]),
-                font_family=self._hint_font_family,
-            ),
-        )
-        tagline_accent = ft.TextSpan(
-            "Setouchi Runway",
-            style=ft.TextStyle(
-                size=body_scale["size"],
-                weight=ft.FontWeight.W_600,
-                color=palette["inverse_on_surface"],
-                font_family=self._primary_font_family,
-            ),
-        )
-        tagline_dynamic = ft.TextSpan(
-            self._resolve_mode_tagline(),
-            style=ft.TextStyle(
-                size=body_scale["size"],
-                color=ft.Colors.with_opacity(0.88, palette["inverse_on_surface"]),
-                font_family=self._hint_font_family,
-            ),
-        )
+        # Build tagline as simple text (spans not reliable across Flet versions)
+        tagline_text = f"セルから銀河まで翻訳の軌道をつなぐ、Setouchi Runway {self._resolve_mode_tagline()}"
         hero_tagline = ft.Text(
-            spans=[tagline_intro, tagline_accent, ft.TextSpan(" "), tagline_dynamic],
+            value=tagline_text,
+            size=body_scale["size"],
+            color=ft.Colors.with_opacity(0.88, palette["inverse_on_surface"]),
+            font_family=self._hint_font_family,
             width=620,
         )
         self._hero_tagline_richtext = hero_tagline
-        self._hero_tagline_dynamic_span = tagline_dynamic
+        self._hero_tagline_dynamic_span = None  # No longer using TextSpan
 
         hero_stat_row = ft.ResponsiveRow(hero_stat_controls, spacing=12, run_spacing=12)
 
@@ -2942,12 +2922,13 @@ class CopilotApp:
         self._safe_update_control(self._hero_title_switcher)
 
     def _update_hero_tagline(self) -> None:
-        if not self._hero_tagline_dynamic_span or not self._hero_tagline_richtext:
+        if not self._hero_tagline_richtext:
             return
-        new_text = self._resolve_mode_tagline()
-        if self._hero_tagline_dynamic_span.text == new_text:
+        new_mode_text = self._resolve_mode_tagline()
+        new_tagline = f"セルから銀河まで翻訳の軌道をつなぐ、Setouchi Runway {new_mode_text}"
+        if self._hero_tagline_richtext.value == new_tagline:
             return
-        self._hero_tagline_dynamic_span.text = new_text
+        self._hero_tagline_richtext.value = new_tagline
         self._safe_update_control(self._hero_tagline_richtext)
 
     def _handle_page_scroll(self, e: Optional[ft.ControlEvent]):
