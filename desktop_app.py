@@ -1207,6 +1207,8 @@ class CopilotApp:
         current_height = getattr(self.page, "height", None) or getattr(self.page.window, "height", None)
         self._apply_responsive_layout(current_width, current_height)
 
+        # DEBUG: Test with simple text first
+        self.page.add(ft.Text("DEBUG: If you see this, page.add works!", size=30, color="red"))
         self.page.add(self._body_stack)
 
     def _build_form_panel(self) -> ft.Container:
