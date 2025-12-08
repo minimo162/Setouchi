@@ -1,6 +1,9 @@
 ﻿# desktop_app.py
 
+from __future__ import annotations
+
 import argparse
+import importlib.util
 import json
 import logging
 import math
@@ -16,12 +19,38 @@ from datetime import datetime
 from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+import types
 
 if os.environ.get("PYTHONUNBUFFERED") != "1":
     os.environ["PYTHONUNBUFFERED"] = "1"
     os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
 
-import flet as ft
+
+def _load_flet_module():
+    if importlib.util.find_spec("flet") is not None:
+        import flet as ft  # type: ignore[import-not-found]
+
+        return ft
+
+    class _FletStub:
+        MaterialState = None
+        ControlState = None
+        MouseCursor = types.SimpleNamespace(CLICK=None)
+        Positioned = None
+        Control = type("Control", (), {})
+        ControlEvent = type("ControlEvent", (), {"control": None})
+        TapEvent = type("TapEvent", (), {"control": None})
+
+    return _FletStub()
+
+
+ft = _load_flet_module()
+
+
+def _load_excel_manager():
+    from excel_copilot.core.excel_manager import ExcelManager, ExcelConnectionError
+
+    return ExcelManager, ExcelConnectionError
 
 from excel_copilot.agent.prompts import CopilotMode
 from excel_copilot.config import (
@@ -31,9 +60,6 @@ from excel_copilot.config import (
     COPILOT_PAGE_GOTO_TIMEOUT_MS,
     COPILOT_SLOW_MO_MS,
 )
-from excel_copilot.core.excel_manager import ExcelManager, ExcelConnectionError
-from excel_copilot.tools.actions import ExcelActions
-from excel_copilot.ui.chat import ChatMessage
 from excel_copilot.ui.messages import (
     AppState,
     RequestMessage,
@@ -57,7 +83,6 @@ from excel_copilot.ui.theme import (
     primary_surface_gradient,
     prism_card_gradient,
 )
-from excel_copilot.ui.worker import CopilotWorker
 
 _STATE_ENUM = getattr(ft, "MaterialState", getattr(ft, "ControlState", None))
 MOUSE_CURSOR_CLICK = getattr(getattr(ft, "MouseCursor", None), "CLICK", None)
@@ -558,6 +583,8 @@ class CopilotApp:
             "Starting Copilot worker thread (timeout %.1fs)...",
             self._worker_init_timeout_seconds,
         )
+        from excel_copilot.ui.worker import CopilotWorker
+
         self.worker = CopilotWorker(
             self.request_queue,
             self.response_queue,
@@ -634,6 +661,7 @@ class CopilotApp:
             print(f"繧｢繝励Μ繧ｦ繧｣繝ｳ繝峨え縺ｮ蜑埼擇陦ｨ遉ｺ縺ｫ螟ｱ謨励＠縺ｾ縺励◆: {focus_err}")
 
     def _focus_excel_window(self):
+        ExcelManager, _ = _load_excel_manager()
         try:
             with ExcelManager(self.current_workbook_name) as manager:
                 manager.focus_application_window()
@@ -3421,6 +3449,8 @@ class CopilotApp:
             self._update_chat_empty_state()
             return
 
+        from excel_copilot.ui.chat import ChatMessage
+
         msg = ChatMessage(msg_type, msg_content, metadata=metadata_payload)
         self.chat_list.controls.append(msg)
         self._update_ui()
@@ -3468,6 +3498,8 @@ class CopilotApp:
         return [self._normalize_display_text(item) for item in flattened]
 
     def _read_range_matrix(self, workbook: Optional[str], sheet: Optional[str], cell_range: Optional[str]) -> List[List[Any]]:
+        ExcelManager, _ = _load_excel_manager()
+        from excel_copilot.tools.actions import ExcelActions
         if not workbook or not cell_range:
             return []
         resolved_sheet = sheet
@@ -3688,6 +3720,8 @@ class CopilotApp:
             entries = list(self.chat_history)
         for entry in entries:
             metadata = entry.get("metadata", {})
+            from excel_copilot.ui.chat import ChatMessage
+
             chat_msg = ChatMessage(entry["type"], entry["content"], metadata=metadata, animate=False)
             chat_msg.opacity = 1
             chat_msg.offset = ft.Offset(0, 0)
@@ -4010,6 +4044,7 @@ class CopilotApp:
         desired_workbook: Optional[str] = None,
         auto_triggered: bool = False,
     ) -> Optional[str]:
+        ExcelManager, ExcelConnectionError = _load_excel_manager()
         if not self.sheet_selector or not self.workbook_selector or not self.ui_loop_running:
             return None
 
@@ -4362,6 +4397,7 @@ class CopilotApp:
         self._refresh_excel_context_before_dropdown()
 
     def _on_sheet_change(self, e: ft.ControlEvent):
+        ExcelManager, _ = _load_excel_manager()
         if self.sheet_selection_updating:
             return
         selected_sheet = e.control.value if e and e.control else None

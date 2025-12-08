@@ -1,24 +1,54 @@
 ﻿# excel_copilot/core/browser_copilot_manager.py
 
-from playwright.sync_api import (
-    sync_playwright,
-    Page,
-    BrowserContext,
-    Playwright,
-    TimeoutError as PlaywrightTimeoutError,
-    Locator,
-    ElementHandle,
-)
+import importlib.util
 import json
 import logging
 import time
-import pyperclip
 import sys
 import re
 import os
 from pathlib import Path
 from typing import Optional, Callable, List, Tuple, Union, Dict, Any
 from threading import Event
+
+def _is_module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except ModuleNotFoundError:
+        return False
+
+
+_playwright_spec = _is_module_available("playwright.sync_api")
+if _playwright_spec:
+    from playwright.sync_api import (
+        sync_playwright,
+        Page,
+        BrowserContext,
+        Playwright,
+        TimeoutError as PlaywrightTimeoutError,
+        Locator,
+        ElementHandle,
+    )
+else:  # pragma: no cover - fallback for environments without Playwright
+    sync_playwright = None  # type: ignore[assignment]
+    Page = BrowserContext = Playwright = Locator = ElementHandle = Any  # type: ignore[misc,assignment]
+
+    class PlaywrightTimeoutError(Exception):
+        """Fallback timeout error when Playwright is unavailable."""
+
+_pyperclip_spec = _is_module_available("pyperclip")
+if _pyperclip_spec:
+    import pyperclip  # type: ignore[import-not-found]
+else:  # pragma: no cover - fallback for environments without Pyperclip
+
+    class _PyperclipFallback:
+        def copy(self, *_: Any, **__: Any) -> None:
+            raise ModuleNotFoundError("pyperclip がインストールされていません。")
+
+        def paste(self, *_: Any, **__: Any) -> str:
+            raise ModuleNotFoundError("pyperclip がインストールされていません。")
+
+    pyperclip = _PyperclipFallback()  # type: ignore[assignment]
 
 from ..config import (
     COPILOT_BROWSER_CHANNELS,
@@ -63,6 +93,13 @@ class BrowserCopilotManager:
         self._last_gpt_mode_confirmed_at: Optional[float] = None
         self._chat_transcript_sink: Optional[Callable[[str, str, Optional[Dict[str, Any]]], None]] = None
 
+    def _require_playwright(self) -> None:
+        """Ensure Playwright is available before attempting browser operations."""
+        if sync_playwright is None:
+            raise ModuleNotFoundError(
+                "Playwright がインストールされていないためブラウザ操作を実行できません。"
+            )
+
     def __enter__(self):
         self.start()
         return self
@@ -93,6 +130,7 @@ class BrowserCopilotManager:
 
     def start(self):
         """Playwrightを起動し、Copilotページに接続・初期化する"""
+        self._require_playwright()
         try:
             user_data_path = Path(self.user_data_dir).expanduser()
             user_data_path.mkdir(parents=True, exist_ok=True)
