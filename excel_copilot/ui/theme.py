@@ -2,7 +2,97 @@
 
 from __future__ import annotations
 
-import flet as ft
+import importlib.util
+
+
+def _load_flet_module():
+    if importlib.util.find_spec("flet") is not None:
+        import flet as ft  # type: ignore[import-not-found]
+
+        return ft
+
+    class _FontWeight:
+        W_600 = "W_600"
+        W_500 = "W_500"
+        W_400 = "W_400"
+
+    class _BlendMode:
+        SOFT_LIGHT = "SOFT_LIGHT"
+
+    class _AlignmentNamespace:
+        top_left = "top_left"
+        bottom_right = "bottom_right"
+        top_center = "top_center"
+        bottom_center = "bottom_center"
+
+    class Alignment:
+        def __init__(self, x: float, y: float):
+            self.x = x
+            self.y = y
+
+    class Offset:
+        def __init__(self, x: float, y: float):
+            self.x = x
+            self.y = y
+
+    class LinearGradient:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    class RadialGradient:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    class Colors:
+        WHITE = "#FFFFFF"
+
+        @staticmethod
+        def with_opacity(_opacity: float, color: str) -> str:
+            return color
+
+    class _BorderNamespace:
+        @staticmethod
+        def all(width: float, color: str) -> dict[str, object]:
+            return {"width": width, "color": color}
+
+    class BoxShadow:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    class Animation:
+        def __init__(self, duration: int, curve: str):
+            self.duration = duration
+            self.curve = curve
+
+    _LinearGradientStub = LinearGradient
+    _RadialGradientStub = RadialGradient
+    _AlignmentStub = Alignment
+    _OffsetStub = Offset
+    _ColorsStub = Colors
+    _BorderStub = _BorderNamespace()
+    _BoxShadowStub = BoxShadow
+    _AnimationStub = Animation
+
+    class _FletStub:
+        FontWeight = _FontWeight
+        BlendMode = _BlendMode
+        LinearGradient = _LinearGradientStub
+        RadialGradient = _RadialGradientStub
+        Alignment = _AlignmentStub
+        Offset = _OffsetStub
+        Colors = _ColorsStub
+        border = _BorderStub
+        BoxShadow = _BoxShadowStub
+        Animation = _AnimationStub
+        alignment = _AlignmentNamespace()
+
+    return _FletStub()
+
+
+ft = _load_flet_module()
 
 
 # Apple のハードウェア仕上げや visionOS のフォググラスを意識した、
